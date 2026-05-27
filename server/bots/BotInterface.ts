@@ -13,16 +13,19 @@ export interface BotConfig {
   symbols: string[];           // Broker symbol(s) this bot exclusively trades (e.g. ['XAUUSD'])
   riskPct: number;             // Base risk % per trade (e.g. 5 = 5%)
   strategyType: 'TREND_FOLLOW' | 'REVERSAL' | 'BREAKOUT' | 'SCALP';
+  tier?: 'Scout' | 'Prop' | 'Institutional' | 'Apex'; // New tier system for future monetization
   color: string;               // UI accent color class
   icon: string;                // Emoji icon for the bot card
   winRateBacktest: number;     // From backtesting (shown in UI)
   returnBacktest: string;      // String like "+9,073% / 2yr"
   maxDDBacktest: number;       // Max drawdown % from backtesting
+  thumbnailUrl?: string;       // Path to the custom generated thumbnail
 }
 
 export interface BotTradeState {
   botId: BotId;
   userId: number;
+  profileId: number;
   brokerSymbol: string;
   direction: 'BUY' | 'SELL';
   entryPrice: number;

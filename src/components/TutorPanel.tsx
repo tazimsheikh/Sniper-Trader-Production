@@ -274,32 +274,39 @@ export default function TutorPanel({
           ) : (
             <>
               <button
-                onClick={() => handleQuickQuestion('Explain the 20 EMA gatekeeper rule')}
+                onClick={() => handleQuickQuestion('Explain the 3-Day Cycle and how to identify Peak Formations')}
                 className="flex-shrink-0 px-2.5 py-1 text-[10px] bg-slate-900 hover:bg-slate-800 text-indigo-400 border border-slate-800 rounded-lg transition-colors font-medium whitespace-nowrap cursor-pointer"
                 disabled={isThinking}
               >
-                🛡️ 20 EMA Gatekeeper
+                ⛰️ Peak Formations
               </button>
               <button
-                onClick={() => handleQuickQuestion('What is the First Red Day (FRD) and how do I map the Strike Zone?')}
+                onClick={() => handleQuickQuestion('What is the First Red Day (FRD) and First Green Day (FGD) setup?')}
                 className="flex-shrink-0 px-2.5 py-1 text-[10px] bg-slate-900 hover:bg-slate-800 text-indigo-400 border border-slate-800 rounded-lg transition-colors font-medium whitespace-nowrap cursor-pointer"
                 disabled={isThinking}
               >
-                📝 First Red Day (FRD)
+                📝 FRD / FGD Setups
               </button>
               <button
-                onClick={() => handleQuickQuestion('Describe the 50/50 Chop Zone compared to the Outer extremes')}
+                onClick={() => handleQuickQuestion('Describe the Pump & Dump / Dump & Pump trap mechanics at key levels')}
                 className="flex-shrink-0 px-2.5 py-1 text-[10px] bg-slate-900 hover:bg-slate-800 text-indigo-400 border border-slate-800 rounded-lg transition-colors font-medium whitespace-nowrap cursor-pointer"
                 disabled={isThinking}
               >
-                🚧 50/50 Chop Zone
+                🚨 Pump & Dump Traps
               </button>
               <button
-                onClick={() => handleQuickQuestion('Explain the Inside Day template mechanics')}
+                onClick={() => handleQuickQuestion('Explain the Inside Day template and False Breakout mechanics')}
                 className="flex-shrink-0 px-2.5 py-1 text-[10px] bg-slate-900 hover:bg-slate-800 text-indigo-450 border border-slate-800 rounded-lg transition-colors font-medium whitespace-nowrap cursor-pointer"
                 disabled={isThinking}
               >
-                📦 Inside Day Setup
+                📦 Inside Day False Break
+              </button>
+              <button
+                onClick={() => handleQuickQuestion('How do the Asian, London, and New York 3-hour timing windows work?')}
+                className="flex-shrink-0 px-2.5 py-1 text-[10px] bg-slate-900 hover:bg-slate-800 text-indigo-450 border border-slate-800 rounded-lg transition-colors font-medium whitespace-nowrap cursor-pointer"
+                disabled={isThinking}
+              >
+                ⏱️ 3-Hour Timing Windows
               </button>
             </>
           )}

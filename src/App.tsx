@@ -45,6 +45,9 @@ export default function App() {
   const [showMonitorAlerts, setShowMonitorAlerts]     = useState(true);
   const [showMonitorWatchlist, setShowMonitorWatchlist] = useState(true);
 
+  const [metaApiMode, setMetaApiMode] = useState<'demo' | 'live'>('demo');
+  const [metaApiStatus, setMetaApiStatus] = useState<'offline' | 'syncing' | 'connected'>('offline');
+
   const currentMarket = markets.find(m => m.symbol === selectedAssetSymbol) || markets[0];
 
   const [timeState, setTimeState] = useState({
@@ -59,7 +62,14 @@ export default function App() {
         return null;
       })
       .then(data => {
-        setAuthUser(data?.success ? data.user : null);
+        if (data?.success && data.user) {
+          setAuthUser(data.user);
+          if (data.user.hasMetaApiToken) {
+            setMetaApiMode('live');
+          }
+        } else {
+          setAuthUser(null);
+        }
       })
       .catch(() => setAuthUser(null));
   }, []);
@@ -73,9 +83,10 @@ export default function App() {
 
     const poll = async () => {
       try {
-        const [mRes, aRes] = await Promise.all([
+        const [mRes, aRes, sRes] = await Promise.all([
           fetch('/api/market',  { signal: controller.signal, credentials: 'same-origin' }),
           fetch('/api/alerts',  { signal: controller.signal, credentials: 'same-origin' }),
+          fetch('/api/auth/metaapi/status', { signal: controller.signal, credentials: 'same-origin' }),
         ]);
         if (mounted && mRes.ok) {
           const mData = await mRes.json();
@@ -84,6 +95,10 @@ export default function App() {
         if (mounted && aRes.ok) {
           const aData = await aRes.json();
           if (aData?.success) setAlerts(aData.data);
+        }
+        if (mounted && sRes.ok) {
+          const sData = await sRes.json();
+          if (sData?.success) setMetaApiStatus(sData.status);
         }
       } catch (e: any) {
         if (e.name !== 'AbortError') { /* silent backoff */ }
@@ -277,6 +292,26 @@ export default function App() {
           )}
         </AnimatePresence>
 
+        <AnimatePresence>
+          {activeWarning && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }} animate={{ height: 0, opacity: 0 }} exit={{ height: 0, opacity: 0 }}
+              className="bg-red-600 text-white overflow-hidden shadow-[0_0_30px_rgba(220,38,38,0.5)] border-b border-red-500 relative z-[60]"
+            >
+              <div className="max-w-7xl mx-auto px-4 py-3 sm:px-6 lg:px-8 flex items-center justify-center gap-3">
+                <AlertTriangle size={20} className="animate-ping" />
+                <span className="font-display font-black tracking-widest uppercase text-sm sm:text-base">High-Impact News Alert</span>
+                <span className="font-mono text-xs sm:text-sm bg-red-800/80 px-3 py-1 rounded-full border border-red-500 shadow-inner">
+                  {activeWarning.event.event} ({activeWarning.event.currency})
+                </span>
+                <span className="font-bold text-sm hidden sm:inline-block">
+                  — {activeWarning.status === 'UPCOMING' ? `in ${activeWarning.minutesLeft}m` : 'Recently active'}
+                </span>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* Header */}
         <div className={`${activeWarning ? 'bg-red-950/60 border-red-900/50' : 'bg-slate-900/50 border-slate-850'} border-b backdrop-blur-xl sticky top-0 z-50 transition-colors duration-1000`}>
           <div className="max-w-7xl mx-auto px-4 py-3 sm:px-6 lg:px-8 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
@@ -291,7 +326,13 @@ export default function App() {
                 <h1 className="font-display font-extrabold text-xs sm:text-sm tracking-tight text-white uppercase flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
                   <span className="flex items-center gap-2">Sniper Trader</span>
                   <span className="text-[10px] sm:hidden text-slate-400 font-medium normal-case tracking-normal">Multi Asset Scanner, Educator and Trading Automator</span>
-                  <span className={`text-[9px] uppercase tracking-widest font-black px-2 py-0.5 border rounded shadow-[0_0_10px_rgba(99,102,241,0.2)] ${activeWarning ? 'text-red-300 border-red-400/30 bg-red-950/50' : 'text-indigo-300 border-indigo-400/30 bg-indigo-950/50'}`}>PRO</span>
+                  <button className={`text-[9px] cursor-default uppercase tracking-widest font-black px-2 py-0.5 border rounded shadow-[0_0_10px_rgba(99,102,241,0.2)] transition-colors ${
+                    metaApiStatus === 'connected' ? 'text-emerald-300 border-emerald-400/30 bg-emerald-950/50' : 
+                    metaApiStatus === 'syncing' ? 'text-amber-300 border-amber-400/30 bg-amber-950/50' :
+                    'text-rose-300 border-rose-400/30 bg-rose-950/50'
+                  }`}>
+                    {metaApiStatus === 'connected' ? '🟢 API Connected' : metaApiStatus === 'syncing' ? '🟡 API Syncing' : '🔴 API Offline'}
+                  </button>
                   <div className="flex bg-slate-950/80 p-0.5 rounded-full border border-slate-800 shadow-inner ml-2 gap-0.5">
                     {[
                       { id: 'signal', label: 'Signal', icon: Radio },

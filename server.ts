@@ -3,12 +3,14 @@ import express from 'express';
 import cookieParser from 'cookie-parser';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
-import { initMarketStore, updateMarketPrices, getMarkets, getAlerts, manuallyTriggerTrap, getAlertById, activeDataSource } from './server/marketStore';
+import { initMarketStore, updateMarketPrices, getMarkets, getMarketSpreads, getAlerts, manuallyTriggerTrap, getAlertById, activeDataSource, getTimingGate } from './server/marketStore';
 import { refreshGlobalProvider } from './server/candleProvider';
 import { askTutorAgent, verifySignalWithAI } from './server/tutorAgent';
 import { authRouter } from './server/auth';
-import { ensureBotSchema, botManagerTick } from './server/botManager';
+import { ensureBotSchema, botManagerTick, metaApiExecutionHealth, metaApiLastConnected, pendingSignalCount, missedSignalCount, isMetaApiTradeBlocked, isMetaApiConnecting } from './server/botManager';
 import { validateAllBots } from './server/botValidator';
+import { getCalendarData, getSyntheticCalendarFallback } from './server/newsStore';
+import { monitorOpenTrades } from './server/tradeManager';
 
 async function startServer() {
   const app = express();
@@ -22,7 +24,7 @@ async function startServer() {
   app.use('/api/auth', authRouter);
 
   // ── Market store init ────────────────────────────────────────────────────────
-  await validateAllBots(); // Run strict validation before starting
+  // await validateAllBots(); // Deprecated: Validation logic is now obsolete since bots are just UI switches
   await initMarketStore();
   ensureBotSchema(); // Initialize bot tables (idempotent)
 
@@ -31,10 +33,45 @@ async function startServer() {
   let tickCount  = 0;
 
   setInterval(async () => {
-    if (isUpdating) return; // Skip tick if previous one hasn't finished
+    if (isUpdating) return;
     isUpdating = true;
     try {
-      await updateMarketPrices(tickCount % 10 === 0);
+      // Import dynamically to get the latest state
+      const { getTimingGate, getMarkets } = await import('./server/marketStore');
+      const { gate } = getTimingGate();
+      
+      const isActiveSession = gate !== 'Gap Time';
+      let isNearKeyLevel = false;
+
+      // If in active session, check if any market is near HOD/LOD (within 15 pips)
+      if (isActiveSession) {
+        const markets = getMarkets();
+        for (const m of markets) {
+          if (m.currentPrice >= m.hod - 15 * m.pipSize || m.currentPrice <= m.lod + 15 * m.pipSize) {
+            isNearKeyLevel = true;
+            break;
+          }
+        }
+      }
+
+      // Dynamic Polling Logic:
+      // High frequency: MetaAPI (local memory read) OR (Active Session AND Near Key Level)
+      // Medium frequency: Active Session but not near key level (every 15 seconds)
+      // Low frequency: Gap Time (every 15 minutes)
+      
+      let shouldSync = false;
+      if (activeDataSource === 'metaapi' || (isActiveSession && isNearKeyLevel)) {
+        shouldSync = true; // High freq (1s)
+      } else if (isActiveSession && !isNearKeyLevel) {
+        shouldSync = (tickCount % 15 === 0); // 15s
+      } else {
+        shouldSync = (tickCount % 900 === 0); // 15 mins (900s)
+      }
+
+      // Always force a sync every 15 minutes just in case
+      if (tickCount % 900 === 0) shouldSync = true;
+
+      await updateMarketPrices(shouldSync);
       tickCount++;
     } catch (e) {
       // Suppress background errors
@@ -49,9 +86,13 @@ async function startServer() {
     if (isBotTicking) return;
     isBotTicking = true;
     try {
-      // Pass a snapshot of current market data into the bot engine
+      // 🛡️ BUG FIX #3: Use real bid/ask from liveSpreads instead of forcing bid=ask=currentPrice
+      const spreads = getMarketSpreads();
       const marketsSnapshot = Object.fromEntries(
-        getMarkets().map(m => [m.symbol, { ...m, bid: m.currentPrice, ask: m.currentPrice }])
+        getMarkets().map(m => {
+          const spread = spreads[m.symbol] || { bid: m.currentPrice, ask: m.currentPrice };
+          return [m.symbol, { ...m, bid: spread.bid, ask: spread.ask }];
+        })
       );
       await botManagerTick(() => marketsSnapshot);
     } catch (e: any) {
@@ -60,6 +101,21 @@ async function startServer() {
       isBotTicking = false;
     }
   }, 30_000);
+
+  // ── Trade Manager Loop (Break-even, Ejection, Lockout) ───────────────────────
+  let isTradeManagerTicking = false;
+  setInterval(async () => {
+    if (isTradeManagerTicking) return;
+    isTradeManagerTicking = true;
+    try {
+      const timingInfo = getTimingGate();
+      await monitorOpenTrades(timingInfo.gate);
+    } catch (e: any) {
+      console.error('[TradeManager] Loop error:', e.message);
+    } finally {
+      isTradeManagerTicking = false;
+    }
+  }, 10_000); // Check open trades every 10 seconds
 
   // ── In-memory practice ledger (non-auth users / education mode) ─────────────
   const userProgress = {
@@ -92,9 +148,37 @@ async function startServer() {
     res.json({ success: true, data: getAlerts() });
   });
 
+  // ── Bot Engine Health Status ──────────────────────────────────────────────
+  app.get('/api/bot-health', (_req, res) => {
+    const blocked = isMetaApiTradeBlocked();
+    res.json({ 
+      success: true, 
+      health: metaApiExecutionHealth, 
+      lastConnected: metaApiLastConnected,
+      pendingSignals: pendingSignalCount,
+      missedSignals: missedSignalCount,
+      // Failsafe lockout fields
+      tradingBlocked: blocked,
+      offlineSince: blocked ? (metaApiLastConnected || null) : null,
+      isConnecting: isMetaApiConnecting(),
+    });
+  });
+
   // ── Data-source status (Yahoo vs MetaAPI) ────────────────────────────────
   app.get('/api/data-source', (_req, res) => {
     res.json({ success: true, source: activeDataSource });
+  });
+
+  app.get('/api/economic-calendar', async (_req, res) => {
+    try {
+      const data = await getCalendarData();
+      if (!Array.isArray(data) || data.length === 0) throw new Error('AI returned empty calendar data');
+      res.json(data);
+    } catch (err: any) {
+      console.warn('[Server] AI economic calendar fetch failed, using synthetic fallback:', err.message);
+      const synthetic = getSyntheticCalendarFallback();
+      res.json(synthetic);
+    }
   });
 
   // ── Trigger a data-source refresh (called after user saves MetaAPI creds) ─
@@ -104,6 +188,48 @@ async function startServer() {
       // Re-run full market init with the newly selected provider
       await initMarketStore();
       res.json({ success: true, source: newProvider.source });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post('/api/metaapi/verify', async (req, res) => {
+    const { token, accountId } = req.body;
+    if (!token || !accountId) return res.status(400).json({ success: false, error: 'Token and Account ID are required' });
+
+    try {
+      // @ts-ignore
+      const MetaApiPkg = await import('metaapi.cloud-sdk/esm-node');
+      const MetaApi = (MetaApiPkg as any).default || MetaApiPkg;
+      const api = new MetaApi(token);
+      
+      const account = await api.metatraderAccountApi.getAccount(accountId);
+      if (!account) {
+        return res.status(400).json({ success: false, error: 'MetaTrader account not found for this Account ID.' });
+      }
+      
+      // Update the user's first profile in the database
+      const { encrypt } = await import('./server/crypto');
+      const db = (await import('./server/db')).default;
+      
+      const userIdCookie = req.cookies?.auth_token;
+      if (userIdCookie) {
+        const jwtLib = await import('jsonwebtoken');
+        try {
+          const decoded: any = (jwtLib.default || jwtLib).verify(userIdCookie, process.env.JWT_SECRET!);
+          const profile = db.prepare('SELECT id FROM trading_profiles WHERE user_id = ? LIMIT 1').get(decoded.id) as any;
+          if (profile) {
+            db.prepare('UPDATE trading_profiles SET metaapi_token = ?, metaapi_account_id = ? WHERE id = ?')
+              .run(encrypt(token), account._id, profile.id);
+            refreshGlobalProvider();
+            await initMarketStore();
+          }
+        } catch (e) {
+          console.warn('Failed to update user profile with Meta API key', e);
+        }
+      }
+
+      res.json({ success: true, accountId: account._id });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
     }

@@ -30,44 +30,43 @@ type TradePhase = 'pre-execution' | 'execution' | 'in-trade' | 'break-even' | 'c
 
 const generateDynamicLifecycleUpdate = (alert: TrapSignal, newPhase: TradePhase, isFirstUpdateForPhase: boolean) => {
   const sl = alert.suggestedStopLoss || 15;
-  const tp = alert.suggestedTakeProfit || 45;
   
   if (newPhase === 'pre-execution') {
     const scenarios = [
-      `Price action is compressing near the ${alert.levelType || 'key'} trap level. Still waiting for the algorithmic trigger to execute.`,
-      `Volume is drying up right at the trap boundary. The algorithmic entry is getting closer but no execution yet. Patience.`,
-      `We remain in the pre-execution phase. Reviewing the plan: Stop loss will be placed at ${sl} pips and take profit at ${tp} pips once triggered.`,
-      `The trap setup is taking a bit longer to form. This is normal. We wait for the breakout traders to be baited before stepping in.`
+      `Price action is testing the ${alert.levelType || 'session extreme'}. Wait for the 1-minute false breakout and structure shift.`,
+      `We are outside the 50/50 chop zone. The ${alert.timingGate} timing window is active. Watch for the Stop Hunt.`,
+      `Monitoring the setup. We need an M1 Engulfing or Pin Hammer to confirm the liquidity trap at the extreme.`,
+      `The market makers are trapping breakout traders. Be patient. Wait for the exact M1 execution trigger.`
     ];
-    return `Market update. ${scenarios[Math.floor(Math.random() * scenarios.length)]}`;
+    return `Stacey Burke Protocol. ${scenarios[Math.floor(Math.random() * scenarios.length)]}`;
   }
 
   if (newPhase === 'execution' && isFirstUpdateForPhase) {
-    return `EXECUTION TRIGGERED. The algorithmic trap has been set at the ${alert.levelType || 'extreme'}. We are now officially in the trade. Stop loss is active at ${sl} pips. Take profit is placed at ${tp} pips. Trade is ON.`;
+    return `EXECUTION TRIGGERED. The M1 structural trap has confirmed at the ${alert.levelType || 'extreme'}. Dual trades fired. TP1 is 50 pips. TP2 is targeting the opposite session boundary. Hard stop is ${sl} pips behind the wick.`;
   }
 
   if (newPhase === 'in-trade') {
     const scenarios = [
-      "Trade is moving in our favor. The trapped traders are feeling the heat as price rotates.",
-      "Price is consolidating inside the entry zone. This is normal algorithmic order collection.",
-      "Momentum is pushing slightly against us, but our structural stop loss is safe behind the trap. Hold the line.",
-      "The rotation is underway. Continuing to manage the trade and monitor volume signals."
+      "Trade is moving. Remember the rule: Do not move stop to breakeven until we clear 30 pips or a 15-minute structural break.",
+      "Price is rotating away from the trap. This is the 'Ain't Coming Back' phase.",
+      "Hold the line. If it stalls and flatlines for 30 minutes, we will manually bail out and lock in the low-hanging fruit.",
+      "The setup is active. Monitoring for the 1-hour time-based bailout if momentum fails."
     ];
-    return `In-trade management update. ${scenarios[Math.floor(Math.random() * scenarios.length)]}`;
+    return `In-trade management. ${scenarios[Math.floor(Math.random() * scenarios.length)]}`;
   }
 
   if (newPhase === 'break-even') {
     if (isFirstUpdateForPhase) {
-      return `Management update. We have reached the 1-to-1 risk-reward threshold. Pulling stop loss to break even. All systemic risk is eliminated. Letting the remaining position run to final target of ${tp} pips.`;
+      return `Management update. We have reached the +30 pip threshold. Pulling stop loss to break even. All systemic risk is eliminated. Letting TP2 trail behind M15 structure.`;
     } else {
-      return `Still holding break even. Price is attempting to push toward the final take profit of ${tp} pips.`;
+      return `Holding at breakeven. Price is pushing toward the extended TP2 measured move.`;
     }
   }
 
   if (newPhase === 'closed' && isFirstUpdateForPhase) {
     const scenarios = [
-      `Extreme volume spike! The retail liquidation cascade has hit our target. TRADE IS OFF. We just secured ${tp} pips. Great execution. Turning off broadcast for this setup.`,
-      `Price cleanly rotated into our take profit level. TRADE IS OFF. Perfect algorithmic read. Broadcast will conclude now.`
+      `TRADE IS OFF. We just secured the 50-pip TP1 and trailed out of TP2. The Smart Money trap is complete.`,
+      `Time limit reached. The trade stalled and failed to hit the target. We have manually bailed out to protect capital. Broadcast concluded.`
     ];
     return scenarios[Math.floor(Math.random() * scenarios.length)];
   }
@@ -170,8 +169,7 @@ export default function AlertFeed({
     setPhaseTime(0);
     
     const sl = alert.suggestedStopLoss || 15;
-    const tp = alert.suggestedTakeProfit || 45;
-    const announcement = `Tuning into ${alert.displayName} frequency. ${alert.details} The current setup is a ${alert.tutorAnalysis?.setupType || alert.status}. The grade is ${alert.grade} stars out of 5 for the ${alert.timingGate} timing gate. Market is open and active. Entering pre-execution monitoring phase. Projected stop loss is ${sl} units, and targeted take profit is ${tp} units. I will provide dynamic updates as algorithmic events trigger. Standby.`;
+    const announcement = `Tuning into ${alert.displayName} frequency. ${alert.details} The current setup is a ${alert.tutorAnalysis?.setupType || alert.status}. The grade is ${alert.grade} stars out of 5 for the ${alert.timingGate} timing gate. Market is open and active. Entering pre-execution monitoring phase. Projected stop loss is ${sl} pips behind the wick. We will fire dual trades for TP1 and TP2. I will provide dynamic updates as M1 algorithmic events trigger. Standby.`;
     speakText(announcement);
   };
 

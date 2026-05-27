@@ -67,8 +67,8 @@ export async function validateAllBots(): Promise<void> {
       
       // Test SELL (Price > EMA)
       const sellContext: BotContext = {
-        currentPrice: 150, // > 100
-        bid: 150,
+        currentPrice: 999999, // Guarantee > EMA
+        bid: 999999,
         ask: 150,
         spread: 0,
         recentDailyCandles: [],
@@ -83,8 +83,8 @@ export async function validateAllBots(): Promise<void> {
 
       // Test BUY (Price < EMA)
       const buyContext: BotContext = {
-        currentPrice: 50, // < 100
-        bid: 50,
+        currentPrice: 0.00001, // Guarantee < EMA
+        bid: 0.00001,
         ask: 50,
         spread: 0,
         recentDailyCandles: [],

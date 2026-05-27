@@ -2,9 +2,10 @@
 import MetaApiPkg from 'metaapi.cloud-sdk/esm-node';
 const MetaApi = (MetaApiPkg as any).default || MetaApiPkg;
 
-import db from './db';
+import db, { getSessionLosses } from './db';
 import { decrypt, isEncrypted } from './crypto';
 import { TrapSignal } from '../src/types';
+import { SimulationProvider } from './simulationProvider';
 
 // ── Broker symbol map ─────────────────────────────────────────────────────────
 const BROKER_SYMBOL_MAP: Record<string, string> = {
@@ -27,7 +28,7 @@ interface SymbolSpec {
   // Verify your broker's contract size before going live.
 }
 
-const SYMBOL_SPECS: Record<string, SymbolSpec> = {
+export const SYMBOL_SPECS: Record<string, SymbolSpec> = {
   'XAUUSD': { pipSize: 0.01,   pipValuePerLot: 10  }, // Gold: 1 lot = 100 oz, $0.01/pip = $10
   'EURUSD': { pipSize: 0.0001, pipValuePerLot: 10  },
   'GBPUSD': { pipSize: 0.0001, pipValuePerLot: 10  },
@@ -40,7 +41,7 @@ const SYMBOL_SPECS: Record<string, SymbolSpec> = {
 };
 const DEFAULT_SPEC: SymbolSpec = { pipSize: 0.0001, pipValuePerLot: 10 };
 
-function getSymbolSpec(brokerSymbol: string): SymbolSpec {
+export function getSymbolSpec(brokerSymbol: string): SymbolSpec {
   return SYMBOL_SPECS[brokerSymbol] ?? DEFAULT_SPEC;
 }
 
@@ -83,52 +84,234 @@ function quantizeLots(raw: number): number {
 export async function verifyMetaApiConnection(token: string, accountId: string): Promise<boolean> {
   try {
     const api = getApiInstance(token);
-    const account = await api.metatraderAccountApi.getAccount(accountId);
+    const accountPromise = api.metatraderAccountApi.getAccount(accountId);
+    
+    // Fast-fail timeout to prevent the UI from hanging on save
+    const account = await Promise.race([
+      accountPromise,
+      new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 2000))
+    ]);
+    
     if (!account) throw new Error("Account not found");
     return true;
   } catch (err: any) {
+    if (err.message === 'timeout') {
+      // If it times out, we accept it as valid for now and let the background worker try syncing
+      console.warn(`[MetaAPI] Verification timed out (2s). Assuming valid for background sync.`);
+      return true;
+    }
     throw new Error(`MetaAPI Connection Failed: ${err.message}`);
   }
 }
 
-// ── Robust connection with timeout and retry ─────────────────────────────────
-const SYNC_TIMEOUT_MS   = 60_000;
-const MAX_CONNECT_TRIES = 2;
-
-async function getReadyConnection(account: any): Promise<any> {
-  if (account.state !== 'DEPLOYED') {
-    console.log(`[MetaAPI] Account not deployed — deploying now…`);
-    await account.deploy();
-    await account.waitConnected();
-    console.log(`[MetaAPI] Account deployed.`);
+export async function verifyMetaApiToken(token: string): Promise<boolean> {
+  try {
+    const api = getApiInstance(token);
+    const accountsPromise = api.metatraderAccountApi.getAccounts();
+    await Promise.race([
+      accountsPromise,
+      new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 5000))
+    ]);
+    return true; // Token is valid, whether it timed out or successfully returned
+  } catch (err: any) {
+    if (err.message === 'timeout') {
+      console.warn(`[MetaAPI] Token verification timed out. Assuming valid.`);
+      return true;
+    }
+    if (err.status === 401 || err.status === 403 || err.message.includes('auth') || err.message.includes('token')) {
+      return false; // Invalid token
+    }
+    return true; // Valid but maybe API is unreachable temporarily
   }
+}
 
-  let lastErr: any;
-  for (let attempt = 1; attempt <= MAX_CONNECT_TRIES; attempt++) {
+const connectionCache = new Map<string, any>();
+const accountCache = new Map<string, any>();
+const isConnecting = new Set<string>();
+
+let onMetaApiConnected: (() => void) | null = null;
+export function setMetaApiConnectedCallback(cb: () => void) {
+  onMetaApiConnected = cb;
+}
+
+export function isMetaApiConnecting(): boolean {
+  return isConnecting.size > 0;
+}
+
+export async function getSharedConnection(token: string, accountId: string, background = false): Promise<any> {
+  const key = createHash('sha256').update(token + accountId).digest('hex');
+  
+  if (connectionCache.has(key)) {
+    const cached = connectionCache.get(key);
     try {
-      const connection = account.getRPCConnection();
-      await connection.connect();
-
       await Promise.race([
-        connection.waitSynchronized(),
-        new Promise((_, reject) =>
-          setTimeout(
-            () => reject(new Error(`Sync timed out after ${SYNC_TIMEOUT_MS / 1000}s`)),
-            SYNC_TIMEOUT_MS
-          )
-        ),
+        cached.waitSynchronized(),
+        new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 1000)),
       ]);
-
-      console.log(`[MetaAPI] Connection synchronized (attempt ${attempt}).`);
-      return connection;
-    } catch (err: any) {
-      lastErr = err;
-      console.warn(`[MetaAPI] Connect attempt ${attempt}/${MAX_CONNECT_TRIES}: ${err.message}`);
-      if (attempt < MAX_CONNECT_TRIES) await new Promise(r => setTimeout(r, 3000));
+      if (onMetaApiConnected) onMetaApiConnected();
+      return cached;
+    } catch {
+      connectionCache.delete(key);
     }
   }
 
-  throw new Error(`[MetaAPI] Could not synchronize after ${MAX_CONNECT_TRIES} attempts: ${lastErr?.message}`);
+  if (background) {
+    if (!isConnecting.has(key)) {
+      isConnecting.add(key);
+      (async () => {
+        try {
+          console.log(`[MetaAPI] Starting background synchronization for ${accountId}...`);
+          const api = getApiInstance(token);
+          const account = await api.metatraderAccountApi.getAccount(accountId);
+          accountCache.set(key, account);
+          if (account.state !== 'DEPLOYED') {
+            await account.deploy();
+            await account.waitConnected();
+          }
+          const connection = account.getRPCConnection();
+          await connection.connect();
+          
+          await Promise.race([
+            connection.waitSynchronized(),
+            new Promise((_, r) => setTimeout(() => r(new Error('30s timeout')), 30000))
+          ]);
+          connectionCache.set(key, connection);
+          console.log(`[MetaAPI] ✅ Background sync complete for ${accountId}.`);
+          if (onMetaApiConnected) onMetaApiConnected();
+        } catch (err: any) {
+          console.warn(`[MetaAPI] ⚠️ Background sync failed:`, err.message);
+        } finally {
+          isConnecting.delete(key);
+        }
+      })();
+    }
+    throw new Error(`Fast fail: Background sync running for ${accountId}`);
+  } else {
+    const api = getApiInstance(token);
+    const account = await api.metatraderAccountApi.getAccount(accountId);
+    accountCache.set(key, account);
+    if (account.state !== 'DEPLOYED') {
+      await account.deploy();
+      await account.waitConnected();
+    }
+    const connection = account.getRPCConnection();
+    await connection.connect();
+    await connection.waitSynchronized();
+    connectionCache.set(key, connection);
+    return connection;
+  }
+}
+
+const streamingConnectionCache = new Map<string, any>();
+const isStreamingConnecting = new Set<string>();
+
+const ALL_BROKER_SYMBOLS = [
+  'USTEC', 'XAUUSD', 'XTIUSD', 'EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'USDCAD',
+  'NZDUSD', 'USDCHF', 'GBPJPY', 'EURGBP', 'EURJPY', 'AUDJPY', 'EURAUD',
+  'GBPAUD', 'CHFJPY', 'AUDCAD', 'EURCAD', 'NZDJPY', 'GBPCAD'
+];
+
+export async function getSharedStreamingConnection(token: string, accountId: string, background = false): Promise<any> {
+  const key = createHash('sha256').update(token + accountId).digest('hex');
+  
+  if (streamingConnectionCache.has(key)) {
+    const cached = streamingConnectionCache.get(key);
+    try {
+      await Promise.race([
+        cached.waitSynchronized(),
+        new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 1000)),
+      ]);
+      return cached;
+    } catch {
+      streamingConnectionCache.delete(key);
+    }
+  }
+
+  if (background) {
+    if (!isStreamingConnecting.has(key)) {
+      isStreamingConnecting.add(key);
+      (async () => {
+        try {
+          console.log(`[MetaAPI] Starting background streaming synchronization for ${accountId}...`);
+          const api = getApiInstance(token);
+          const account = await api.metatraderAccountApi.getAccount(accountId);
+          if (account.state !== 'DEPLOYED') {
+            await account.deploy();
+            await account.waitConnected();
+          }
+          const connection = account.getStreamingConnection();
+          await connection.connect();
+          await Promise.race([
+            connection.waitSynchronized(),
+            new Promise((_, r) => setTimeout(() => r(new Error('30s timeout')), 30000))
+          ]);
+          
+          // Subscribe to all symbols for streaming market data
+          for (const s of ALL_BROKER_SYMBOLS) {
+            try {
+              await connection.subscribeToMarketData(s);
+            } catch (err: any) {
+              console.warn(`[MetaAPI] Failed to subscribe to ${s}:`, err.message);
+            }
+          }
+          
+          streamingConnectionCache.set(key, connection);
+          console.log(`[MetaAPI] ✅ Background streaming sync complete for ${accountId}.`);
+        } catch (err: any) {
+          console.warn(`[MetaAPI] ⚠️ Background streaming sync failed:`, err.message);
+        } finally {
+          isStreamingConnecting.delete(key);
+        }
+      })();
+    }
+    throw new Error(`Fast fail: Background streaming sync running for ${accountId}`);
+  } else {
+    const api = getApiInstance(token);
+    const account = await api.metatraderAccountApi.getAccount(accountId);
+    if (account.state !== 'DEPLOYED') {
+      await account.deploy();
+      await account.waitConnected();
+    }
+    const connection = account.getStreamingConnection();
+    await connection.connect();
+    await connection.waitSynchronized();
+    
+    // Subscribe to all symbols for streaming market data
+    for (const s of ALL_BROKER_SYMBOLS) {
+      try {
+        await connection.subscribeToMarketData(s);
+      } catch (err: any) {
+        console.warn(`[MetaAPI] Failed to subscribe to ${s}:`, err.message);
+      }
+    }
+    
+    streamingConnectionCache.set(key, connection);
+    return connection;
+  }
+}
+
+export async function getSharedAccount(token: string, accountId: string): Promise<any> {
+  const key = createHash('sha256').update(token + accountId).digest('hex');
+  if (accountCache.has(key)) {
+    return accountCache.get(key);
+  }
+  const api = getApiInstance(token);
+  const account = await api.metatraderAccountApi.getAccount(accountId);
+  accountCache.set(key, account);
+  return account;
+}
+
+export function clearSharedConnection(token: string, accountId: string) {
+  const key = createHash('sha256').update(token + accountId).digest('hex');
+  connectionCache.delete(key);
+  accountCache.delete(key);
+  const streamConn = streamingConnectionCache.get(key);
+  if (streamConn) {
+    try {
+      streamConn.close();
+    } catch {}
+    streamingConnectionCache.delete(key);
+  }
 }
 
 // ── Main trade execution entry point ──────────────────────────────────────────
@@ -138,91 +321,159 @@ export async function executeTradeForUsers(
   takeProfitDistPips: number,
   forceRiskPct?: number
 ) {
-  const activeUsers = db.prepare(
-    'SELECT id, metaapi_token, metaapi_account_id, risk_multiplier FROM users WHERE automation_active = 1 AND ai_sniper_active = 1 AND metaapi_token IS NOT NULL AND metaapi_account_id IS NOT NULL'
+  const profiles = db.prepare(
+    `SELECT tp.id, tp.user_id, u.metaapi_token, tp.metaapi_account_id, tp.risk_multiplier 
+     FROM trading_profiles tp
+     JOIN users u ON u.id = tp.user_id
+     WHERE tp.automation_active = 1 
+       AND u.metaapi_token IS NOT NULL 
+       AND tp.metaapi_account_id IS NOT NULL 
+       ${process.env.SIMULATION_MODE === 'true' ? 'AND tp.id = 999' : `AND u.metaapi_token != 'dummy_token' AND tp.metaapi_account_id != 'dummy_acc'`}`
   ).all() as any[];
 
-  if (activeUsers.length === 0) return;
+  if (profiles.length === 0) return;
 
-  console.log(`[MetaAPI] Signal ${signal.id} | ${signal.direction} ${signal.symbol} | Executing for ${activeUsers.length} user(s)`);
+  console.log(`[MetaAPI] Signal ${signal.id} | ${signal.direction} ${signal.symbol} | Executing for ${profiles.length} profile(s)`);
 
   const brokerSymbol = BROKER_SYMBOL_MAP[signal.symbol] ?? signal.symbol.replace('=X', '').replace('=F', '');
   const spec = getSymbolSpec(brokerSymbol);
 
   // Base risk from actual signal grade: grade 5 = 5%, grade 1 = 1%
-  const baseRiskPct = signal.grade;
+  let baseRiskPct = forceRiskPct ?? signal.grade;
+  if (signal.isHolyGrailConfluence) {
+    baseRiskPct = 10;
+  }
 
-  const promises = activeUsers.map(async (user) => {
+  const promises = activeProfiles.map(async (profile) => {
     try {
-      // ── FIX: Guard null token ─────────────────────────────────────────────
-      if (!user.metaapi_token) {
-        console.warn(`[MetaAPI User ${user.id}] No token configured — skipping.`);
+      // ── LOCKOUT RULE: Max 1 losing trade per session ──────────────────────
+      const losses = getSessionLosses(profile.id, signal.timingGate);
+      if (losses >= 1) {
+        console.warn(`[MetaAPI Profile ${profile.id}] Lockout active. Max losses reached for session ${signal.timingGate}. Skipping trade.`);
         return;
       }
-      if (!user.metaapi_account_id) {
-        console.warn(`[MetaAPI User ${user.id}] No account ID configured — skipping.`);
+
+      // ── FIX: Guard null token ─────────────────────────────────────────────
+      if (!profile.metaapi_token) {
+        console.warn(`[MetaAPI Profile ${profile.id}] No token configured — skipping.`);
+        return;
+      }
+      if (!profile.metaapi_account_id) {
+        console.warn(`[MetaAPI Profile ${profile.id}] No account ID configured — skipping.`);
         return;
       }
 
       // ── FIX: Decrypt token before use ─────────────────────────────────────
       let rawToken: string;
       try {
-        rawToken = isEncrypted(user.metaapi_token) ? decrypt(user.metaapi_token) : user.metaapi_token;
+        rawToken = isEncrypted(profile.metaapi_token) ? decrypt(profile.metaapi_token) : profile.metaapi_token;
       } catch (e: any) {
-        console.error(`[MetaAPI User ${user.id}] Token decryption failed — skipping:`, e.message);
+        console.error(`[MetaAPI Profile ${profile.id}] Token decryption failed — skipping:`, e.message);
         return;
       }
 
       // ── FIX: Use cached SDK instance ───────────────────────────────────────
-      const api = getApiInstance(rawToken);
-      const account = await api.metatraderAccountApi.getAccount(user.metaapi_account_id);
-      const connection = await getReadyConnection(account);
+      let balance: number = 0;
+      let quote: any = null;
 
-      // Account info & risk calculation
-      const accountInfo = await connection.getAccountInformation();
-      const balance: number = accountInfo.balance;
-      
-      const userRiskPct = forceRiskPct ? forceRiskPct : baseRiskPct;
-      const riskAmount  = balance * (userRiskPct / 100);
-
-      // Lot size formula: Lots = RiskAmount / (SL_pips × pipValuePerLot)
-      // quantizeLots() guarantees a clean 0.01-multiple (no IEEE 754 residuals)
-      const lotSize = quantizeLots(riskAmount / (stopLossDistPips * spec.pipValuePerLot));
-
-      console.log(
-        `[MetaAPI User ${user.id}] ${brokerSymbol} | Balance: $${balance.toFixed(2)} | ` +
-        `Risk: ${userRiskPct}% ($${riskAmount.toFixed(2)}) | SL: ${stopLossDistPips} pips | Lots: ${lotSize}`
-      );
-
-      // ── FIX: Validate quote freshness before placing order ─────────────────
-      // @ts-ignore
-      const quote = await connection.getSymbolPrice(brokerSymbol);
-      const quoteAgeMs = Date.now() - (quote?.time?.getTime?.() ?? 0);
-      if (quoteAgeMs > 10_000) {
-        throw new Error(`Stale quote for ${brokerSymbol}: ${quoteAgeMs}ms old. Trade aborted.`);
-      }
-
-      // Calculate SL / TP using symbol-accurate pipSize
-      const slDistance = stopLossDistPips   * spec.pipSize;
-      const tpDistance = takeProfitDistPips * spec.pipSize;
-
-      let orderResult;
-      if (signal.direction === 'BUY') {
-        const slPrice = parseFloat((quote.ask - slDistance).toFixed(5));
-        const tpPrice = parseFloat((quote.ask + tpDistance).toFixed(5));
-        console.log(`[MetaAPI User ${user.id}] BUY @ ${quote.ask} | SL: ${slPrice} | TP: ${tpPrice} | Lots: ${lotSize}`);
-        orderResult = await connection.createMarketBuyOrder(brokerSymbol, lotSize, slPrice, tpPrice);
+      if (process.env.SIMULATION_MODE === 'true') {
+         balance = 100.0; // Simulate $100 account
+         const liveQuote = await SimulationProvider.getLiveQuote('', brokerSymbol);
+         quote = { bid: liveQuote.bid, ask: liveQuote.ask, time: liveQuote.time };
       } else {
-        const slPrice = parseFloat((quote.bid + slDistance).toFixed(5));
-        const tpPrice = parseFloat((quote.bid - tpDistance).toFixed(5));
-        console.log(`[MetaAPI User ${user.id}] SELL @ ${quote.bid} | SL: ${slPrice} | TP: ${tpPrice} | Lots: ${lotSize}`);
-        orderResult = await connection.createMarketSellOrder(brokerSymbol, lotSize, slPrice, tpPrice);
+         const connection = await getSharedConnection(rawToken, profile.metaapi_account_id, false);
+         const accountInfo = await connection.getAccountInformation();
+         balance = accountInfo.balance;
+
+         // @ts-ignore
+         quote = await connection.getSymbolPrice(brokerSymbol);
+         const quoteAgeMs = Date.now() - (quote?.time?.getTime?.() ?? 0);
+         if (quoteAgeMs > 10_000) {
+           throw new Error(`Stale quote for ${brokerSymbol}: ${quoteAgeMs}ms old. Trade aborted.`);
+         }
       }
 
-      console.log(`[MetaAPI User ${user.id}] ✅ Order placed: ${orderResult.orderId}`);
+      // Dual Trade Logic (TP1 & TP2)
+      const halfLotSize = quantizeLots(lotSize / 2);
+      if (halfLotSize < 0.01) {
+         console.warn(`[MetaAPI Profile ${profile.id}] Lot size too small for dual trades (${lotSize}). Skipping.`);
+         return;
+      }
+
+      const slDistance = stopLossDistPips * spec.pipSize;
+      const tp1Distance = 50 * spec.pipSize;
+      const tp2Distance = 100 * spec.pipSize; // Geometric expansion
+
+      let orderResult1, orderResult2;
+      
+      if (process.env.SIMULATION_MODE === 'true') {
+        orderResult1 = { orderId: `SIM_${Date.now()}_TP1` };
+        orderResult2 = { orderId: `SIM_${Date.now()}_TP2` };
+      } else {
+        const connection = await getSharedConnection(rawToken, profile.metaapi_account_id, false);
+        if (signal.direction === 'BUY') {
+          const slPrice = parseFloat((quote.ask - slDistance).toFixed(5));
+          const tp1Price = parseFloat((quote.ask + tp1Distance).toFixed(5));
+          const tp2Price = parseFloat((quote.ask + tp2Distance).toFixed(5));
+          
+          console.log(`[MetaAPI Profile ${profile.id}] BUY TP1 @ ${quote.ask} | SL: ${slPrice} | TP1: ${tp1Price} | Lots: ${halfLotSize}`);
+          orderResult1 = await connection.createMarketBuyOrder(brokerSymbol, halfLotSize, slPrice, tp1Price, { clientId: 'AI_SNIPER_TP1' });
+          
+          console.log(`[MetaAPI Profile ${profile.id}] BUY TP2 @ ${quote.ask} | SL: ${slPrice} | TP2: ${tp2Price} | Lots: ${halfLotSize}`);
+          orderResult2 = await connection.createMarketBuyOrder(brokerSymbol, halfLotSize, slPrice, tp2Price, { clientId: 'AI_SNIPER_TP2' });
+        } else {
+          const slPrice = parseFloat((quote.bid + slDistance).toFixed(5));
+          const tp1Price = parseFloat((quote.bid - tp1Distance).toFixed(5));
+          const tp2Price = parseFloat((quote.bid - tp2Distance).toFixed(5));
+          
+          console.log(`[MetaAPI Profile ${profile.id}] SELL TP1 @ ${quote.bid} | SL: ${slPrice} | TP1: ${tp1Price} | Lots: ${halfLotSize}`);
+          orderResult1 = await connection.createMarketSellOrder(brokerSymbol, halfLotSize, slPrice, tp1Price, { clientId: 'AI_SNIPER_TP1' });
+          
+          console.log(`[MetaAPI Profile ${profile.id}] SELL TP2 @ ${quote.bid} | SL: ${slPrice} | TP2: ${tp2Price} | Lots: ${halfLotSize}`);
+          orderResult2 = await connection.createMarketSellOrder(brokerSymbol, halfLotSize, slPrice, tp2Price, { clientId: 'AI_SNIPER_TP2' });
+        }
+      }
+
+      console.log(`[MetaAPI Profile ${profile.id}] ✅ Dual Orders placed: TP1(${orderResult1?.orderId}), TP2(${orderResult2?.orderId})`);
+
+      // 3. Register Trades in Database for botManager tick management
+      const botId = 'sniper-system-ai';
+      const openTime = Date.now();
+      
+      const insertTrade = db.prepare(`
+        INSERT INTO bot_trade_states
+          (user_id, profile_id, bot_id, broker_symbol, direction, entry_price, sl_price, tp_price,
+           lots, open_time, meta_order_id, t1_hit, highest_price, lowest_price, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN')
+      `);
+
+      if (orderResult1?.orderId) {
+        insertTrade.run(
+          profile.user_id, profile.id, botId, brokerSymbol, signal.direction,
+          signal.direction === 'BUY' ? quote.ask : quote.bid, 
+          signal.direction === 'BUY' ? (quote.ask - slDistance) : (quote.bid + slDistance), 
+          signal.direction === 'BUY' ? (quote.ask + tp1Distance) : (quote.bid - tp1Distance),
+          halfLotSize, openTime, orderResult1.orderId, 0,
+          signal.direction === 'BUY' ? quote.ask : quote.bid,
+          signal.direction === 'BUY' ? quote.ask : quote.bid
+        );
+      }
+
+      if (orderResult2?.orderId) {
+        insertTrade.run(
+          profile.user_id, profile.id, botId, brokerSymbol, signal.direction,
+          signal.direction === 'BUY' ? quote.ask : quote.bid, 
+          signal.direction === 'BUY' ? (quote.ask - slDistance) : (quote.bid + slDistance), 
+          signal.direction === 'BUY' ? (quote.ask + tp2Distance) : (quote.bid - tp2Distance),
+          halfLotSize, openTime, orderResult2.orderId, 0,
+          signal.direction === 'BUY' ? quote.ask : quote.bid,
+          signal.direction === 'BUY' ? quote.ask : quote.bid
+        );
+      }
 
     } catch (err: any) {
-      console.error(`[MetaAPI User ${user.id}] ❌ Trade failed:`, err.message);
+      console.error(`[MetaAPI Profile ${profile.id}] ❌ Trade failed:`, err.message);
+      clearSharedConnection(rawToken, profile.metaapi_account_id);
     }
   });
 
@@ -230,19 +481,21 @@ export async function executeTradeForUsers(
 }
 
 
-export async function getUserTradeHistory(userId: number, daysBack: number = 30, resetTimeStr?: string) {
-  const user = db.prepare('SELECT metaapi_token, metaapi_account_id FROM users WHERE id = ?').get(userId) as any;
-  if (!user || !user.metaapi_token || !user.metaapi_account_id) return null;
+export async function getProfileTradeHistory(profileId: number, daysBack: number = 30, resetTimeStr?: string) {
+  const profile = db.prepare('SELECT tp.user_id, u.metaapi_token, tp.metaapi_account_id FROM trading_profiles tp JOIN users u ON u.id = tp.user_id WHERE tp.id = ?').get(profileId) as any;
+  if (!profile || !profile.metaapi_token || !profile.metaapi_account_id) return null;
 
   try {
-    let rawToken = user.metaapi_token;
+    let rawToken = profile.metaapi_token;
     try {
-      rawToken = isEncrypted(user.metaapi_token) ? decrypt(user.metaapi_token) : user.metaapi_token;
+      rawToken = isEncrypted(profile.metaapi_token) ? decrypt(profile.metaapi_token) : profile.metaapi_token;
     } catch(e) {}
     
-    const api = getApiInstance(rawToken);
-    const account = await api.metatraderAccountApi.getAccount(user.metaapi_account_id);
-    const connection = await getReadyConnection(account);
+    // Fast fail connection wait (increase race timeout to 5s to be safe)
+    const connection = await Promise.race([
+      getSharedConnection(rawToken, profile.metaapi_account_id, false),
+      new Promise<any>((_, r) => setTimeout(() => r(new Error('timeout')), 5000))
+    ]);
 
     const now = new Date();
     let start = new Date(now.getTime() - daysBack * 24 * 60 * 60 * 1000);
@@ -267,7 +520,8 @@ export async function getUserTradeHistory(userId: number, daysBack: number = 30,
       if (!positions.has(deal.positionId)) {
         positions.set(deal.positionId, {
           id: deal.positionId,
-          user_id: userId,
+          user_id: profile.user_id,
+          profile_id: profileId,
           bot_id: (deal.comment || '').replace(/[\[\]]/g, ''),
           broker_symbol: deal.symbol,
           direction: deal.type === 'DEAL_TYPE_BUY' ? (deal.entryType === 'DEAL_ENTRY_IN' ? 'BUY' : 'SELL') : (deal.entryType === 'DEAL_ENTRY_IN' ? 'SELL' : 'BUY'),
@@ -307,7 +561,8 @@ export async function getUserTradeHistory(userId: number, daysBack: number = 30,
 
     return closedTrades.sort((a, b) => b.close_time - a.close_time);
   } catch (err: any) {
-    console.error('[getUserTradeHistory] Error:', err.message);
+    console.error('[getProfileTradeHistory] Error:', err.message);
+    clearSharedConnection(rawToken, profile.metaapi_account_id);
     return null;
   }
 }

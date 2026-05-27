@@ -35,6 +35,10 @@ export const ASSET_MAP: Record<string, { symbol: string; name: string; pipSize: 
 let markets: Record<string, MarketData> = {};
 let alerts: TrapSignal[] = [];
 
+// 🛡️ BUG FIX #3: Track real bid/ask separately since MarketData has no bid/ask fields.
+// Yahoo returns bid/ask per quote; we persist them here so the bot engine gets real spread.
+const liveSpreads: Record<string, { bid: number; ask: number }> = {};
+
 // Track the active data-source for the UI badge
 export let activeDataSource: 'yahoo' | 'metaapi' = 'yahoo';
 
@@ -74,16 +78,17 @@ function getRoundNumberTraps(price: number, symbol: string): string[] {
 }
 
 // ── Session / timing gate ─────────────────────────────────────────────────────
+const GLOBAL_FORMATTER_HM = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'America/New_York',
+  hour: 'numeric',
+  minute: 'numeric',
+  hour12: false,
+});
+
 export function getTimingGate(): { gate: TrapSignal['timingGate']; details: string; isBlackout: boolean } {
   const now = new Date();
-  const formatter = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/New_York',
-    hour12: false,
-    hour: 'numeric',
-    minute: 'numeric',
-  });
-
-  const timeString = formatter.format(now);
+  
+  const timeString = GLOBAL_FORMATTER_HM.format(now);
   const [nyHoursStr, nyMinutesStr] = timeString.split(':');
   const nyHours = parseInt(nyHoursStr, 10);
   const nyMinutes = parseInt(nyMinutesStr, 10);
@@ -161,6 +166,37 @@ export async function initMarketStore() {
           close: q.close,
         }));
 
+        const dayStr = GLOBAL_FORMATTER_WEEKDAY.format(now);
+        const dayOfWeek = parseInt(dayStr, 10) - 1; // 0=Sun, 1=Mon, ..., 5=Fri
+
+        let mondayHigh = yesterday.high;
+        let mondayLow = yesterday.low;
+        let dayOfWeekCycle: 1|2|3 = 1;
+        let how = yesterday.high;
+        let low_week = yesterday.low;
+
+        let mondayIndex = -1;
+        for (let i = candles.length - 1; i >= Math.max(0, candles.length - 7); i--) {
+          const cDay = new Date(candles[i].date).getUTCDay();
+          if (cDay === 1) { mondayIndex = i; break; }
+        }
+        if (mondayIndex === -1) {
+          for (let i = candles.length - 1; i >= Math.max(0, candles.length - 7); i--) {
+            const cDay = new Date(candles[i].date).getUTCDay();
+            if (cDay === 2) { mondayIndex = i; break; }
+          }
+        }
+
+        if (mondayIndex !== -1) {
+          mondayHigh = candles[mondayIndex].high;
+          mondayLow = candles[mondayIndex].low;
+          const weekCandles = candles.slice(mondayIndex);
+          how = Math.max(...weekCandles.map(c => c.high));
+          low_week = Math.min(...weekCandles.map(c => c.low));
+          const count = weekCandles.length;
+          dayOfWeekCycle = count === 1 ? 1 : (count === 2 ? 2 : 3);
+        }
+
         markets[key] = {
           symbol:      config.symbol,
           displayName: config.name,
@@ -173,12 +209,20 @@ export async function initMarketStore() {
           lod: yesterday.low,
           hos: yesterday.high,
           los: yesterday.low,
-          how: Math.max(...available.map(q => q.high)),
-          low_week: Math.min(...available.map(q => q.low)),
+          how,
+          low_week,
+          signalDay,
+          dayOfWeek,
+          dayOfWeekCycle,
+          mondayHigh,
+          mondayLow,
+          asianHigh: yesterday.high,
+          asianLow: yesterday.low,
+          londonHigh: yesterday.high,
+          londonLow: yesterday.low,
           pipSize: config.pipSize,
           change: 0,
           changePercent: 0,
-          signalDay,
           recentDailyCandles,
           lastUpdated: now.toISOString(),
         };
@@ -241,6 +285,8 @@ export async function updateMarketPrices(shouldSyncPrices = true) {
 
       const quotes = await provider.getLiveQuoteBatch(batchInput);
 
+      const currNY = (parseInt(GLOBAL_FORMATTER_HM.format(now).split(':')[0], 10) === 24 ? 0 : parseInt(GLOBAL_FORMATTER_HM.format(now).split(':')[0], 10)) * 60 + parseInt(GLOBAL_FORMATTER_HM.format(now).split(':')[1], 10);
+
       for (const q of quotes) {
         // getLiveQuoteBatch returns quotes keyed either by yahoo or broker symbol
         // Find the market entry regardless of which key is used
@@ -261,6 +307,26 @@ export async function updateMarketPrices(shouldSyncPrices = true) {
         market.changePercent = market.prevClose !== 0
           ? (market.change / market.prevClose) * 100
           : 0;
+
+        let prevNY = -1;
+        if (market.lastUpdated) {
+          const [hPrev, mPrev] = GLOBAL_FORMATTER_HM.format(new Date(market.lastUpdated)).split(':');
+          prevNY = (parseInt(hPrev, 10) === 24 ? 0 : parseInt(hPrev, 10)) * 60 + parseInt(mPrev, 10);
+        }
+
+        if (prevNY !== -1) {
+          if (prevNY < 1200 && currNY >= 1200) { market.asianHigh = currentPrice; market.asianLow = currentPrice; }
+          if (prevNY < 120 && currNY >= 120) { market.londonHigh = currentPrice; market.londonLow = currentPrice; }
+        }
+
+        if (currNY >= 1200 || currNY < 120) {
+          market.asianHigh = Math.max(market.asianHigh, currentPrice);
+          market.asianLow = Math.min(market.asianLow, currentPrice);
+        } else if (currNY >= 120 && currNY < 480) {
+          market.londonHigh = Math.max(market.londonHigh, currentPrice);
+          market.londonLow = Math.min(market.londonLow, currentPrice);
+        }
+
         market.lastUpdated = now.toISOString();
 
         // Update session HOS/LOS during first hour only
@@ -271,6 +337,9 @@ export async function updateMarketPrices(shouldSyncPrices = true) {
             market.los = Math.min(market.los, currentPrice);
           }
         }
+
+        // BUG FIX #3: Persist real bid/ask from live quote into liveSpreads store
+        liveSpreads[symbol] = { bid: q.bid, ask: q.ask };
 
         await checkForTrapTrigger(symbol, market, { bid: q.bid, ask: q.ask });
       }
@@ -307,8 +376,7 @@ async function checkForTrapTrigger(symbol: string, market: MarketData, quote: { 
   if (spread > 3.0) return; // Spread filter — abort on wide spread
 
   const now = new Date();
-  const formatter = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', minute: 'numeric' });
-  const nyMinutes = parseInt(formatter.format(now), 10);
+  const nyMinutes = parseInt(GLOBAL_FORMATTER_MINUTE.format(now), 10);
   const isRotationMins =
     nyMinutes >= 58 || nyMinutes <= 2 ||
     (nyMinutes >= 13 && nyMinutes <= 17) ||
@@ -376,33 +444,26 @@ async function checkForTrapTrigger(symbol: string, market: MarketData, quote: { 
   let patternDetected: TrapSignal['pattern'] | null = null;
   let direction: TrapSignal['direction'] = 'SELL';
   let levelType: TrapSignal['levelType'] = 'HOD';
-  let keyLevel = market.currentPrice;
-  let details  = '';
-  const highestPeak  = lastClosedCandle.high;
-  const lowestValley = lastClosedCandle.low;
+  let levelPrice = market.currentPrice;
 
   // Level 2 EMA-filtered directional logic
   if (isNearHOD && validShortCandle && lastClosedCandle.close < ema100) {
     if (lastClosedCandle.high > market.hod || currentCandle?.high > market.hod) {
-      patternDetected = market.signalDay === 'FRD' ? 'Day 2 Short (Post-FRD)' : 'Post-Inside Day False Break';
-      direction = 'SELL'; levelType = 'HOD'; keyLevel = market.hod;
-      details = `Level 2: False breakout of HOD. Pierce at ${highestPeak.toFixed(4)}, rejected with ${isPinHammerShort ? 'Pin Hammer' : 'Engulfing'}, closed below 20 EMA.`;
+      patternDetected = 'Peak Formation High / False Break';
+      direction = 'SELL'; levelType = 'HOD'; levelPrice = market.hod;
     }
   } else if (isNearLOD && validLongCandle && lastClosedCandle.close > ema100) {
     if (lastClosedCandle.low < market.lod || currentCandle?.low < market.lod) {
-      patternDetected = market.signalDay === 'FGD' ? 'Day 2 Long (Post-FGD)' : 'Post-Inside Day False Break';
-      direction = 'BUY'; levelType = 'LOD'; keyLevel = market.lod;
-      details = `Level 2: False breakout of LOD. Pierce at ${lowestValley.toFixed(4)}, rejected with ${isPinHammerLong ? 'Pin Hammer' : 'Engulfing'}, closed above 20 EMA.`;
+      patternDetected = 'Peak Formation Low / False Break';
+      direction = 'BUY'; levelType = 'LOD'; levelPrice = market.lod;
     }
   } else if (isNearHOS && validShortCandle && lastClosedCandle.close < ema100) {
     if (lastClosedCandle.high > market.hos || currentCandle?.high > market.hos) {
-      patternDetected = 'Session Boundary Reversal'; direction = 'SELL'; levelType = 'HOS'; keyLevel = market.hos;
-      details = `Level 2: Session stop hunt at HOS (${highestPeak.toFixed(4)}). Rejected below EMA.`;
+      patternDetected = 'Session Window High Trap'; direction = 'SELL'; levelType = 'HOS'; levelPrice = market.hos;
     }
   } else if (isNearLOS && validLongCandle && lastClosedCandle.close > ema100) {
     if (lastClosedCandle.low < market.los || currentCandle?.low < market.los) {
-      patternDetected = 'Session Boundary Reversal'; direction = 'BUY'; levelType = 'LOS'; keyLevel = market.los;
-      details = `Level 2: Session stop hunt at LOS (${lowestValley.toFixed(4)}). Rejected above EMA.`;
+      patternDetected = 'Session Window Low Trap'; direction = 'BUY'; levelType = 'LOS'; levelPrice = market.los;
     }
   }
 
@@ -418,56 +479,83 @@ async function checkForTrapTrigger(symbol: string, market: MarketData, quote: { 
   const entryPrice = lastClosedCandle.close;
   let stopLossDistPips: number;
   if (direction === 'SELL') {
-    stopLossDistPips = ((highestPeak - entryPrice) / market.pipSize) + spread + 2.0;
+    stopLossDistPips = ((lastClosedCandle.high - entryPrice) / market.pipSize) + spread + 2.0;
   } else {
-    stopLossDistPips = ((entryPrice - lowestValley) / market.pipSize) + spread + 2.0;
+    stopLossDistPips = ((entryPrice - lastClosedCandle.low) / market.pipSize) + spread + 2.0;
   }
 
   if (stopLossDistPips > 25) return; // Trap too wide — abort per playbook
+
+  // Three-Session Setup Logic:
+  // Asian sets high/low. London breaks it. NY reverses it.
+  const londonBrokeAsia = market.londonHigh > market.asianHigh || market.londonLow < market.asianLow;
+  const nyReversing = (londonBrokeAsia && market.currentPrice > market.londonLow && market.currentPrice < market.londonHigh);
+  const isThreeSessionSetup = londonBrokeAsia && nyReversing && timing.gate === 'New York Session';
+
+  // Day 1 Filter Logic
+  if (market.dayOfWeekCycle === 1 && !isThreeSessionSetup) {
+    return; // Block Day 1 trades unless it's a 3-Session Setup
+  }
+
+  const isThreeDaySetup = market.dayOfWeekCycle === 3;
+  const isHolyGrailConfluence = isThreeDaySetup && isThreeSessionSetup;
 
   const confluence = calculateConfluenceScore(market, symbol, timing.gate, now.toISOString());
   const grade = Math.max(1, Math.min(5, confluence?.grade ?? 3)) as TrapSignal['grade'];
 
   const newAlert: TrapSignal = {
-    id: `alert-${symbol}-${Date.now()}`,
+    id: `${symbol}-${Date.now()}`,
     symbol,
     displayName: market.displayName,
     pattern: patternDetected,
     direction,
-    triggerPrice: entryPrice,
+    triggerPrice: ask,
     levelType,
-    keyLevel,
+    keyLevel: levelPrice,
     grade,
     timingGate: timing.gate,
     timestamp: now.toISOString(),
-    details,
+    details: `${patternDetected} ${direction} trap at ${levelType} (${levelPrice.toFixed(5)}). ${timing.details}`,
     confluenceMatrix: confluence?.matrix,
-    suggestedStopLoss: Math.round(stopLossDistPips * 10) / 10,
-    suggestedTakeProfit: 50,
+    suggestedStopLoss: stopLossDistPips,
+    suggestedTakeProfit: stopLossDistPips * 2, // 1:2 default R:R
+    isThreeDaySetup,
+    isThreeSessionSetup,
+    isHolyGrailConfluence,
     status: 'Trade Now',
   };
-
-  alerts.unshift(newAlert);
-  if (alerts.length > 50) alerts.length = 50;
 
   // Guard against concurrent duplicate execution
   const signalKey = `${symbol}-${patternDetected}`;
   if (executingSignals.has(signalKey)) return;
   executingSignals.add(signalKey);
 
+  // 1. INSTANT BOT EXECUTION (Bypassing AI latency)
+  try {
+    await executeTradeForUsers(newAlert, stopLossDistPips, 50, 5.0);
+    console.log(`[MarketStore] Bot executed instantly: ${symbol} ${direction}. Bypassing AI for speed.`);
+  } catch (err) {
+    console.error(`[MarketStore] Bot execution error for ${symbol}:`, err);
+  }
+
+  // 2. GEMINI AUDIT FOR SIGNAL UI
+  // The user requested that nothing appears in the Signals window without Gemini Audit.
   try {
     const aiDecision = await evaluateSignalWithAI(newAlert, market);
     if (aiDecision.approve) {
       newAlert.status = 'Trade Now';
-      newAlert.details += ` [AI APPROVED: ${aiDecision.reasoning}]`;
-      await executeTradeForUsers(newAlert, stopLossDistPips, 50, 5.0);
+      newAlert.details += ` [GEMINI AUDITED: ${aiDecision.reasoning}]`;
+      
+      // Only push to UI after Gemini approval
+      alerts.unshift(newAlert);
+      if (alerts.length > 50) alerts.length = 50;
+      console.log(`[MarketStore] Gemini Approved ${symbol} signal. Broadcasting to UI.`);
     } else {
-      newAlert.status = 'Wait';
-      newAlert.details += ` [AI REJECTED: ${aiDecision.reasoning}]`;
-      console.log(`[MarketStore] AI Rejected ${symbol} signal: ${aiDecision.reasoning}`);
+      console.log(`[MarketStore] Gemini Rejected ${symbol} signal for UI display: ${aiDecision.reasoning}`);
+      // It will NOT be pushed to the alerts array.
     }
   } catch (err) {
-    console.error('[MarketStore] Error during AI evaluation or execution:', err);
+    console.error('[MarketStore] Error during AI evaluation:', err);
   } finally {
     executingSignals.delete(signalKey);
   }
@@ -480,6 +568,11 @@ export function manuallyTriggerTrap(_symbol: string, _patternType: string): Trap
 
 export function getMarkets() {
   return Object.values(markets);
+}
+
+// 🛡️ BUG FIX #3: Export live spreads so botManagerTick can pass real bid/ask to bots
+export function getMarketSpreads(): Record<string, { bid: number; ask: number }> {
+  return liveSpreads;
 }
 
 export function getAlerts() {

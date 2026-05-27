@@ -1,32 +1,27 @@
 const fs = require('fs');
 
-const data = [
-  { pair: 'AUDJPY', name: 'AUDJPY Ny Fade', hr: 15, min: 30, sl: 20, tp: 50, ema: 240, ret: '18.8M%', wr: 75.0, dd: 14.3, desc: 'Fades the New York session drift on AUDJPY.' },
-  { pair: 'CHFJPY', name: 'CHFJPY Ny Fade', hr: 13, min: 30, sl: 20, tp: 50, ema: 240, ret: '17.1M%', wr: 61.9, dd: 23.8, desc: 'Fades the New York session drift on CHFJPY.' },
-  { pair: 'EURAUD', name: 'EURAUD Ny Fade', hr: 15, min: 30, sl: 20, tp: 50, ema: 240, ret: '19.0M%', wr: 65.4, dd: 22.5, desc: 'Fades the New York session drift on EURAUD.' },
-  { pair: 'EURCAD', name: 'EURCAD Ny Fade', hr: 15, min: 15, sl: 20, tp: 50, ema: 240, ret: '19.0M%', wr: 67.3, dd: 24.2, desc: 'Fades the New York session drift on EURCAD.' },
-  { pair: 'EURCHF', name: 'EURCHF London Fade', hr: 9, min: 0, sl: 20, tp: 50, ema: 240, ret: '17.9M%', wr: 79.7, dd: 9.7, desc: 'Fades the London session drift on EURCHF.' },
-  { pair: 'EURJPY', name: 'EURJPY Ny Fade', hr: 15, min: 30, sl: 20, tp: 50, ema: 240, ret: '18.8M%', wr: 67.6, dd: 18.5, desc: 'Fades the New York session drift on EURJPY.' },
-  { pair: 'GBPAUD', name: 'GBPAUD Ny Fade', hr: 14, min: 30, sl: 20, tp: 50, ema: 240, ret: '14.4M%', wr: 55.4, dd: 25.4, desc: 'Fades the New York session drift on GBPAUD.' },
-  { pair: 'GBPCAD', name: 'GBPCAD Ny Fade', hr: 15, min: 15, sl: 20, tp: 50, ema: 240, ret: '18.2M%', wr: 62.2, dd: 27.2, desc: 'Fades the New York session drift on GBPCAD.' },
-  { pair: 'GBPCHF', name: 'GBPCHF London Fade', hr: 9, min: 0, sl: 20, tp: 50, ema: 240, ret: '17.6M%', wr: 64.8, dd: 22.8, desc: 'Fades the London session drift on GBPCHF.' },
-  { pair: 'GBPJPY', name: 'GBPJPY Ny Fade', hr: 15, min: 30, sl: 20, tp: 45, ema: 240, ret: '14.5M%', wr: 56.8, dd: 28.5, desc: 'Fades the New York session drift on GBPJPY.' },
-  { pair: 'XAUUSD', name: 'XAUUSD London Fade', hr: 8, min: 15, sl: 400, tp: 500, ema: 60, ret: '77.3M%', wr: 58.2, dd: 38.9, desc: 'Fades the London session drift on XAUUSD.' }
+// optimal configs
+const optimal = [
+  { "pair": "GBPJPY", "name": "GBPJPY Ny Fade", "hr": 14, "min": 30, "sl": 30, "tp": 60, "ret": "169.0", "wr": 47.4, "dd": 5.8, "tier": "Apex" },
+  { "pair": "XAUUSD", "name": "XAUUSD London Fade", "hr": 9, "min": 0, "sl": 200, "tp": 600, "ret": "422.7", "wr": 35.5, "dd": 21.6, "tier": "Apex" },
+  { "pair": "GBPUSD", "name": "GBPUSD London Fade", "hr": 7, "min": 30, "sl": 25, "tp": 50, "ret": "195.5", "wr": 67.6, "dd": 10.1, "tier": "Apex" },
+  { "pair": "GBPCHF", "name": "GBPCHF London Fade", "hr": 7, "min": 30, "sl": 20, "tp": 60, "ret": "150.2", "wr": 63.6, "dd": 10.4, "tier": "Apex" },
+  { "pair": "GBPAUD", "name": "GBPAUD Ny Fade", "hr": 14, "min": 30, "sl": 20, "tp": 30, "ret": "149.2", "wr": 55.6, "dd": 10.4, "tier": "Institutional" },
+  { "pair": "AUDJPY", "name": "AUDJPY Ny Fade", "hr": 13, "min": 0, "sl": 40, "tp": 80, "ret": "78.1", "wr": 68.2, "dd": 6.1, "tier": "Institutional" },
+  { "pair": "USDJPY", "name": "USDJPY Ny Fade", "hr": 13, "min": 0, "sl": 25, "tp": 37.5, "ret": "137.0", "wr": 48.8, "dd": 11.0, "tier": "Institutional" },
+  { "pair": "USDCHF", "name": "USDCHF Ny Fade", "hr": 13, "min": 0, "sl": 25, "tp": 37.5, "ret": "65.8", "wr": 48.0, "dd": 5.3, "tier": "Institutional" },
+  { "pair": "EURJPY", "name": "EURJPY London Fade", "hr": 9, "min": 30, "sl": 30, "tp": 30, "ret": "96.3", "wr": 59.2, "dd": 8.5, "tier": "Prop" },
+  { "pair": "AUDUSD", "name": "AUDUSD London Fade", "hr": 9, "min": 15, "sl": 40, "tp": 40, "ret": "38.7", "wr": 65.5, "dd": 3.7, "tier": "Prop" },
+  { "pair": "GBPCAD", "name": "GBPCAD Ny Fade", "hr": 13, "min": 30, "sl": 30, "tp": 90, "ret": "248.1", "wr": 51.8, "dd": 24.2, "tier": "Prop" },
+  { "pair": "EURAUD", "name": "EURAUD London Fade", "hr": 8, "min": 0, "sl": 30, "tp": 30, "ret": "92.1", "wr": 53.8, "dd": 10.2, "tier": "Prop" },
+  { "pair": "NZDUSD", "name": "NZDUSD London Fade", "hr": 9, "min": 15, "sl": 30, "tp": 90, "ret": "93.7", "wr": 60.0, "dd": 10.9, "tier": "Scout" },
+  { "pair": "CHFJPY", "name": "CHFJPY Ny Fade", "hr": 13, "min": 30, "sl": 30, "tp": 30, "ret": "76.3", "wr": 67.6, "dd": 9.4, "tier": "Scout" },
+  { "pair": "EURCHF", "name": "EURCHF London Fade", "hr": 7, "min": 15, "sl": 40, "tp": 40, "ret": "19.2", "wr": 60.6, "dd": 2.4, "tier": "Scout" },
+  { "pair": "EURCAD", "name": "EURCAD London Fade", "hr": 9, "min": 45, "sl": 25, "tp": 50, "ret": "95.4", "wr": 51.4, "dd": 13.0, "tier": "Scout" },
+  { "pair": "USDCAD", "name": "USDCAD London Fade", "hr": 9, "min": 30, "sl": 30, "tp": 60, "ret": "66.9", "wr": 61.3, "dd": 9.9, "tier": "Scout" }
 ];
 
 const template = (d) => {
-  const isJpy = d.pair.includes('JPY');
-  const isGold = d.pair === 'XAUUSD';
-  const pipSize = isJpy || isGold ? 0.01 : 0.0001;
-  const tMin = d.min - 10;
-  let triggerHr = d.hr;
-  let triggerMin = tMin;
-  if (tMin < 0) {
-    triggerMin = 60 + tMin;
-    triggerHr -= 1;
-    if (triggerHr < 0) triggerHr = 23;
-  }
-  
   const id = d.name.toLowerCase().replace(/ /g, '-');
   const className = d.name.replace(/ /g, '') + 'Bot';
 
@@ -38,60 +33,25 @@ export class ${className} extends TradingBot {
   config: BotConfig = {
     id: '${id}',
     name: '${d.name}',
-    tagline: 'High-Probability Fade',
-    description: '${d.desc} Executes at ${d.hr}:${d.min < 10 ? '0'+d.min : d.min} UTC (-10m latency offset). Uses ${d.ema} EMA trend fade with ${d.tp} pip TP / ${d.sl} pip SL.',
+    tagline: 'Sniper AI Authorization Switch',
+    description: 'Toggle this on to authorize the Master Sniper System AI to trade ${d.pair} automatically at ${d.hr}:${d.min < 10 ? '0'+d.min : d.min} UTC.',
     symbols: ['${d.pair}'],
     riskPct: 5,
     strategyType: 'REVERSAL',
     color: 'slate',
-    icon: '⚡',
+    icon: '🔐',
+    tier: '${d.tier}',
     winRateBacktest: ${d.wr},
-    returnBacktest: '+${d.ret} / 5yr',
+    returnBacktest: '+${d.ret}%',
     maxDDBacktest: ${d.dd},
   };
 
-  private htfEma: number = 0;
-  private readonly EMA_PERIOD = ${d.ema};
-
   async generateSignal(context: BotContext): Promise<BotSignal> {
-    const { currentPrice, brokerSymbol, now } = context;
-
-    if (brokerSymbol !== '${d.pair}') return { shouldTrade: false };
-
-    if (this.htfEma === 0) {
-      this.htfEma = currentPrice;
-    } else {
-      const alpha = 2 / (this.EMA_PERIOD + 1);
-      this.htfEma = currentPrice * alpha + this.htfEma * (1 - alpha);
-    }
-
-    if (now.getUTCHours() === ${triggerHr} && now.getUTCMinutes() === ${triggerMin}) {
-      const direction = currentPrice > this.htfEma ? 'SELL' : 'BUY';
-      console.log(\`[${d.pair}-Fade] Triggered at \${currentPrice}. EMA is \${this.htfEma.toFixed(3)}. Fading: \${direction}.\`);
-      
-      return {
-        shouldTrade: true,
-        direction,
-        suggestedSlPips: ${d.sl},
-        suggestedTpPips: ${d.tp},
-        reason: 'SESSION_OPEN_FADE',
-      };
-    }
-
+    // This is purely a UI toggle switch. The logic is executed by SniperSystemAI.
     return { shouldTrade: false };
   }
 
   async manageTrade(trade: BotTradeState, context: BotContext): Promise<TradeAction> {
-    const { currentPrice } = context;
-    const PIP_SIZE = ${pipSize};
-
-    const currentProfitPips = trade.direction === 'BUY'
-      ? (currentPrice - trade.entryPrice) / PIP_SIZE
-      : (trade.entryPrice - currentPrice) / PIP_SIZE;
-
-    if (currentProfitPips >= ${d.tp}) return { action: 'CLOSE', reason: 'TP_HIT' };
-    if (currentProfitPips <= -${d.sl}) return { action: 'CLOSE', reason: 'SL_HIT' };
-
     return { action: 'HOLD' };
   }
 }
@@ -100,7 +60,7 @@ export default new ${className}();
 `;
 };
 
-data.forEach(d => {
+optimal.forEach(d => {
   const filename = 'server/bots/' + d.name.split(' ')[0].toLowerCase() + d.name.split(' ')[1] + 'Fade.ts';
   fs.writeFileSync(filename, template(d));
   console.log('Created ' + filename);

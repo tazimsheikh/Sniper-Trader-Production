@@ -29,7 +29,7 @@ export function useEconomicNews() {
 
     async function fetchRealCalendar() {
       try {
-        const response = await fetch('https://nfs.faireconomy.media/ff_calendar_thisweek.json');
+              const response = await fetch('/api/economic-calendar');
         if (!response.ok) throw new Error('Network response was not ok');
         const data = await response.json();
         

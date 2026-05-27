@@ -16,6 +16,14 @@ export interface MarketData {
   change: number;
   changePercent: number;
   signalDay: 'FRD' | 'FGD' | 'Inside Day' | 'Normal';
+  dayOfWeek: number;
+  dayOfWeekCycle: 1 | 2 | 3;
+  mondayHigh: number;
+  mondayLow: number;
+  asianHigh: number;
+  asianLow: number;
+  londonHigh: number;
+  londonLow: number;
   recentDailyCandles: {
     date: string;
     open: number;
@@ -42,6 +50,9 @@ export interface TrapSignal {
   confluenceMatrix?: any; // The raw data matrix and grading packet
   suggestedStopLoss: number; // in pips/points (e.g. 25 pips)
   suggestedTakeProfit: number; // measured move target
+  isThreeDaySetup?: boolean;
+  isThreeSessionSetup?: boolean;
+  isHolyGrailConfluence?: boolean;
   status?: 'Wait' | 'Get Ready' | 'Trade Now' | 'Trade Expired';
   tutorAnalysis?: {
     setupType: string;

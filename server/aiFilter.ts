@@ -4,6 +4,14 @@ import { TrapSignal, MarketData } from '../src/types.js';
 let ai: GoogleGenAI | null = null;
 
 export async function evaluateSignalWithAI(signal: TrapSignal, market: MarketData): Promise<{ approve: boolean; reasoning: string }> {
+  // If simulation mode is active, bypass Gemini API calls to prevent performance bottleneck
+  if (process.env.SIMULATION_MODE === 'true') {
+    return {
+      approve: true,
+      reasoning: "SIMULATION_MODE active: automatically approved for backtesting."
+    };
+  }
+
   // If API key is missing, reject the trade safely
   if (!process.env.GEMINI_API_KEY) {
     console.warn('[AIFilter] GEMINI_API_KEY missing from environment. Rejecting signal.');
@@ -36,12 +44,14 @@ Market Context:
 - Current HOD (High of Day): ${market.hod.toFixed(5)}
 - Current LOD (Low of Day): ${market.lod.toFixed(5)}
 
-Analyze this setup against these criteria:
-1. Is the timing gate appropriate? (Avoid trading in the "Gap Time" or "Major News Spike" blackout windows).
-2. Is the Stop Loss reasonable? (If SL > 25 pips on Forex or > 50 points on Indices, reject it as too wide).
-3. Does the Pattern align with the Level Type? (e.g., A HOD trap should be a SELL).
-4. Is the Grade high enough? (Generally, prefer Grade 3 or higher, but you may approve Grade 2 if the timing is perfect).
+Analyze this setup against the Stacey Burke Smart Money Master Playbook:
+1. Is the timing gate appropriate? (Must be within active NY/London/Asian session limits. Reject "Gap Time").
+2. Is the Stop Loss reasonable? (Maximum 25 pips limit; 30 for Gold).
+3. Does the Pattern align with the Level Type? (A HOD/HOS trap must be a SELL; a LOD/LOS trap must be a BUY).
+4. Is it respecting the 00/50 rule? (Execution must be near a major 00 or 50 institutional level).
+5. Does it acknowledge the Weekly Template? (Mid-week trades should be stop hunting Monday's Opening Range or Tuesday's Initial Balance).
 
+If the setup looks like a low-probability continuation trade or trades directly into the 20 EMA, reject it.
 You must respond in strict JSON format. Do not use Markdown wrappers, just output raw JSON:
 {
   "approve": boolean,
