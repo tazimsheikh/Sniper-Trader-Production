@@ -107,7 +107,7 @@ export async function verifyMetaApiConnection(token: string, accountId: string):
 export async function verifyMetaApiToken(token: string): Promise<boolean> {
   try {
     const api = getApiInstance(token);
-    const accountsPromise = api.metatraderAccountApi.getAccounts();
+    const accountsPromise = api.metatraderAccountApi.getAccountsWithClassicPagination();
     await Promise.race([
       accountsPromise,
       new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 5000))
@@ -118,7 +118,15 @@ export async function verifyMetaApiToken(token: string): Promise<boolean> {
       console.warn(`[MetaAPI] Token verification timed out. Assuming valid.`);
       return true;
     }
-    if (err.status === 401 || err.status === 403 || err.message.includes('auth') || err.message.includes('token')) {
+    if (
+      err.status === 401 || 
+      err.status === 403 || 
+      err.name === 'UnauthorizedError' ||
+      err.name === 'MethodAccessError' ||
+      err.message?.includes('auth') || 
+      err.message?.includes('token') ||
+      err.message?.includes('access token')
+    ) {
       return false; // Invalid token
     }
     return true; // Valid but maybe API is unreachable temporarily
@@ -221,6 +229,7 @@ export async function getSharedStreamingConnection(token: string, accountId: str
         cached.waitSynchronized(),
         new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 1000)),
       ]);
+      if (onMetaApiConnected) onMetaApiConnected();
       return cached;
     } catch {
       streamingConnectionCache.delete(key);
@@ -257,6 +266,7 @@ export async function getSharedStreamingConnection(token: string, accountId: str
           
           streamingConnectionCache.set(key, connection);
           console.log(`[MetaAPI] ✅ Background streaming sync complete for ${accountId}.`);
+          if (onMetaApiConnected) onMetaApiConnected();
         } catch (err: any) {
           console.warn(`[MetaAPI] ⚠️ Background streaming sync failed:`, err.message);
         } finally {
@@ -286,6 +296,7 @@ export async function getSharedStreamingConnection(token: string, accountId: str
     }
     
     streamingConnectionCache.set(key, connection);
+    if (onMetaApiConnected) onMetaApiConnected();
     return connection;
   }
 }

@@ -8,7 +8,7 @@ import EconomicCalendar from './components/EconomicCalendar';
 import SimpleAlertFeed from './components/SimpleAlertFeed';
 import AutomateDashboard from './components/AutomateDashboard';
 import LoginScreen from './components/LoginScreen';
-import { GraduationCap, Clock, HelpCircle, Activity, Award, CheckCircle, Presentation, Zap, Radio, MessageSquare, AlertTriangle, LogOut } from 'lucide-react';
+import { GraduationCap, Clock, HelpCircle, Activity, Award, CheckCircle, Presentation, Zap, Radio, MessageSquare, AlertTriangle, LogOut, Settings, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useEconomicNews } from './hooks/useEconomicNews';
 
@@ -38,6 +38,10 @@ export default function App() {
   const [chatMessages, setChatMessages]               = useState<ChatMessage[]>([]);
   const chatMessagesRef = useRef<ChatMessage[]>([]);    // FIX: Ref to always have latest value
   chatMessagesRef.current = chatMessages;
+
+  const [showGlobalSettings, setShowGlobalSettings] = useState(false);
+  const [newTokenInput, setNewTokenInput] = useState('');
+  const [tokenUpdateStatus, setTokenUpdateStatus] = useState('');
 
   const [isThinking, setIsThinking]     = useState(false);
   const [activeView, setActiveView]     = useState<'monitor' | 'calendar' | 'ai-assistant'>('monitor');
@@ -392,7 +396,16 @@ export default function App() {
                 </div>
               ))}
 
-              {/* FIX: Logout button ───────────────────────────────────── */}
+              {/* FIX: Global Settings & Logout buttons ───────────────────────────────────── */}
+              <button
+                onClick={() => setShowGlobalSettings(true)}
+                title="Global Settings"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800/80 border border-slate-700 hover:bg-slate-700/80 hover:border-slate-500/50 text-slate-400 hover:text-slate-200 text-[10px] font-mono uppercase tracking-wider transition-all"
+              >
+                <Settings size={12} />
+                Settings
+              </button>
+
               <button
                 onClick={handleLogout}
                 title={`Logout (${authUser.email})`}
@@ -404,6 +417,49 @@ export default function App() {
             </div>
           </div>
         </div>
+
+        {/* ── GLOBAL SETTINGS MODAL ── */}
+        <AnimatePresence>
+          {showGlobalSettings && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowGlobalSettings(false)} />
+              <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-slate-900 border border-slate-700 p-6 rounded-2xl w-full max-w-md relative z-10 shadow-2xl">
+                <button onClick={() => setShowGlobalSettings(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white">
+                  <X size={20} />
+                </button>
+                <h3 className="text-xl font-display font-black text-white mb-4 flex items-center gap-2 uppercase tracking-wide">
+                  <Settings className="text-indigo-400" />
+                  Global Settings
+                </h3>
+                
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-1.5 ml-1">Update Meta API Token</label>
+                    <input
+                      type="password"
+                      value={newTokenInput}
+                      onChange={e => setNewTokenInput(e.target.value)}
+                      className="w-full bg-slate-950/50 border border-slate-700 text-white rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all placeholder:text-slate-600 font-mono text-sm"
+                      placeholder="Paste new Meta API Token..."
+                    />
+                    {tokenUpdateStatus && (
+                      <p className={`mt-2 text-xs font-mono ml-1 ${tokenUpdateStatus.includes('Success') ? 'text-emerald-400' : tokenUpdateStatus === 'Verifying...' ? 'text-indigo-400 animate-pulse' : 'text-red-400'}`}>
+                        {tokenUpdateStatus}
+                      </p>
+                    )}
+                  </div>
+                  
+                  <button
+                    onClick={handleUpdateMetaApiToken}
+                    className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 rounded-xl transition-colors font-display tracking-wide uppercase text-sm"
+                  >
+                    Save Changes
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
 
         <AnimatePresence mode="wait">
           {appMode === 'signal' ? (

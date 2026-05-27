@@ -166,6 +166,10 @@ export const YahooProvider: CandleProvider = {
 
 export let metaApiSyncStatus: 'offline' | 'syncing' | 'connected' = 'offline';
 
+export function getMetaApiSyncStatus() {
+  return metaApiSyncStatus;
+}
+
 async function getConnection(token: string, accountId: string): Promise<any> {
   try {
     const conn = await getSharedConnection(token, accountId, true);

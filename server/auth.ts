@@ -298,8 +298,12 @@ authRouter.get('/me', requireAuth, (req: AuthRequest, res) => {
 });
 
 authRouter.get('/metaapi/status', requireAuth, (req, res) => {
-  const { metaApiSyncStatus } = require('./candleProvider');
-  res.json({ success: true, status: metaApiSyncStatus || 'offline' });
+  try {
+    const { getMetaApiSyncStatus } = require('./candleProvider');
+    res.json({ success: true, status: getMetaApiSyncStatus() || 'offline' });
+  } catch (err) {
+    res.json({ success: true, status: 'offline' });
+  }
 });
 
 import { verifyMetaApiConnection, getProfileTradeHistory, clearSharedConnection } from './metaApiHandler.js';

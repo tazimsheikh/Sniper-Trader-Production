@@ -728,7 +728,7 @@ export default function AutomateDashboard() {
             <Link size={20} className="text-white" />
           </div>
           <div>
-            <h2 className="text-xl font-display font-black text-white tracking-tight uppercase">Connection & Risk</h2>
+            <h2 className="text-xl font-display font-black text-white tracking-tight uppercase">MetaAPI bridge configuration</h2>
             <p className="text-slate-500 font-mono text-[10px] uppercase tracking-widest mt-0.5">MetaAPI Bridge Configuration</p>
           </div>
           {/* Status pills */}

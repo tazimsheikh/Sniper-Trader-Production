@@ -29,8 +29,8 @@ async function runSimulation() {
 
   // Setup Database for Simulation
   db.prepare(`
-    INSERT OR IGNORE INTO users (id, email, password_hash)
-    VALUES (999, 'simulation@test.com', 'dummy_hash')
+    INSERT OR REPLACE INTO users (id, email, password_hash, metaapi_token)
+    VALUES (999, 'simulation@test.com', 'dummy_hash', 'dummy_token')
   `).run();
 
   const activeBotsJson = JSON.stringify(Object.keys(BOT_REGISTRY));

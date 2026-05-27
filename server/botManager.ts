@@ -69,7 +69,7 @@ export const ALL_BOT_CONFIGS: BotConfig[] = Object.values(BOT_REGISTRY).map(b =>
 
 // ── MetaAPI Health Status ─────────────────────────────────────────────────────
 export let metaApiExecutionHealth: 'healthy' | 'degraded' | 'offline' = 'offline';
-export let metaApiLastConnected: number = 0; // Unix ms timestamp
+export let metaApiLastConnected: number = Date.now(); // Unix ms timestamp
 
 setMetaApiConnectedCallback(() => {
   metaApiExecutionHealth = 'healthy';

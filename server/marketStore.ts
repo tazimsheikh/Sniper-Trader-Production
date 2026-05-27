@@ -85,6 +85,11 @@ const GLOBAL_FORMATTER_HM = new Intl.DateTimeFormat('en-US', {
   hour12: false,
 });
 
+const GLOBAL_FORMATTER_MINUTE = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'America/New_York',
+  minute: 'numeric',
+});
+
 export function getTimingGate(): { gate: TrapSignal['timingGate']; details: string; isBlackout: boolean } {
   const now = new Date();
   
@@ -261,6 +266,9 @@ export async function updateMarketPrices(shouldSyncPrices = true) {
   const now = new Date();
   const currentGate = getTimingGate();
   const provider = globalProvider();
+  
+  // FIX: Track actual active provider dynamically
+  activeDataSource = provider.source;
 
   // Session change → reset HOS/LOS to current price
   if (currentGate.gate !== activeSessionName) {
