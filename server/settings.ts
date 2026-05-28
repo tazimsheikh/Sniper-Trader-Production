@@ -15,6 +15,7 @@ settingsRouter.get('/keys', requireAuth, (req: AuthRequest, res: Response) => {
 
     let metaapi_token = '';
     let metaapi_account_id = '';
+    let gemini_api_key = '';
     
     if (user.metaapi_token) {
       metaapi_token = isEncrypted(user.metaapi_token) ? decrypt(user.metaapi_token) : user.metaapi_token;
@@ -22,13 +23,16 @@ settingsRouter.get('/keys', requireAuth, (req: AuthRequest, res: Response) => {
     if (user.metaapi_account_id) {
       metaapi_account_id = isEncrypted(user.metaapi_account_id) ? decrypt(user.metaapi_account_id) : user.metaapi_account_id;
     }
+    if (user.gemini_api_key) {
+      gemini_api_key = isEncrypted(user.gemini_api_key) ? decrypt(user.gemini_api_key) : user.gemini_api_key;
+    }
 
     res.json({
       success: true,
       keys: {
         metaapiToken: metaapi_token ? '••••••••••••••••' + metaapi_token.slice(-4) : '',
         metaapiAccountId: metaapi_account_id,
-        geminiApiKey: user.gemini_api_key ? '••••••••••••••••' + user.gemini_api_key.slice(-4) : ''
+        geminiApiKey: gemini_api_key ? '••••••••••••••••' + gemini_api_key.slice(-4) : ''
       }
     });
   } catch (err: any) {
@@ -46,7 +50,7 @@ settingsRouter.post('/keys', requireAuth, async (req: AuthRequest, res: Response
 
     let finalMetaToken = isEncrypted(user.metaapi_token) ? decrypt(user.metaapi_token) : user.metaapi_token;
     let finalMetaAccount = isEncrypted(user.metaapi_account_id) ? decrypt(user.metaapi_account_id) : user.metaapi_account_id;
-    let finalGeminiKey = user.gemini_api_key;
+    let finalGeminiKey = user.gemini_api_key ? (isEncrypted(user.gemini_api_key) ? decrypt(user.gemini_api_key) : user.gemini_api_key) : null;
 
     if (metaapiToken && !metaapiToken.startsWith('••••')) finalMetaToken = metaapiToken;
     if (metaapiAccountId) finalMetaAccount = metaapiAccountId;
@@ -59,7 +63,7 @@ settingsRouter.post('/keys', requireAuth, async (req: AuthRequest, res: Response
     `).run(
       finalMetaToken ? encrypt(finalMetaToken.trim()) : null,
       finalMetaAccount ? encrypt(finalMetaAccount.trim()) : null,
-      finalGeminiKey ? finalGeminiKey.trim() : null,
+      finalGeminiKey ? encrypt(finalGeminiKey.trim()) : null,
       req.user.id
     );
 
@@ -91,7 +95,8 @@ settingsRouter.get('/status', requireAuth, async (req: AuthRequest, res: Respons
 
     // Test Gemini
     try {
-      const gKey = user.gemini_api_key || process.env.GEMINI_API_KEY;
+      let gKey = user.gemini_api_key || process.env.GEMINI_API_KEY;
+      if (gKey && isEncrypted(gKey)) gKey = decrypt(gKey);
       if (gKey) {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 5000);

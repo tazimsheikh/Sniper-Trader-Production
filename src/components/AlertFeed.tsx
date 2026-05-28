@@ -89,9 +89,17 @@ export default function AlertFeed({
   const [phaseTime, setPhaseTime] = useState(0);
 
   // Stop API on unmount
+  const timeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tradePhaseRef = React.useRef<TradePhase>('pre-execution');
+
+  useEffect(() => {
+    tradePhaseRef.current = tradePhase;
+  }, [tradePhase]);
+
   useEffect(() => {
     return () => {
       if (window.speechSynthesis) window.speechSynthesis.cancel();
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
     };
   }, []);
 
@@ -110,30 +118,30 @@ export default function AlertFeed({
 
         setPhaseTime(p => p + 1);
 
-        setTradePhase(currentPhase => {
-          let nextPhase = currentPhase;
-          let isFirst = false;
-          
-          if (currentPhase === 'pre-execution') {
-            if (Math.random() > 0.4) { nextPhase = 'execution'; isFirst = true; }
-          } else if (currentPhase === 'execution') {
-            nextPhase = 'in-trade';
-          } else if (currentPhase === 'in-trade') {
-            if (Math.random() > 0.5) { nextPhase = 'break-even'; isFirst = true; }
-          } else if (currentPhase === 'break-even') {
-            if (Math.random() > 0.5) { nextPhase = 'closed'; isFirst = true; }
-          } else if (currentPhase === 'closed') {
-            return currentPhase;
-          }
+        const currentPhase = tradePhaseRef.current;
+        let nextPhase = currentPhase;
+        let isFirst = false;
+        
+        if (currentPhase === 'pre-execution') {
+          if (Math.random() > 0.4) { nextPhase = 'execution'; isFirst = true; }
+        } else if (currentPhase === 'execution') {
+          nextPhase = 'in-trade';
+        } else if (currentPhase === 'in-trade') {
+          if (Math.random() > 0.5) { nextPhase = 'break-even'; isFirst = true; }
+        } else if (currentPhase === 'break-even') {
+          if (Math.random() > 0.5) { nextPhase = 'closed'; isFirst = true; }
+        } else if (currentPhase === 'closed') {
+          return;
+        }
 
-          const thesis = generateDynamicLifecycleUpdate(activeBroadcast, nextPhase, isFirst);
-          speakText(thesis);
-          
-          if (nextPhase === 'closed' && isFirst) {
-            setTimeout(() => setIsPlaying(false), 30000); 
-          }
-          return nextPhase;
-        });
+        const thesis = generateDynamicLifecycleUpdate(activeBroadcast, nextPhase, isFirst);
+        speakText(thesis);
+        
+        if (nextPhase === 'closed' && isFirst) {
+          timeoutRef.current = setTimeout(() => setIsPlaying(false), 30000); 
+        }
+        
+        setTradePhase(nextPhase);
       }, 60000);
     }
     return () => { if (interval) clearInterval(interval); };

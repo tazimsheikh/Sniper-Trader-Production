@@ -48,7 +48,8 @@ export default function BacktestViewer() {
     window.addEventListener('resize', handleResize);
 
     // Fetch backtest data
-    fetch('/backtest_results.json')
+    const abortController = new AbortController();
+    fetch('/backtest_results.json', { signal: abortController.signal })
       .then(res => res.json())
       .then(data => {
         setMetrics(data.metrics);
@@ -89,9 +90,12 @@ export default function BacktestViewer() {
         markers.sort((a, b) => a.time - b.time);
         candlestickSeries.setMarkers(markers);
       })
-      .catch(console.error);
+      .catch(err => {
+        if (err.name !== 'AbortError') console.error(err);
+      });
 
     return () => {
+      abortController.abort();
       window.removeEventListener('resize', handleResize);
       chart.remove();
     };

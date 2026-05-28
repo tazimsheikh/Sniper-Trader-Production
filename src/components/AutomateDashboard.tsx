@@ -93,7 +93,7 @@ const COLOR_MAP: Record<string, { glow: string; border: string; badge: string; t
 };
 
 // ── Bot Card Component ────────────────────────────────────────────────────────
-function BotCard({ bot, onToggle, disabled }: { bot: BotCardData; onToggle: (id: string, active: boolean) => void | Promise<void>; disabled: boolean; key?: React.Key }) {
+function BotCard({ bot, onToggle, disabled, riskPercentage = 5 }: { bot: BotCardData; onToggle: (id: string, active: boolean) => void | Promise<void>; disabled: boolean; riskPercentage?: number; key?: React.Key }) {
   let mappedColor = bot.color;
   if (bot.tier === 'Apex') mappedColor = 'indigo';
   else if (bot.tier === 'Institutional') mappedColor = 'purple';
@@ -102,6 +102,11 @@ function BotCard({ bot, onToggle, disabled }: { bot: BotCardData; onToggle: (id:
 
   const colors = COLOR_MAP[mappedColor] || COLOR_MAP.indigo;
   const [expanded, setExpanded] = useState(false);
+
+  const riskMultiplier = riskPercentage / 5;
+  const numericReturn = parseInt(bot.returnBacktest.replace(/[^0-9-]/g, ''), 10);
+  const adjustedReturn = isNaN(numericReturn) ? bot.returnBacktest : `+${Math.round(numericReturn * riskMultiplier)}%/yr`;
+  const adjustedDD = (bot.maxDDBacktest * riskMultiplier).toFixed(1);
 
   return (
     <motion.div
@@ -192,7 +197,7 @@ function BotCard({ bot, onToggle, disabled }: { bot: BotCardData; onToggle: (id:
             <span className="text-[9px] font-mono uppercase text-slate-500 tracking-wider">Return</span>
           </div>
           <span className={`text-sm font-display font-black ${bot.isActive ? colors.text : 'text-slate-400'}`}>
-            {bot.returnBacktest}
+            {adjustedReturn}
           </span>
         </div>
         <div className={`rounded-xl p-3 ${bot.isActive ? colors.bg : 'bg-slate-800/50'}`}>
@@ -201,7 +206,7 @@ function BotCard({ bot, onToggle, disabled }: { bot: BotCardData; onToggle: (id:
             <span className="text-[9px] font-mono uppercase text-slate-500 tracking-wider">Max DD</span>
           </div>
           <span className={`text-lg font-display font-black ${bot.isActive ? colors.text : 'text-slate-400'}`}>
-            {bot.maxDDBacktest}%
+            {adjustedDD}%
           </span>
         </div>
       </div>
@@ -264,6 +269,7 @@ export default function AutomateDashboard() {
   const [metaapiAccountId, setMetaapiAccountId] = useState('');
   const [automationActive, setAutomationActive] = useState(false);
   const [aiSniperActive, setAiSniperActive]     = useState(false);
+  const [riskPercentage, setRiskPercentage]     = useState(5);
   const [dataSource, setDataSource]             = useState<'yahoo' | 'metaapi'>('yahoo');
   const [loading, setLoading]   = useState(true);
   const [saving, setSaving]     = useState(false);
@@ -367,6 +373,7 @@ export default function AutomateDashboard() {
         setMetaapiAccountId(profile.metaapi_account_id || '');
         setAutomationActive(profile.automation_active === 1);
         setAiSniperActive(profile.ai_sniper_active === 1);
+        setRiskPercentage(profile.risk_multiplier === 1 ? 5 : (profile.risk_multiplier || 5));
       }
 
       if (botsData.success) setBots(botsData.bots);
@@ -433,10 +440,12 @@ export default function AutomateDashboard() {
       setMetaapiAccountId(profile.metaapi_account_id || '');
       setAutomationActive(profile.automation_active === 1);
       setAiSniperActive(profile.ai_sniper_active === 1);
+      setRiskPercentage(profile.risk_multiplier === 1 ? 5 : (profile.risk_multiplier || 5));
     } else {
       setMetaapiAccountId('');
       setAutomationActive(false);
       setAiSniperActive(false);
+      setRiskPercentage(5);
     }
     loadData(pId);
   };
@@ -539,7 +548,7 @@ export default function AutomateDashboard() {
         credentials: 'same-origin',
         body: JSON.stringify({
           profile_name: profile?.profile_name,
-          risk_multiplier: profile?.risk_multiplier,
+          risk_multiplier: riskPercentage,
           metaapi_account_id: cleanAccountId,
           automation_active: automationActive,
           ai_sniper_active: aiSniperActive,
@@ -752,7 +761,6 @@ export default function AutomateDashboard() {
         </div>
 
         <form onSubmit={handleSave} className="space-y-6">
-          {/* Account ID */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
             <div>
               <label className="block text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-1.5 ml-1">Account ID</label>
@@ -761,6 +769,25 @@ export default function AutomateDashboard() {
                 placeholder="e.g. 1eda5cc4-3ad8-4f6e-a3cf"
                 className="w-full bg-slate-950/50 border border-slate-700 text-white rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 font-mono text-sm placeholder:text-slate-600 transition-all"
               />
+            </div>
+            
+            <div>
+              <div className="flex justify-between items-center mb-1.5 ml-1 mr-1">
+                <label className="block text-[10px] font-mono text-slate-500 uppercase tracking-widest">Base Risk Per Trade</label>
+                <span className="text-[10px] font-mono font-bold text-indigo-400">{riskPercentage}%</span>
+              </div>
+              <div className="bg-slate-950/50 border border-slate-700 rounded-xl px-4 py-3 h-[46px] flex items-center">
+                <input
+                  type="range"
+                  min="1"
+                  max="10"
+                  step="1"
+                  value={riskPercentage}
+                  onChange={(e) => setRiskPercentage(Number(e.target.value))}
+                  className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                />
+              </div>
+              <p className="text-[9px] font-mono text-slate-600 mt-1.5 ml-1 uppercase">Recommended: 5% (Aggressive)</p>
             </div>
           </div>
 
@@ -834,6 +861,51 @@ export default function AutomateDashboard() {
           )}
         </div>
 
+        {/* Combined Matrix Panel */}
+        {activeBotCount > 1 && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-6 bg-slate-950/60 border border-indigo-500/30 rounded-2xl p-5 shadow-[0_0_20px_rgba(99,102,241,0.1)] flex items-center justify-between"
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-indigo-500/20 text-indigo-400 rounded-xl flex items-center justify-center border border-indigo-500/30 shadow-inner">
+                <BarChart2 size={20} />
+              </div>
+              <div>
+                <h3 className="text-white font-display font-black tracking-tight text-lg">Combined Portfolio Matrix</h3>
+                <p className="text-slate-500 font-mono text-[10px] uppercase tracking-widest">Aggregate Backtest Metrics</p>
+              </div>
+            </div>
+            
+            <div className="flex items-center gap-8">
+              <div className="text-center">
+                <p className="text-slate-500 font-mono text-[10px] uppercase tracking-widest mb-1">Avg Win Rate</p>
+                <p className="text-white font-display font-bold text-xl">{
+                  (bots.filter(b => b.isActive).reduce((a, b) => a + b.winRateBacktest, 0) / activeBotCount).toFixed(1)
+                }%</p>
+              </div>
+              <div className="w-px h-8 bg-slate-800" />
+              <div className="text-center">
+                <p className="text-slate-500 font-mono text-[10px] uppercase tracking-widest mb-1">Combined Return</p>
+                <p className="text-emerald-400 font-display font-bold text-xl">+{
+                  Math.round(bots.filter(b => b.isActive).reduce((a, b) => {
+                    const val = parseInt(b.returnBacktest.replace(/[^0-9-]/g, ''), 10);
+                    return a + (isNaN(val) ? 0 : val);
+                  }, 0) * (riskPercentage / 5))
+                }%/yr</p>
+              </div>
+              <div className="w-px h-8 bg-slate-800" />
+              <div className="text-center">
+                <p className="text-slate-500 font-mono text-[10px] uppercase tracking-widest mb-1">Estimated Max DD</p>
+                <p className="text-rose-400 font-display font-bold text-xl">{
+                  (Math.max(...bots.filter(b => b.isActive).map(b => b.maxDDBacktest)) * (riskPercentage / 5)).toFixed(1)
+                }%</p>
+              </div>
+            </div>
+          </motion.div>
+        )}
+
         {/* Warning if master not armed */}
         {!automationActive && (
           <motion.div
@@ -889,6 +961,7 @@ export default function AutomateDashboard() {
                                     bot={bot}
                                     onToggle={handleBotToggle}
                                     disabled={!automationActive || toggling !== null}
+                                    riskPercentage={riskPercentage}
                                   />
                                 ))}
                               </div>

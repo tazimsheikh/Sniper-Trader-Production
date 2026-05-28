@@ -99,9 +99,8 @@ export async function verifyMetaApiConnection(token: string, accountId: string):
     return true;
   } catch (err: any) {
     if (err.message === 'timeout') {
-      // If it times out, we accept it as valid for now and let the background worker try syncing
-      console.warn(`[MetaAPI] Verification timed out (2s). Assuming valid for background sync.`);
-      return true;
+      console.warn(`[MetaAPI] Verification timed out (2s). Returning false.`);
+      return false;
     }
     throw new Error(`MetaAPI Connection Failed: ${err.message}`);
   }
@@ -337,8 +336,16 @@ export async function getSharedAccount(token: string, accountId: string): Promis
 export function clearSharedConnection(token: string, accountId: string) {
   accountId = safeDecryptAccountId(accountId);
   const key = createHash('sha256').update(token + accountId).digest('hex');
+  
+  const conn = connectionCache.get(key);
+  if (conn) {
+    try {
+      conn.close();
+    } catch {}
+  }
   connectionCache.delete(key);
   accountCache.delete(key);
+  
   const streamConn = streamingConnectionCache.get(key);
   if (streamConn) {
     try {
@@ -349,25 +356,27 @@ export function clearSharedConnection(token: string, accountId: string) {
 }
 
 // ── Main trade execution entry point ──────────────────────────────────────────
-export async function executeTradeForUsers(
+export async function executeTradeForProfile(
+  profileId: number,
   signal: TrapSignal,
   stopLossDistPips: number,
   takeProfitDistPips: number,
   forceRiskPct?: number
 ) {
-  const profiles = db.prepare(
+  const profile = db.prepare(
     `SELECT tp.id, tp.user_id, u.metaapi_token, tp.metaapi_account_id, tp.risk_multiplier, tp.active_bots
      FROM trading_profiles tp
      JOIN users u ON u.id = tp.user_id
-     WHERE tp.automation_active = 1 
+     WHERE tp.id = ?
+       AND tp.automation_active = 1 
        AND u.metaapi_token IS NOT NULL 
        AND tp.metaapi_account_id IS NOT NULL 
-       ${process.env.SIMULATION_MODE === 'true' ? 'AND tp.id = 999' : `AND u.metaapi_token != 'dummy_token' AND tp.metaapi_account_id != 'dummy_acc'`}`
-  ).all() as any[];
+       ${process.env.SIMULATION_MODE === 'true' ? '' : `AND u.metaapi_token != 'dummy_token' AND tp.metaapi_account_id != 'dummy_acc'`}`
+  ).get(profileId) as any;
 
-  if (profiles.length === 0) return;
+  if (!profile) return;
 
-  console.log(`[MetaAPI] Signal ${signal.id} | ${signal.direction} ${signal.symbol} | Executing for ${profiles.length} profile(s)`);
+  console.log(`[MetaAPI] Signal ${signal.id} | ${signal.direction} ${signal.symbol} | Executing for profile ${profile.id}`);
 
   const brokerSymbol = BROKER_SYMBOL_MAP[signal.symbol] ?? signal.symbol.replace('=X', '').replace('=F', '');
   const spec = getSymbolSpec(brokerSymbol);
@@ -378,122 +387,130 @@ export async function executeTradeForUsers(
     return;
   }
 
-  // Base risk from actual signal grade: grade 5 = 5%, grade 1 = 1%
-  let baseRiskPct = forceRiskPct ?? signal.grade;
-  if (signal.isHolyGrailConfluence) {
-    baseRiskPct = 10;
-  }
+  let rawToken: string = '';
+  try {
+    // ── AUTHORIZATION CHECK: User must have the pair toggled ON ──────────────
+    let activeBots: string[] = [];
+    try { activeBots = JSON.parse(profile.active_bots || '[]'); } catch (e) { activeBots = []; }
+    
+    const lowerBrokerSymbol = brokerSymbol.toLowerCase();
+    const isAuthorized = activeBots.includes('sniper-system-ai') || 
+                         activeBots.some(botId => botId.includes(lowerBrokerSymbol));
+                         
+    if (!isAuthorized) {
+      console.log(`[MetaAPI Profile ${profile.id}] Trade rejected: ${brokerSymbol} is not authorized by active bots.`);
+      return;
+    }
 
-  const promises = profiles.map(async (profile) => {
-    let rawToken: string = '';
+    // ── LOCKOUT RULE: Max 1 losing trade per session ──────────────────────
+    const losses = getSessionLosses(profile.id, signal.timingGate);
+    if (losses >= 1) {
+      console.warn(`[MetaAPI Profile ${profile.id}] Lockout active. Max losses reached for session ${signal.timingGate}. Skipping trade.`);
+      return;
+    }
+
+    // ── FIX: Guard null token ─────────────────────────────────────────────
+    if (!profile.metaapi_token || !profile.metaapi_account_id) {
+      console.warn(`[MetaAPI Profile ${profile.id}] No token or account ID configured — skipping.`);
+      return;
+    }
+
+    // ── FIX: Decrypt token before use ─────────────────────────────────────
     try {
-      // ── AUTHORIZATION CHECK: User must have the pair toggled ON ──────────────
-      let activeBots: string[] = [];
-      try { activeBots = JSON.parse(profile.active_bots || '[]'); } catch (e) { activeBots = []; }
-      
-      const lowerBrokerSymbol = brokerSymbol.toLowerCase();
-      const isAuthorized = activeBots.includes('sniper-system-ai') || 
-                           activeBots.some(botId => botId.startsWith(lowerBrokerSymbol));
-                           
-      if (!isAuthorized) {
-        console.log(`[MetaAPI Profile ${profile.id}] Trade rejected: ${brokerSymbol} is not authorized by active bots.`);
-        return;
-      }
+      rawToken = isEncrypted(profile.metaapi_token) ? decrypt(profile.metaapi_token) : profile.metaapi_token;
+    } catch (e: any) {
+      console.error(`[MetaAPI Profile ${profile.id}] Token decryption failed — skipping:`, e.message);
+      return;
+    }
 
-      // ── LOCKOUT RULE: Max 1 losing trade per session ──────────────────────
-      const losses = getSessionLosses(profile.id, signal.timingGate);
-      if (losses >= 1) {
-        console.warn(`[MetaAPI Profile ${profile.id}] Lockout active. Max losses reached for session ${signal.timingGate}. Skipping trade.`);
-        return;
-      }
+    // ── FIX: Use cached SDK instance ───────────────────────────────────────
+    let balance: number = 0;
+    let quote: any = null;
 
-      // ── FIX: Guard null token ─────────────────────────────────────────────
-      if (!profile.metaapi_token) {
-        console.warn(`[MetaAPI Profile ${profile.id}] No token configured — skipping.`);
-        return;
-      }
-      if (!profile.metaapi_account_id) {
-        console.warn(`[MetaAPI Profile ${profile.id}] No account ID configured — skipping.`);
-        return;
-      }
+    if (process.env.SIMULATION_MODE === 'true') {
+       balance = 100.0; // Simulate $100 account
+       const liveQuote = await SimulationProvider.getLiveQuote('', brokerSymbol);
+       quote = { bid: liveQuote.bid, ask: liveQuote.ask, time: liveQuote.time };
+    } else {
+       const connection = await getSharedConnection(rawToken, profile.metaapi_account_id, false);
+       const accountInfo = await connection.getAccountInformation();
+       balance = accountInfo.balance;
 
-      // ── FIX: Decrypt token before use ─────────────────────────────────────
-      try {
-        rawToken = isEncrypted(profile.metaapi_token) ? decrypt(profile.metaapi_token) : profile.metaapi_token;
-      } catch (e: any) {
-        console.error(`[MetaAPI Profile ${profile.id}] Token decryption failed — skipping:`, e.message);
-        return;
-      }
+       // @ts-ignore
+       quote = await connection.getSymbolPrice(brokerSymbol);
+       const quoteAgeMs = Date.now() - (quote?.time?.getTime?.() ?? 0);
+       if (quoteAgeMs > 10_000) {
+         throw new Error(`Stale quote for ${brokerSymbol}: ${quoteAgeMs}ms old. Trade aborted.`);
+       }
+    }
 
-      // ── FIX: Use cached SDK instance ───────────────────────────────────────
-      let balance: number = 0;
-      let quote: any = null;
+    // 🛡️ SPREAD TOLERANCE CHECK
+    const spread = (quote.ask - quote.bid) / spec.pipSize;
+    const isGoldOrIndex = brokerSymbol.includes('XAU') || brokerSymbol.includes('NAS') || brokerSymbol.includes('USTEC');
+    const isMinor = brokerSymbol.includes('JPY') || brokerSymbol.includes('AUD') || brokerSymbol.includes('NZD') || brokerSymbol.includes('CAD') || brokerSymbol.includes('CHF');
+    const maxSpreadAllowed = isGoldOrIndex ? 25 : (isMinor ? 5 : 3);
+    
+    if (spread > maxSpreadAllowed) {
+       console.warn(`[MetaAPI Profile ${profile.id}] ⛔ TRADE REJECTED — Spread is dangerously high (${spread.toFixed(1)} > ${maxSpreadAllowed} pips)`);
+       return;
+    }
 
-      if (process.env.SIMULATION_MODE === 'true') {
-         balance = 100.0; // Simulate $100 account
-         const liveQuote = await SimulationProvider.getLiveQuote('', brokerSymbol);
-         quote = { bid: liveQuote.bid, ask: liveQuote.ask, time: liveQuote.time };
-      } else {
-         const connection = await getSharedConnection(rawToken, profile.metaapi_account_id, false);
-         const accountInfo = await connection.getAccountInformation();
-         balance = accountInfo.balance;
+    // Calculate Lot Size based directly on user's chosen risk percentage (profile.risk_multiplier)
+    // Ensure it has a sensible fallback (e.g. 5%) if missing
+    const chosenRiskPct = profile.risk_multiplier > 0 ? profile.risk_multiplier : 5;
+    const riskAmount = balance * (chosenRiskPct / 100);
+    const lotSize = (riskAmount / stopLossDistPips) / spec.pipValuePerLot;
 
-         // @ts-ignore
-         quote = await connection.getSymbolPrice(brokerSymbol);
-         const quoteAgeMs = Date.now() - (quote?.time?.getTime?.() ?? 0);
-         if (quoteAgeMs > 10_000) {
-           throw new Error(`Stale quote for ${brokerSymbol}: ${quoteAgeMs}ms old. Trade aborted.`);
-         }
-      }
+    // Dual Trade Logic (TP1 & TP2)
+    const halfLotSize = quantizeLots(lotSize / 2);
+    if (halfLotSize < 0.01) {
+       console.warn(`[MetaAPI Profile ${profile.id}] Lot size too small for dual trades (${lotSize}). Skipping.`);
+       return;
+    }
 
-      // 🛡️ SPREAD TOLERANCE CHECK
-      const spread = (quote.ask - quote.bid) / spec.pipSize;
-      const isGoldOrIndex = brokerSymbol.includes('XAU') || brokerSymbol.includes('NAS') || brokerSymbol.includes('USTEC');
-      const isMinor = brokerSymbol.includes('JPY') || brokerSymbol.includes('AUD') || brokerSymbol.includes('NZD') || brokerSymbol.includes('CAD') || brokerSymbol.includes('CHF');
-      const maxSpreadAllowed = isGoldOrIndex ? 25 : (isMinor ? 5 : 3);
-      
-      if (spread > maxSpreadAllowed) {
-         console.warn(`[MetaAPI Profile ${profile.id}] ⛔ TRADE REJECTED — Spread is dangerously high (${spread.toFixed(1)} > ${maxSpreadAllowed} pips)`);
-         return;
-      }
+    const slDistance = stopLossDistPips * spec.pipSize;
+    const tp1Distance = (takeProfitDistPips * 0.5) * spec.pipSize;
+    const tp2Distance = takeProfitDistPips * spec.pipSize; // Full TP
 
-      // Calculate Lot Size
-      const riskAmount = balance * (baseRiskPct / 100) * profile.risk_multiplier;
-      const lotSize = (riskAmount / stopLossDistPips) / spec.pipValuePerLot;
+    let orderResult1, orderResult2;
+    
+    const authorizingBot = activeBots.find(b => b.includes(lowerBrokerSymbol)) || 'sniper-system-ai';
+    const botId = authorizingBot;
+    const openTime = Date.now();
 
-      // Dual Trade Logic (TP1 & TP2)
-      const halfLotSize = quantizeLots(lotSize / 2);
-      if (halfLotSize < 0.01) {
-         console.warn(`[MetaAPI Profile ${profile.id}] Lot size too small for dual trades (${lotSize}). Skipping.`);
-         return;
-      }
+    // DB-first write to prevent orphaned broker trades on crash
+    const insertTrade = db.prepare(`
+      INSERT INTO bot_trade_states
+        (user_id, profile_id, bot_id, broker_symbol, direction, entry_price, sl_price, tp_price,
+         lots, open_time, meta_order_id, t1_hit, highest_price, lowest_price, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 'OPEN')
+    `);
 
-      const slDistance = stopLossDistPips * spec.pipSize;
-      const tp1Distance = 50 * spec.pipSize;
-      const tp2Distance = 100 * spec.pipSize; // Geometric expansion
+    let entryPrice = signal.direction === 'BUY' ? quote.ask : quote.bid;
+    let slPrice = signal.direction === 'BUY' ? (entryPrice - slDistance) : (entryPrice + slDistance);
+    let tp1Price = signal.direction === 'BUY' ? (entryPrice + tp1Distance) : (entryPrice - tp1Distance);
+    let tp2Price = signal.direction === 'BUY' ? (entryPrice + tp2Distance) : (entryPrice - tp2Distance);
 
-      let orderResult1, orderResult2;
-      
+    slPrice = parseFloat(slPrice.toFixed(5));
+    tp1Price = parseFloat(tp1Price.toFixed(5));
+    tp2Price = parseFloat(tp2Price.toFixed(5));
+
+    const tp1DbId = insertTrade.run(profile.user_id, profile.id, botId, brokerSymbol, signal.direction, entryPrice, slPrice, tp1Price, halfLotSize, openTime, 'PENDING_TP1', entryPrice, entryPrice).lastInsertRowid;
+    const tp2DbId = insertTrade.run(profile.user_id, profile.id, botId, brokerSymbol, signal.direction, entryPrice, slPrice, tp2Price, halfLotSize, openTime, 'PENDING_TP2', entryPrice, entryPrice).lastInsertRowid;
+
+    try {
       if (process.env.SIMULATION_MODE === 'true') {
         orderResult1 = { orderId: `SIM_${Date.now()}_TP1` };
         orderResult2 = { orderId: `SIM_${Date.now()}_TP2` };
       } else {
         const connection = await getSharedConnection(rawToken, profile.metaapi_account_id, false);
         if (signal.direction === 'BUY') {
-          const slPrice = parseFloat((quote.ask - slDistance).toFixed(5));
-          const tp1Price = parseFloat((quote.ask + tp1Distance).toFixed(5));
-          const tp2Price = parseFloat((quote.ask + tp2Distance).toFixed(5));
-          
           console.log(`[MetaAPI Profile ${profile.id}] BUY TP1 @ ${quote.ask} | SL: ${slPrice} | TP1: ${tp1Price} | Lots: ${halfLotSize}`);
           orderResult1 = await connection.createMarketBuyOrder(brokerSymbol, halfLotSize, slPrice, tp1Price, { clientId: 'AI_SNIPER_TP1' });
           
           console.log(`[MetaAPI Profile ${profile.id}] BUY TP2 @ ${quote.ask} | SL: ${slPrice} | TP2: ${tp2Price} | Lots: ${halfLotSize}`);
           orderResult2 = await connection.createMarketBuyOrder(brokerSymbol, halfLotSize, slPrice, tp2Price, { clientId: 'AI_SNIPER_TP2' });
         } else {
-          const slPrice = parseFloat((quote.bid + slDistance).toFixed(5));
-          const tp1Price = parseFloat((quote.bid - tp1Distance).toFixed(5));
-          const tp2Price = parseFloat((quote.bid - tp2Distance).toFixed(5));
-          
           console.log(`[MetaAPI Profile ${profile.id}] SELL TP1 @ ${quote.bid} | SL: ${slPrice} | TP1: ${tp1Price} | Lots: ${halfLotSize}`);
           orderResult1 = await connection.createMarketSellOrder(brokerSymbol, halfLotSize, slPrice, tp1Price, { clientId: 'AI_SNIPER_TP1' });
           
@@ -504,49 +521,18 @@ export async function executeTradeForUsers(
 
       console.log(`[MetaAPI Profile ${profile.id}] ✅ Dual Orders placed: TP1(${orderResult1?.orderId}), TP2(${orderResult2?.orderId})`);
 
-      // 3. Register Trades in Database for botManager tick management
-      const authorizingBot = activeBots.find(b => b.startsWith(lowerBrokerSymbol)) || 'sniper-system-ai';
-      const botId = authorizingBot;
-      const openTime = Date.now();
-      
-      const insertTrade = db.prepare(`
-        INSERT INTO bot_trade_states
-          (user_id, profile_id, bot_id, broker_symbol, direction, entry_price, sl_price, tp_price,
-           lots, open_time, meta_order_id, t1_hit, highest_price, lowest_price, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'OPEN')
-      `);
-
-      if (orderResult1?.orderId) {
-        insertTrade.run(
-          profile.user_id, profile.id, botId, brokerSymbol, signal.direction,
-          signal.direction === 'BUY' ? quote.ask : quote.bid, 
-          signal.direction === 'BUY' ? (quote.ask - slDistance) : (quote.bid + slDistance), 
-          signal.direction === 'BUY' ? (quote.ask + tp1Distance) : (quote.bid - tp1Distance),
-          halfLotSize, openTime, orderResult1.orderId, 0,
-          signal.direction === 'BUY' ? quote.ask : quote.bid,
-          signal.direction === 'BUY' ? quote.ask : quote.bid
-        );
-      }
-
-      if (orderResult2?.orderId) {
-        insertTrade.run(
-          profile.user_id, profile.id, botId, brokerSymbol, signal.direction,
-          signal.direction === 'BUY' ? quote.ask : quote.bid, 
-          signal.direction === 'BUY' ? (quote.ask - slDistance) : (quote.bid + slDistance), 
-          signal.direction === 'BUY' ? (quote.ask + tp2Distance) : (quote.bid - tp2Distance),
-          halfLotSize, openTime, orderResult2.orderId, 0,
-          signal.direction === 'BUY' ? quote.ask : quote.bid,
-          signal.direction === 'BUY' ? quote.ask : quote.bid
-        );
-      }
+      const updateTrade = db.prepare(`UPDATE bot_trade_states SET meta_order_id = ? WHERE id = ?`);
+      if (orderResult1?.orderId) updateTrade.run(orderResult1.orderId, tp1DbId);
+      if (orderResult2?.orderId) updateTrade.run(orderResult2.orderId, tp2DbId);
 
     } catch (err: any) {
-      console.error(`[MetaAPI Profile ${profile.id}] ❌ Trade failed:`, err.message);
-      clearSharedConnection(rawToken, profile.metaapi_account_id);
+      db.prepare(`DELETE FROM bot_trade_states WHERE id IN (?, ?)`).run(tp1DbId, tp2DbId);
+      throw err;
     }
-  });
-
-  await Promise.allSettled(promises);
+  } catch (err: any) {
+    console.error(`[MetaAPI Profile ${profile.id}] ❌ Trade failed:`, err.message);
+    if (rawToken) clearSharedConnection(rawToken, profile.metaapi_account_id);
+  }
 }
 
 

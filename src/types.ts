@@ -26,6 +26,7 @@ export interface MarketData {
   londonLow: number;
   last15MSwingHigh?: number;
   last15MSwingLow?: number;
+  adr14?: number;
   recentDailyCandles: {
     date: string;
     open: number;

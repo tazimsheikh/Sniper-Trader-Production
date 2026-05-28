@@ -82,7 +82,7 @@ export default function App() {
 
   // ── Market data polling with AbortController (FIX: no memory leaks) ─────────
   useEffect(() => {
-    if (!authUser && authUser !== undefined) return; // Don't poll if not logged in
+    if (!authUser) return; // Don't poll if not logged in or still checking auth
 
     const controller = new AbortController();
     let mounted = true;
@@ -298,25 +298,7 @@ export default function App() {
           )}
         </AnimatePresence>
 
-        <AnimatePresence>
-          {activeWarning && (
-            <motion.div
-              initial={{ height: 0, opacity: 0 }} animate={{ height: 0, opacity: 0 }} exit={{ height: 0, opacity: 0 }}
-              className="bg-red-600 text-white overflow-hidden shadow-[0_0_30px_rgba(220,38,38,0.5)] border-b border-red-500 relative z-[60]"
-            >
-              <div className="max-w-7xl mx-auto px-4 py-3 sm:px-6 lg:px-8 flex items-center justify-center gap-3">
-                <AlertTriangle size={20} className="animate-ping" />
-                <span className="font-display font-black tracking-widest uppercase text-sm sm:text-base">High-Impact News Alert</span>
-                <span className="font-mono text-xs sm:text-sm bg-red-800/80 px-3 py-1 rounded-full border border-red-500 shadow-inner">
-                  {activeWarning.event.event} ({activeWarning.event.currency})
-                </span>
-                <span className="font-bold text-sm hidden sm:inline-block">
-                  — {activeWarning.status === 'UPCOMING' ? `in ${activeWarning.minutesLeft}m` : 'Recently active'}
-                </span>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+
 
         {/* Header */}
         <div className={`${activeWarning ? 'bg-red-950/60 border-red-900/50' : 'bg-slate-900/50 border-slate-850'} border-b backdrop-blur-xl sticky top-0 z-50 transition-colors duration-1000`}>

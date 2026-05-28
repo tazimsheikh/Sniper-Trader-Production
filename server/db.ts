@@ -22,7 +22,7 @@ db.exec(`
     metaapi_token TEXT,
     metaapi_account_id TEXT,
     gemini_api_key TEXT DEFAULT NULL,
-    risk_multiplier INTEGER DEFAULT 1,
+    risk_multiplier INTEGER DEFAULT 5,
     automation_active INTEGER DEFAULT 0,
     ai_sniper_active INTEGER DEFAULT 0,
     diary_reset_time TEXT DEFAULT NULL,
@@ -45,7 +45,7 @@ db.exec(`
     profile_name TEXT NOT NULL,
     metaapi_token TEXT,
     metaapi_account_id TEXT,
-    risk_multiplier INTEGER DEFAULT 1,
+    risk_multiplier INTEGER DEFAULT 5,
     automation_active INTEGER DEFAULT 0,
     ai_sniper_active INTEGER DEFAULT 0,
     active_bots TEXT DEFAULT '[]',
@@ -74,9 +74,11 @@ db.exec(`
 
   CREATE TABLE IF NOT EXISTS bot_ema_state (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    bot_id TEXT NOT NULL UNIQUE,
+    bot_id TEXT NOT NULL,
+    profile_id INTEGER NOT NULL,
     ema_value REAL NOT NULL,
-    updated_at INTEGER NOT NULL
+    updated_at INTEGER NOT NULL,
+    UNIQUE(bot_id, profile_id)
   );
 `);
 
@@ -93,7 +95,6 @@ try {
   db.exec('ALTER TABLE users ADD COLUMN diary_reset_time TEXT DEFAULT NULL');
 } catch (e: any) {}
 
-// Migrations for trade management
 try {
   db.exec('ALTER TABLE trading_profiles ADD COLUMN session_losses INTEGER DEFAULT 0');
 } catch (e: any) {}
@@ -101,16 +102,35 @@ try {
   db.exec('ALTER TABLE trading_profiles ADD COLUMN last_session TEXT DEFAULT NULL');
 } catch (e: any) {}
 
-export function saveEmaState(botId: string, emaValue: number) {
+try {
+  const tableInfo = db.pragma("table_info(bot_ema_state)") as any[];
+  if (!tableInfo.some(c => c.name === 'profile_id')) {
+    db.exec(`
+      CREATE TABLE bot_ema_state_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        bot_id TEXT NOT NULL,
+        profile_id INTEGER NOT NULL DEFAULT 0,
+        ema_value REAL NOT NULL,
+        updated_at INTEGER NOT NULL,
+        UNIQUE(bot_id, profile_id)
+      );
+      INSERT OR IGNORE INTO bot_ema_state_new (bot_id, ema_value, updated_at) SELECT bot_id, ema_value, updated_at FROM bot_ema_state;
+      DROP TABLE bot_ema_state;
+      ALTER TABLE bot_ema_state_new RENAME TO bot_ema_state;
+    `);
+  }
+} catch (e: any) {}
+
+export function saveEmaState(botId: string, profileId: number, emaValue: number) {
   db.prepare(`
-    INSERT INTO bot_ema_state (bot_id, ema_value, updated_at)
-    VALUES (?, ?, ?)
-    ON CONFLICT(bot_id) DO UPDATE SET ema_value = excluded.ema_value, updated_at = excluded.updated_at
-  `).run(botId, emaValue, Date.now());
+    INSERT INTO bot_ema_state (bot_id, profile_id, ema_value, updated_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(bot_id, profile_id) DO UPDATE SET ema_value = excluded.ema_value, updated_at = excluded.updated_at
+  `).run(botId, profileId, emaValue, Date.now());
 }
 
-export function loadEmaState(botId: string): number | null {
-  const row = db.prepare('SELECT ema_value FROM bot_ema_state WHERE bot_id = ?').get(botId) as any;
+export function loadEmaState(botId: string, profileId: number): number | null {
+  const row = db.prepare('SELECT ema_value FROM bot_ema_state WHERE bot_id = ? AND profile_id = ?').get(botId, profileId) as any;
   return row ? row.ema_value : null;
 }
 

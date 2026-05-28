@@ -30,7 +30,7 @@ export default function VoiceTutorCall({ market, activeSignal, onTutorAnswerSpok
 
   useEffect(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (SpeechRecognition) {
+    if (SpeechRecognition && !recognitionRef.current) {
       try {
         const rec = new SpeechRecognition();
         rec.continuous = true;
@@ -80,7 +80,16 @@ export default function VoiceTutorCall({ market, activeSignal, onTutorAnswerSpok
       } catch (e) {
       }
     }
-  }, [isCalling]);
+
+    return () => {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.onend = null;
+          recognitionRef.current.abort();
+        } catch(e) {}
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (callStatus === 'SPEAKING' || callStatus === 'LISTENING') {

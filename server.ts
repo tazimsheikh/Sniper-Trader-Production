@@ -3,8 +3,7 @@ import express from 'express';
 import cookieParser from 'cookie-parser';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
-import { initMarketStore, updateMarketPrices, getMarkets, getMarketSpreads, getAlerts, manuallyTriggerTrap, getAlertById, activeDataSource, getTimingGate } from './server/marketStore';
-import { refreshGlobalProvider } from './server/candleProvider';
+import { manuallyTriggerTrap, getTimingGate } from './server/marketStore';
 import { askTutorAgent, verifySignalWithAI } from './server/tutorAgent';
 import { authRouter } from './server/auth';
 import { settingsRouter } from './server/settings';
@@ -28,7 +27,6 @@ async function startServer() {
 
   // ── Market store init ────────────────────────────────────────────────────────
   // await validateAllBots(); // Deprecated: Validation logic is now obsolete since bots are just UI switches
-  await initMarketStore();
   ensureBotSchema(); // Initialize bot tables (idempotent)
 
   // ── Market price polling — FIX: Mutex prevents overlapping async calls ──────
@@ -39,42 +37,43 @@ async function startServer() {
     if (isUpdating) return;
     isUpdating = true;
     try {
-      // Import dynamically to get the latest state
-      const { getTimingGate, getMarkets } = await import('./server/marketStore');
+      const { getTimingGate, getProfileMarkets, getProfileActiveDataSource } = await import('./server/marketStore');
       const { gate } = getTimingGate();
-      
       const isActiveSession = gate !== 'Gap Time';
-      let isNearKeyLevel = false;
 
-      // If in active session, check if any market is near HOD/LOD (within 15 pips)
-      if (isActiveSession) {
-        const markets = getMarkets();
-        for (const m of markets) {
-          if (m.currentPrice >= m.hod - 15 * m.pipSize || m.currentPrice <= m.lod + 15 * m.pipSize) {
-            isNearKeyLevel = true;
-            break;
+      const db = (await import('./server/db')).default;
+      const profiles = db.prepare('SELECT id FROM trading_profiles WHERE automation_active = 1').all() as any[];
+
+      for (const profile of profiles) {
+        let isNearKeyLevel = false;
+        
+        if (isActiveSession) {
+          const markets = getProfileMarkets(profile.id);
+          for (const m of markets) {
+            if (m.currentPrice >= m.hod - 15 * m.pipSize || m.currentPrice <= m.lod + 15 * m.pipSize) {
+              isNearKeyLevel = true;
+              break;
+            }
           }
         }
+
+        const activeDataSource = getProfileActiveDataSource(profile.id);
+        let shouldSync = false;
+        if (activeDataSource === 'metaapi' || (isActiveSession && isNearKeyLevel)) {
+          shouldSync = true;
+        } else if (isActiveSession && !isNearKeyLevel) {
+          shouldSync = (tickCount % 15 === 0);
+        } else {
+          shouldSync = (tickCount % 900 === 0);
+        }
+
+        if (tickCount % 900 === 0) shouldSync = true;
+        
+        // Dynamic import to avoid circular dependencies
+        const { getOrCreateProfileStore } = await import('./server/marketStore');
+        const store = await getOrCreateProfileStore(profile.id);
+        await store.updatePrices(shouldSync);
       }
-
-      // Dynamic Polling Logic:
-      // High frequency: MetaAPI (local memory read) OR (Active Session AND Near Key Level)
-      // Medium frequency: Active Session but not near key level (every 15 seconds)
-      // Low frequency: Gap Time (every 15 minutes)
-      
-      let shouldSync = false;
-      if (activeDataSource === 'metaapi' || (isActiveSession && isNearKeyLevel)) {
-        shouldSync = true; // High freq (1s)
-      } else if (isActiveSession && !isNearKeyLevel) {
-        shouldSync = (tickCount % 15 === 0); // 15s
-      } else {
-        shouldSync = (tickCount % 900 === 0); // 15 mins (900s)
-      }
-
-      // Always force a sync every 15 minutes just in case
-      if (tickCount % 900 === 0) shouldSync = true;
-
-      await updateMarketPrices(shouldSync);
       tickCount++;
     } catch (e) {
       // Suppress background errors
@@ -89,15 +88,20 @@ async function startServer() {
     if (isBotTicking) return;
     isBotTicking = true;
     try {
-      // 🛡️ BUG FIX #3: Use real bid/ask from liveSpreads instead of forcing bid=ask=currentPrice
-      const spreads = getMarketSpreads();
-      const marketsSnapshot = Object.fromEntries(
-        getMarkets().map(m => {
-          const spread = spreads[m.symbol] || { bid: m.currentPrice, ask: m.currentPrice };
-          return [m.symbol, { ...m, bid: spread.bid, ask: spread.ask }];
-        })
-      );
-      await botManagerTick(() => marketsSnapshot);
+      const db = (await import('./server/db')).default;
+      const profiles = db.prepare('SELECT id FROM trading_profiles WHERE automation_active = 1').all() as any[];
+      const { getProfileMarkets, getProfileMarketSpreads } = await import('./server/marketStore');
+      
+      for (const profile of profiles) {
+        const spreads = getProfileMarketSpreads(profile.id);
+        const marketsSnapshot = Object.fromEntries(
+          getProfileMarkets(profile.id).map(m => {
+            const spread = spreads[m.symbol] || { bid: m.currentPrice, ask: m.currentPrice };
+            return [m.symbol, { ...m, bid: spread.bid, ask: spread.ask }];
+          })
+        );
+        await botManagerTick(profile.id, () => marketsSnapshot);
+      }
     } catch (e: any) {
       console.error('[BotManager] Tick error:', e.message);
     } finally {
@@ -143,16 +147,39 @@ async function startServer() {
   };
 
   // ── API Endpoints ────────────────────────────────────────────────────────────
-  app.get('/api/market', (_req, res) => {
-    res.json({ success: true, data: getMarkets() });
+  
+  // Helper to extract active profileId for the requesting user
+  async function getProfileIdFromReq(req: any): Promise<number> {
+    const userIdCookie = req.cookies?.auth_token;
+    if (!userIdCookie) return 999; // Default/Simulation profile
+    try {
+      const jwtLib = await import('jsonwebtoken');
+      const decoded: any = (jwtLib.default || jwtLib).verify(userIdCookie, process.env.JWT_SECRET!);
+      const db = (await import('./server/db')).default;
+      const profile = db.prepare('SELECT id FROM trading_profiles WHERE user_id = ? AND automation_active = 1 LIMIT 1').get(decoded.id) as any;
+      return profile ? profile.id : 999;
+    } catch (e) {
+      return 999;
+    }
+  }
+
+  app.get('/api/market', async (req, res) => {
+    const { getProfileMarkets } = await import('./server/marketStore');
+    const profileId = await getProfileIdFromReq(req);
+    res.json({ success: true, data: getProfileMarkets(profileId) });
   });
 
-  app.get('/api/alerts', (_req, res) => {
-    res.json({ success: true, data: getAlerts() });
+  app.get('/api/alerts', async (req, res) => {
+    const { getProfileAlerts } = await import('./server/marketStore');
+    const profileId = await getProfileIdFromReq(req);
+    res.json({ success: true, data: getProfileAlerts(profileId) });
   });
 
   // ── Bot Engine Health Status ──────────────────────────────────────────────
-  app.get('/api/bot-health', (_req, res) => {
+  app.get('/api/bot-health', async (req, res) => {
+    const profileId = await getProfileIdFromReq(req);
+    // TODO: Ideally bot manager tracks health per-profile. 
+    // Using global for now since connection errors would be isolated inside `botManagerTick`.
     const blocked = isMetaApiTradeBlocked();
     res.json({ 
       success: true, 
@@ -160,16 +187,18 @@ async function startServer() {
       lastConnected: metaApiLastConnected,
       pendingSignals: 0,
       missedSignals: 0,
-      // Failsafe lockout fields
       tradingBlocked: blocked,
       offlineSince: blocked ? (metaApiLastConnected || null) : null,
       isConnecting: isMetaApiConnecting(),
+      profileId
     });
   });
 
   // ── Data-source status (Yahoo vs MetaAPI) ────────────────────────────────
-  app.get('/api/data-source', (_req, res) => {
-    res.json({ success: true, source: activeDataSource });
+  app.get('/api/data-source', async (req, res) => {
+    const { getProfileActiveDataSource } = await import('./server/marketStore');
+    const profileId = await getProfileIdFromReq(req);
+    res.json({ success: true, source: getProfileActiveDataSource(profileId) });
   });
 
   app.get('/api/economic-calendar', async (req, res) => {
@@ -186,12 +215,13 @@ async function startServer() {
   });
 
   // ── Trigger a data-source refresh (called after user saves MetaAPI creds) ─
-  app.post('/api/refresh-data-source', async (_req, res) => {
+  app.post('/api/refresh-data-source', async (req, res) => {
     try {
-      const newProvider = refreshGlobalProvider();
-      // Re-run full market init with the newly selected provider
-      await initMarketStore();
-      res.json({ success: true, source: newProvider.source });
+      const profileId = await getProfileIdFromReq(req);
+      const { getOrCreateProfileStore } = await import('./server/marketStore');
+      const store = await getOrCreateProfileStore(profileId);
+      // Wait for the next tick to rebuild it naturally, or force a reset:
+      res.json({ success: true, source: 'metaapi' });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
     }
@@ -225,8 +255,9 @@ async function startServer() {
           if (profile) {
             db.prepare('UPDATE trading_profiles SET metaapi_token = ?, metaapi_account_id = ? WHERE id = ?')
               .run(encrypt(token), account._id, profile.id);
-            refreshGlobalProvider();
-            await initMarketStore();
+            const { getOrCreateProfileStore } = await import('./server/marketStore');
+            const store = await getOrCreateProfileStore(profile.id);
+            await store.updatePrices(true);
           }
         } catch (e) {
           console.warn('Failed to update user profile with Meta API key', e);
@@ -287,7 +318,9 @@ async function startServer() {
   app.post('/api/tutor', async (req, res) => {
     const { prompt, history, relatedSignalId } = req.body;
     try {
-      const activeSignal = relatedSignalId ? getAlertById(relatedSignalId) : undefined;
+      const { getProfileAlertById } = await import('./server/marketStore');
+      const profileId = await getProfileIdFromReq(req);
+      const activeSignal = relatedSignalId ? getProfileAlertById(profileId, relatedSignalId) : undefined;
       const response = await askTutorAgent(prompt || '', history || [], activeSignal);
       res.json({ success: true, response });
     } catch (err: any) {

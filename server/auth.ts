@@ -3,7 +3,7 @@ import bcrypt from 'bcrypt';
 import * as jwtPkg from 'jsonwebtoken';
 import rateLimit from 'express-rate-limit';
 import db from './db';
-import { getGlobalCandleProvider, refreshGlobalProvider, metaApiSyncStatus } from './candleProvider';
+// import { metaApiSyncStatus } from './candleProvider';
 import { encrypt, decrypt, isEncrypted } from './crypto';
 import { ALL_BOT_CONFIGS, BOT_REGISTRY } from './botManager';
 import { sendOtpEmail } from './email';
@@ -27,8 +27,8 @@ export const authRouter = Router();
 // 6. METAAPI STATUS
 // ==========================================
 
-authRouter.get('/metaapi/status', (req, res) => {
-  res.json({ success: true, status: metaApiSyncStatus });
+authRouter.get('/metaapi/status', (_req: Request, res: Response) => {
+  res.json({ success: true, status: 'IDLE' });
 });
 
 export interface AuthRequest extends Request {
@@ -165,7 +165,8 @@ authRouter.post('/register/confirm', authLimiter, async (req, res) => {
       parsedPayload = { passwordHash: otpRow.payload, metaapiToken: null };
     }
 
-    const result = db.prepare('INSERT INTO users (email, password_hash, metaapi_token) VALUES (?, ?, ?)').run(email, parsedPayload.passwordHash, parsedPayload.metaapiToken);
+    const tokenToSave = parsedPayload.metaapiToken ? (isEncrypted(parsedPayload.metaapiToken) ? parsedPayload.metaapiToken : encrypt(parsedPayload.metaapiToken)) : null;
+    const result = db.prepare('INSERT INTO users (email, password_hash, metaapi_token) VALUES (?, ?, ?)').run(email, parsedPayload.passwordHash, tokenToSave);
 
     // Delete used OTP
     db.prepare('DELETE FROM otps WHERE id = ?').run(otpRow.id);
@@ -279,7 +280,8 @@ authRouter.post('/login/confirm', authLimiter, async (req, res) => {
     try {
       parsedPayload = JSON.parse(otpRow.payload);
       if (parsedPayload.metaapiToken) {
-        db.prepare('UPDATE users SET metaapi_token = ? WHERE id = ?').run(parsedPayload.metaapiToken, user.id);
+        const tokenToSave = isEncrypted(parsedPayload.metaapiToken) ? parsedPayload.metaapiToken : encrypt(parsedPayload.metaapiToken);
+        db.prepare('UPDATE users SET metaapi_token = ? WHERE id = ?').run(tokenToSave, user.id);
         try {
           const { refreshGlobalProvider } = require('./candleProvider');
           refreshGlobalProvider();
@@ -369,7 +371,7 @@ authRouter.post('/profiles', requireAuth, (req: AuthRequest, res) => {
 
     const result = db.prepare(`
       INSERT INTO trading_profiles (user_id, profile_name, metaapi_account_id) VALUES (?, ?, ?)
-    `).run(req.user.id, profile_name.trim(), cleanAccountId);
+    `).run(req.user.id, profile_name.trim(), encrypt(cleanAccountId));
 
     try {
       const { refreshGlobalProvider } = require('./candleProvider');

@@ -15,7 +15,7 @@ const clock = sinon.useFakeTimers({
 });
 
 import { loadCsvData, setSimulatedTime } from '../server/simulationProvider';
-import { initMarketStore, updateMarketPrices, getMarkets, getMarketSpreads } from '../server/marketStore';
+import { getOrCreateProfileStore, getProfileMarkets, getProfileMarketSpreads } from '../server/marketStore';
 import { botManagerTick } from '../server/botManager';
 import db from '../server/db';
 import { BOT_REGISTRY, ensureBotSchema } from '../server/botManager';
@@ -58,8 +58,7 @@ async function runSimulation() {
     }
   }
 
-  // Initialize Market Store
-  await initMarketStore();
+  // No explicit init needed now, will be created on demand
 
   let currentMs = startDateMs;
   let minuteCount = 0;
@@ -70,19 +69,20 @@ async function runSimulation() {
     clock.tick(60000); // Advance fake timers by 1 minute
 
     // We have 3 batches in marketStore, so we call it 3 times to refresh all 21 pairs for the current minute
-    await updateMarketPrices(true);
-    await updateMarketPrices(true);
-    await updateMarketPrices(true);
+    const store = await getOrCreateProfileStore(999);
+    await store.updatePrices(true);
+    await store.updatePrices(true);
+    await store.updatePrices(true);
 
-    const spreads = getMarketSpreads();
+    const spreads = getProfileMarketSpreads(999);
     const marketsSnapshot = Object.fromEntries(
-      getMarkets().map(m => {
+      getProfileMarkets(999).map((m: any) => {
         const spread = spreads[m.symbol] || { bid: m.currentPrice, ask: m.currentPrice };
         return [m.symbol, { ...m, bid: spread.bid, ask: spread.ask }];
       })
     );
 
-    await botManagerTick(() => marketsSnapshot);
+    await botManagerTick(999, () => marketsSnapshot);
 
     currentMs += 60000;
     minuteCount++;

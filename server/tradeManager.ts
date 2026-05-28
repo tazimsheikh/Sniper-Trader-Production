@@ -4,18 +4,19 @@ import { decrypt, isEncrypted } from './crypto';
 
 // A map to track internal state of positions we're managing
 // positionId -> { entryTime, brokeEven }
-const positionState = new Map<string, { entryTime: number, brokeEven: boolean, session: string }>();
+const positionState = new Map<string, Map<string, { entryTime: number, brokeEven: boolean, session: string }>>();
 
 export async function monitorOpenTrades(currentSession: string) {
   const activeProfiles = db.prepare(
-    `SELECT id, metaapi_token, metaapi_account_id 
-     FROM trading_profiles 
-     WHERE automation_active = 1 
-       AND ai_sniper_active = 1 
-       AND metaapi_token IS NOT NULL 
-       AND metaapi_account_id IS NOT NULL
-       AND metaapi_token != 'dummy_token'
-       AND metaapi_account_id != 'dummy_acc'`
+    `SELECT tp.id, u.metaapi_token, tp.metaapi_account_id 
+     FROM trading_profiles tp
+     JOIN users u ON u.id = tp.user_id
+     WHERE tp.automation_active = 1 
+       AND tp.ai_sniper_active = 1 
+       AND u.metaapi_token IS NOT NULL 
+       AND tp.metaapi_account_id IS NOT NULL
+       AND u.metaapi_token != 'dummy_token'
+       AND tp.metaapi_account_id != 'dummy_acc'`
   ).all() as any[];
 
   if (activeProfiles.length === 0) return;
@@ -31,19 +32,26 @@ export async function monitorOpenTrades(currentSession: string) {
     try {
       const connection = await getSharedConnection(rawToken, profile.metaapi_account_id, true);
       const allPositions = await connection.getPositions();
-      const positions = allPositions.filter((p: any) => p.clientId === 'AI_SNIPER');
+      const positions = allPositions.filter((p: any) => p.clientId === 'AI_SNIPER_TP1' || p.clientId === 'AI_SNIPER_TP2' || p.clientId?.startsWith('AI_SNIPER'));
       
       for (const pos of positions) {
+        if (!positionState.has(profile.id)) {
+          positionState.set(profile.id, new Map());
+        }
+        const profileState = positionState.get(profile.id)!;
+
         // Initialize local tracking state if new position
-        if (!positionState.has(pos.id)) {
-          positionState.set(pos.id, { 
-            entryTime: Date.now(), // If we just found it, we mark the time
+        if (!profileState.has(pos.id)) {
+          // Use MetaAPI pos.time for real open time
+          const realOpenTime = pos.time ? new Date(pos.time).getTime() : Date.now();
+          profileState.set(pos.id, { 
+            entryTime: realOpenTime,
             brokeEven: false,
             session: currentSession
           });
         }
 
-        const state = positionState.get(pos.id)!;
+        const state = profileState.get(pos.id)!;
         const spec = getSymbolSpec(pos.symbol);
 
         // MetaAPI returns profit in account currency. 
@@ -77,7 +85,7 @@ export async function monitorOpenTrades(currentSession: string) {
           console.log(`[TradeManager] Time Ejection triggered for ${pos.symbol} (Open > 45 min). Closing at market.`);
           try {
             await connection.closePosition(pos.id);
-            positionState.delete(pos.id);
+            profileState.delete(pos.id);
           } catch (e: any) {
             console.error(`[TradeManager] Failed to close position ${pos.id}:`, e.message);
           }
@@ -92,22 +100,25 @@ export async function monitorOpenTrades(currentSession: string) {
       
       // Check for positions that disappeared (closed)
       const currentPosIds = new Set(positions.map((p: any) => p.id));
-      for (const [id, state] of positionState.entries()) {
-        if (!currentPosIds.has(id)) {
-          // Position closed! Was it a loss?
-          // We can query the deal history for this position
-          try {
-            const history = await connection.getDealsByPosition(id);
-            // The last deal (entry_out) holds the final profit
-            const closingDeal = history.find((d: any) => d.entryType === 'DEAL_ENTRY_OUT' || d.entryType === 'DEAL_ENTRY_INOUT');
-            if (closingDeal && closingDeal.profit < 0) {
-              console.log(`[TradeManager] Position ${id} closed in LOSS. Updating Lockout Rule for session ${state.session}.`);
-              incrementSessionLoss(profile.id, state.session);
+      const profileState = positionState.get(profile.id);
+      if (profileState) {
+        for (const [id, state] of profileState.entries()) {
+          if (!currentPosIds.has(id)) {
+            // Position closed! Was it a loss?
+            // We can query the deal history for this position
+            try {
+              const history = await connection.getDealsByPosition(id);
+              // The last deal (entry_out) holds the final profit
+              const closingDeal = history.find((d: any) => d.entryType === 'DEAL_ENTRY_OUT' || d.entryType === 'DEAL_ENTRY_INOUT');
+              if (closingDeal && closingDeal.profit < 0) {
+                console.log(`[TradeManager] Profile ${profile.id} Position ${id} closed in LOSS. Updating Lockout Rule for session ${state.session}.`);
+                incrementSessionLoss(profile.id, state.session);
+              }
+            } catch (e: any) {
+               console.warn(`[TradeManager] Could not fetch deal history for closed pos ${id}`);
             }
-          } catch (e: any) {
-             console.warn(`[TradeManager] Could not fetch deal history for closed pos ${id}`);
+            profileState.delete(id);
           }
-          positionState.delete(id);
         }
       }
 

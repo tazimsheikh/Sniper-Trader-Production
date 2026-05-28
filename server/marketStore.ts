@@ -1,13 +1,8 @@
 import { MarketData, TrapSignal } from '../src/types';
-import { calculateConfluenceScore } from './confluenceCalculator';
-import { executeTradeForUsers } from './metaApiHandler';
-import { evaluateSignalWithAI } from './aiFilter';
-import {
-  globalProvider, refreshGlobalProvider, toBrokerSymbol, CandleProvider,
-} from './candleProvider';
+import { executeTradeForProfile } from './metaApiHandler';
+import { getProviderForProfile, toBrokerSymbol, CandleProvider } from './candleProvider';
 
 // ── Shared pip size registry (single source of truth) ────────────────────────
-// IMPORTANT: This must match metaApiHandler.ts SYMBOL_SPECS.pipSize exactly.
 export const ASSET_MAP: Record<string, { symbol: string; name: string; pipSize: number }> = {
   'NQ=F':     { symbol: 'NQ=F',     name: 'NAS100 Futures',   pipSize: 1      },
   'GC=F':     { symbol: 'GC=F',     name: 'XAUUSD Gold',      pipSize: 0.01   },
@@ -32,64 +27,19 @@ export const ASSET_MAP: Record<string, { symbol: string; name: string; pipSize: 
   'GBPCAD=X': { symbol: 'GBPCAD=X', name: 'GBPCAD Forex',     pipSize: 0.0001 },
 };
 
-let markets: Record<string, MarketData> = {};
-let alerts: TrapSignal[] = [];
-
-// 🛡️ BUG FIX #3: Track real bid/ask separately since MarketData has no bid/ask fields.
-// Yahoo returns bid/ask per quote; we persist them here so the bot engine gets real spread.
-const liveSpreads: Record<string, { bid: number; ask: number }> = {};
-
-// Track the active data-source for the UI badge
-export let activeDataSource: 'yahoo' | 'metaapi' | 'simulation' = 'yahoo';
-
-// In-flight execution guard (prevents duplicate trades per signal)
-const executingSignals = new Set<string>();
-
-// Session tracking
-let activeSessionName = 'Gap Time';
-let sessionStartTimes: Record<string, number> = {};
-
 // ── Batch layout for live-price polling ──────────────────────────────────────
-// Each sub-array is polled in one network call (Yahoo batch / MetaAPI fan-out)
 const BATCHES: string[][] = [
   ['NQ=F', 'GC=F', 'CL=F', 'EURUSD=X', 'GBPUSD=X', 'USDJPY=X', 'AUDUSD=X', 'USDCAD=X'],
   ['NZDUSD=X', 'USDCHF=X', 'GBPJPY=X', 'EURGBP=X', 'EURJPY=X', 'AUDJPY=X', 'EURAUD=X'],
   ['GBPAUD=X', 'CHFJPY=X', 'AUDCAD=X', 'EURCAD=X', 'NZDJPY=X', 'GBPCAD=X'],
 ];
-let yahooBatchIndex = 0;
 
-// ── Round-number trap helper ──────────────────────────────────────────────────
-function getRoundNumberTraps(price: number, symbol: string): string[] {
-  const traps: string[] = [];
-  if (symbol.includes('EURUSD') || symbol.includes('GBPUSD') || symbol.includes('AUDUSD') || symbol.includes('EURGBP')) {
-    const lastDigits = Math.round((price * 10000) % 100);
-    if (Math.abs(lastDigits - 0) <= 2 || Math.abs(lastDigits - 100) <= 2) traps.push('00 Level Trap');
-    if (Math.abs(lastDigits - 50) <= 2) traps.push('50 Level Trap');
-  } else if (symbol.includes('JPY') || symbol.includes('GC=F') || symbol.includes('CL=F')) {
-    const lastDigits = Math.round(price % 100);
-    if (Math.abs(lastDigits - 0) <= 1 || Math.abs(lastDigits - 100) <= 1) traps.push('00 Century Level');
-    if (Math.abs(lastDigits - 50) <= 1) traps.push('50 Round Level');
-  } else if (symbol.includes('NQ=F')) {
-    const lastDigits = Math.round(price % 100);
-    if (Math.abs(lastDigits) <= 10 || Math.abs(lastDigits - 100) <= 10) traps.push('00 Century Level');
-    if (Math.abs(lastDigits - 50) <= 10) traps.push('50 Round Level');
-  }
-  return traps;
-}
-
-// ── Session / timing gate ─────────────────────────────────────────────────────
 const GLOBAL_FORMATTER_HM = new Intl.DateTimeFormat('en-US', {
   timeZone: 'America/New_York',
   hour: 'numeric',
   minute: 'numeric',
   hour12: false,
 });
-
-const GLOBAL_FORMATTER_MINUTE = new Intl.DateTimeFormat('en-US', {
-  timeZone: 'America/New_York',
-  minute: 'numeric',
-});
-
 
 export function getTimingGate(): { gate: TrapSignal['timingGate']; details: string; isBlackout: boolean } {
   const now = new Date();
@@ -127,522 +77,456 @@ export function getTimingGate(): { gate: TrapSignal['timingGate']; details: stri
   return { gate: 'Gap Time', details: 'Dead Hours', isBlackout: true };
 }
 
-// ── initMarketStore ───────────────────────────────────────────────────────────
-export async function initMarketStore() {
-  // Select the best available provider and cache it
-  const provider = refreshGlobalProvider();
-  activeDataSource = provider.source;
-
-  console.log(`[MarketStore] Initialising with data source: ${activeDataSource.toUpperCase()}`);
-
-  const now = new Date();
-
-  for (const key of Object.keys(ASSET_MAP)) {
-    const config = ASSET_MAP[key];
-    const brokerSymbol = toBrokerSymbol(key);
-    try {
-      const candles = await provider.getDailyCandles(key, brokerSymbol, 14);
-
-      if (candles && candles.length >= 1) {
-        const available = candles.slice(-Math.min(4, candles.length));
-        const yesterday = available[available.length - 1];
-
-        let signalDay: MarketData['signalDay'] = 'Normal';
-
-        if (available.length >= 4) {
-          const [d0, d1, d2, d3] = available;
-          if (d3.high < d2.high && d3.low > d2.low) {
-            signalDay = 'Inside Day';
-          } else {
-            const isTrendUp   = d0.high < d1.high && d1.high < d2.high;
-            const isTrendDown = d0.low  > d1.low  && d1.low  > d2.low;
-            if (isTrendUp   && d3.close < d3.open) signalDay = 'FRD';
-            else if (isTrendDown && d3.close > d3.open) signalDay = 'FGD';
-          }
-        } else if (available.length >= 2) {
-          const prev = available[available.length - 2];
-          if (yesterday.high < prev.high && yesterday.low > prev.low) signalDay = 'Inside Day';
-        }
-
-        const recentDailyCandles = available.map(q => ({
-          date: q.date.split('T')[0],
-          open: q.open,
-          high: q.high,
-          low:  q.low,
-          close: q.close,
-        }));
-
-        const dayOfWeek = now.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
-
-        let mondayHigh = yesterday.high;
-        let mondayLow = yesterday.low;
-        let dayOfWeekCycle: 1|2|3 = 1;
-        let how = yesterday.high;
-        let low_week = yesterday.low;
-
-        // Stacey Burke Algorithmic Day Counting
-        let dayCountCycle: 1|2|3 = 1;
-        let lastTrend = 0; // 1 for up, -1 for down
-
-        for (let i = 1; i < candles.length - 1; i++) {
-          const prev = candles[i - 1];
-          const curr = candles[i];
-          
-          const isGreen = curr.close > curr.open;
-          const isRed = curr.close < curr.open;
-          const brokeHigh = curr.high > prev.high;
-          const brokeLow = curr.low < prev.low;
-          
-          let isDay1 = false;
-          
-          if (brokeHigh && isRed) {
-             // First Red Day
-             isDay1 = true;
-             lastTrend = -1;
-          } else if (brokeLow && isGreen) {
-             // First Green Day
-             isDay1 = true;
-             lastTrend = 1;
-          } else if (brokeHigh && curr.close > prev.high) {
-             // Starting a trend outside
-             if (lastTrend !== 1) {
-                isDay1 = true;
-                lastTrend = 1;
-             }
-          } else if (brokeLow && curr.close < prev.low) {
-             if (lastTrend !== -1) {
-                isDay1 = true;
-                lastTrend = -1;
-             }
-          }
-          
-          if (isDay1) {
-            dayCountCycle = 1;
-          } else {
-            dayCountCycle = (dayCountCycle % 3) + 1 as 1|2|3;
-          }
-        }
-        
-        dayOfWeekCycle = dayCountCycle;
-
-        markets[key] = {
-          symbol:      config.symbol,
-          displayName: config.name,
-          currentPrice:  yesterday.close,
-          open:          yesterday.open,
-          high:          yesterday.high,
-          low:           yesterday.low,
-          prevClose:     yesterday.close,
-          hod: yesterday.high,
-          lod: yesterday.low,
-          hos: yesterday.high,
-          los: yesterday.low,
-          how,
-          low_week,
-          signalDay,
-          dayOfWeek,
-          dayOfWeekCycle,
-          mondayHigh,
-          mondayLow,
-          asianHigh: yesterday.high,
-          asianLow: yesterday.low,
-          londonHigh: yesterday.high,
-          londonLow: yesterday.low,
-          pipSize: config.pipSize,
-          change: 0,
-          changePercent: 0,
-          recentDailyCandles,
-          lastUpdated: now.toISOString(),
-        };
-      }
-    } catch (e) {
-      console.error(`[MarketStore] Failed to fetch historical for ${key}:`, e);
-    }
-  }
-}
-
-// ── Alert status refresh ──────────────────────────────────────────────────────
-export function updateAlertStatuses() {
-  const now = new Date();
-  alerts.forEach(alert => {
-    const market = markets[alert.symbol];
-    if (!market) return;
-
-    const diff = Math.abs(market.currentPrice - alert.triggerPrice);
-    const pipsDiff = diff / (market.pipSize || 1);
-    const elapsedMin = (now.getTime() - new Date(alert.timestamp).getTime()) / 60000;
-
-    if (elapsedMin > 45 || pipsDiff > 80) {
-      alert.status = 'Trade Expired';
-    } else if (pipsDiff <= 8) {
-      alert.status = 'Trade Now';
-    } else if (pipsDiff <= 25) {
-      alert.status = 'Get Ready';
-    } else {
-      alert.status = 'Wait';
-    }
-  });
-}
-
-// ── Live price batch update (provider-agnostic) ───────────────────────────────
-export async function updateMarketPrices(shouldSyncPrices = true) {
-  const now = new Date();
-  const currentGate = getTimingGate();
-  const provider = globalProvider();
+export class ProfileStore {
+  profileId: number;
+  markets: Record<string, MarketData> = {};
+  alerts: TrapSignal[] = [];
+  liveSpreads: Record<string, { bid: number; ask: number }> = {};
+  activeDataSource: 'yahoo' | 'metaapi' | 'simulation' = 'yahoo';
+  executingSignals = new Set<string>();
   
-  // FIX: Track actual active provider dynamically
-  activeDataSource = provider.source;
+  activeSessionName = 'Gap Time';
+  sessionStartTimes: Record<string, number> = {};
+  yahooBatchIndex = 0;
 
-  // Session change → reset HOS/LOS to current price
-  if (currentGate.gate !== activeSessionName) {
-    activeSessionName = currentGate.gate;
-    if (activeSessionName !== 'Gap Time') {
-      sessionStartTimes[activeSessionName] = now.getTime();
-      for (const symbol of Object.keys(markets)) {
-        markets[symbol].hos = markets[symbol].currentPrice;
-        markets[symbol].los = markets[symbol].currentPrice;
-      }
-    }
+  constructor(profileId: number) {
+    this.profileId = profileId;
   }
 
-  if (shouldSyncPrices) {
-    const currentBatch = BATCHES[yahooBatchIndex % BATCHES.length];
-    yahooBatchIndex++;
+  async init() {
+    const provider = getProviderForProfile(this.profileId);
+    this.activeDataSource = provider.source;
+    console.log(`[ProfileStore ${this.profileId}] Initialising with data source: ${this.activeDataSource.toUpperCase()}`);
 
-    try {
-      const batchInput = currentBatch
-        .filter(s => markets[s])
-        .map(s => ({ yahoo: s, broker: toBrokerSymbol(s) }));
+    const now = new Date();
 
-      const quotes = await provider.getLiveQuoteBatch(batchInput);
+    for (const key of Object.keys(ASSET_MAP)) {
+      const config = ASSET_MAP[key];
+      const brokerSymbol = toBrokerSymbol(key);
+      try {
+        const candles = await provider.getDailyCandles(key, brokerSymbol, 14);
 
-      const currNY = (parseInt(GLOBAL_FORMATTER_HM.format(now).split(':')[0], 10) === 24 ? 0 : parseInt(GLOBAL_FORMATTER_HM.format(now).split(':')[0], 10)) * 60 + parseInt(GLOBAL_FORMATTER_HM.format(now).split(':')[1], 10);
+        if (candles && candles.length >= 1) {
+          const available = candles.slice(-Math.min(4, candles.length));
+          const yesterday = available[available.length - 1];
 
-      for (const q of quotes) {
-        // getLiveQuoteBatch returns quotes keyed either by yahoo or broker symbol
-        // Find the market entry regardless of which key is used
-        const symbol = Object.keys(markets).find(
-          k => k === q.symbol || toBrokerSymbol(k) === q.symbol
-        );
-        if (!symbol) continue;
+          let signalDay: MarketData['signalDay'] = 'Normal';
 
-        const market = markets[symbol];
-        const currentPrice = q.price;
-
-        market.currentPrice = currentPrice;
-        market.high = Math.max(market.high, currentPrice);
-        market.low  = Math.min(market.low,  currentPrice);
-        market.hod  = market.high;
-        market.lod  = market.low;
-        market.change = currentPrice - market.prevClose;
-        market.changePercent = market.prevClose !== 0
-          ? (market.change / market.prevClose) * 100
-          : 0;
-
-        let prevNY = -1;
-        if (market.lastUpdated) {
-          const [hPrev, mPrev] = GLOBAL_FORMATTER_HM.format(new Date(market.lastUpdated)).split(':');
-          prevNY = (parseInt(hPrev, 10) === 24 ? 0 : parseInt(hPrev, 10)) * 60 + parseInt(mPrev, 10);
-        }
-
-        if (prevNY !== -1) {
-          if (prevNY < 1200 && currNY >= 1200) { market.asianHigh = currentPrice; market.asianLow = currentPrice; }
-          if (prevNY < 120 && currNY >= 120) { market.londonHigh = currentPrice; market.londonLow = currentPrice; }
-        }
-
-        if (currNY >= 1200 || currNY < 120) {
-          market.asianHigh = Math.max(market.asianHigh, currentPrice);
-          market.asianLow = Math.min(market.asianLow, currentPrice);
-        } else if (currNY >= 120 && currNY < 480) {
-          market.londonHigh = Math.max(market.londonHigh, currentPrice);
-          market.londonLow = Math.min(market.londonLow, currentPrice);
-        }
-
-        market.lastUpdated = now.toISOString();
-
-        // Update session HOS/LOS during first hour only
-        if (activeSessionName !== 'Gap Time') {
-          const sessionStart = sessionStartTimes[activeSessionName];
-          if (sessionStart && now.getTime() - sessionStart < 3_600_000) {
-            market.hos = Math.max(market.hos, currentPrice);
-            market.los = Math.min(market.los, currentPrice);
+          if (available.length >= 4) {
+            const [d0, d1, d2, d3] = available;
+            if (d3.high < d2.high && d3.low > d2.low) {
+              signalDay = 'Inside Day';
+            } else {
+              const isTrendUp   = d0.high < d1.high && d1.high < d2.high;
+              const isTrendDown = d0.low  > d1.low  && d1.low  > d2.low;
+              if (isTrendUp   && d3.close < d3.open) signalDay = 'FRD';
+              else if (isTrendDown && d3.close > d3.open) signalDay = 'FGD';
+            }
+          } else if (available.length >= 2) {
+            const prev = available[available.length - 2];
+            if (yesterday.high < prev.high && yesterday.low > prev.low) signalDay = 'Inside Day';
           }
+
+          const recentDailyCandles = candles.map(q => ({
+            date: q.date.split('T')[0],
+            open: q.open,
+            high: q.high,
+            low:  q.low,
+            close: q.close,
+          }));
+
+          const adr14 = candles.length > 0 
+            ? candles.reduce((sum, c) => sum + (c.high - c.low), 0) / candles.length / config.pipSize
+            : 0;
+
+          const dayOfWeek = now.getDay();
+
+          let mondayHigh = yesterday.high;
+          let mondayLow = yesterday.low;
+          let dayOfWeekCycle: 1|2|3 = 1;
+          let how = yesterday.high;
+          let low_week = yesterday.low;
+
+          let dayCountCycle: 1|2|3 = 1;
+          let lastTrend = 0;
+
+          for (let i = 1; i < candles.length - 1; i++) {
+            const prev = candles[i - 1];
+            const curr = candles[i];
+            
+            const isGreen = curr.close > curr.open;
+            const isRed = curr.close < curr.open;
+            const brokeHigh = curr.high > prev.high;
+            const brokeLow = curr.low < prev.low;
+            
+            let isDay1 = false;
+            
+            if (brokeHigh && isRed) {
+               isDay1 = true;
+               lastTrend = -1;
+            } else if (brokeLow && isGreen) {
+               isDay1 = true;
+               lastTrend = 1;
+            } else if (brokeHigh && curr.close > prev.high) {
+               if (lastTrend !== 1) {
+                  isDay1 = true;
+                  lastTrend = 1;
+               }
+            } else if (brokeLow && curr.close < prev.low) {
+               if (lastTrend !== -1) {
+                  isDay1 = true;
+                  lastTrend = -1;
+               }
+            }
+            
+            if (isDay1) {
+              dayCountCycle = 1;
+            } else {
+              dayCountCycle = (dayCountCycle % 3) + 1 as 1|2|3;
+            }
+          }
+          
+          dayOfWeekCycle = dayCountCycle;
+
+          this.markets[key] = {
+            symbol:      config.symbol,
+            displayName: config.name,
+            currentPrice:  yesterday.close,
+            open:          yesterday.open,
+            high:          yesterday.high,
+            low:           yesterday.low,
+            prevClose:     yesterday.close,
+            hod: yesterday.high,
+            lod: yesterday.low,
+            hos: yesterday.high,
+            los: yesterday.low,
+            how,
+            low_week,
+            signalDay,
+            dayOfWeek,
+            dayOfWeekCycle,
+            mondayHigh,
+            mondayLow,
+            asianHigh: yesterday.high,
+            asianLow: yesterday.low,
+            londonHigh: yesterday.high,
+            londonLow: yesterday.low,
+            pipSize: config.pipSize,
+            change: 0,
+            changePercent: 0,
+            recentDailyCandles,
+            adr14,
+            lastUpdated: now.toISOString(),
+          };
         }
-
-        // BUG FIX #3: Persist real bid/ask from live quote into liveSpreads store
-        liveSpreads[symbol] = { bid: q.bid, ask: q.ask };
-
-        await checkForTrapTrigger(symbol, market, { bid: q.bid, ask: q.ask });
+      } catch (e) {
+        console.error(`[ProfileStore ${this.profileId}] Failed to fetch historical for ${key}:`, e);
       }
-    } catch (err) {
-      console.error(`[MarketStore] ${provider.source} price sync error:`, err);
     }
   }
 
-  // Cross-pair derived prices (always calculated regardless of provider)
-  const eurusd = markets['EURUSD=X']?.currentPrice || 1.0723;
-  const gbpusd = markets['GBPUSD=X']?.currentPrice || 1.2918;
-  const usdjpy = markets['USDJPY=X']?.currentPrice || 154.50;
+  updateAlertStatuses() {
+    const now = new Date();
+    this.alerts.forEach(alert => {
+      const market = this.markets[alert.symbol];
+      if (!market) return;
 
-  if (markets['GBPJPY=X']) {
-    markets['GBPJPY=X'].currentPrice = gbpusd * usdjpy;
-    markets['GBPJPY=X'].change = markets['GBPJPY=X'].currentPrice - markets['GBPJPY=X'].prevClose;
-  }
-  if (markets['EURGBP=X']) {
-    markets['EURGBP=X'].currentPrice = eurusd / gbpusd;
-    markets['EURGBP=X'].change = markets['EURGBP=X'].currentPrice - markets['EURGBP=X'].prevClose;
-  }
+      const diff = Math.abs(market.currentPrice - alert.triggerPrice);
+      const pipsDiff = diff / (market.pipSize || 1);
+      const elapsedMin = (now.getTime() - new Date(alert.timestamp).getTime()) / 60000;
 
-  updateAlertStatuses();
-}
-
-// ── Level 2 Trap Detection ────────────────────────────────────────────────────
-async function checkForTrapTrigger(symbol: string, market: MarketData, quote: { bid: number; ask: number }) {
-  const timing = getTimingGate();
-  if (timing.isBlackout || timing.gate === 'Gap Time') return;
-
-  const bid = quote.bid || market.currentPrice;
-  const ask = quote.ask || market.currentPrice;
-  const spread = Math.abs(ask - bid) / market.pipSize;
-  if (spread > 3.0) return; // Spread filter — abort on wide spread
-
-  const now = new Date();
-  const nyMinutes = parseInt(GLOBAL_FORMATTER_MINUTE.format(now), 10);
-  const isRotationMins =
-    nyMinutes >= 58 || nyMinutes <= 2 ||
-    (nyMinutes >= 13 && nyMinutes <= 17) ||
-    (nyMinutes >= 28 && nyMinutes <= 32) ||
-    (nyMinutes >= 43 && nyMinutes <= 47);
-
-  if (!isRotationMins) return;
-
-  // Session must be established (> 60 min old) before we look for boundary reversals
-  const isBoundaryLocked =
-    activeSessionName !== 'Gap Time' &&
-    now.getTime() - (sessionStartTimes[activeSessionName] || 0) > 3_600_000;
-  if (!isBoundaryLocked) return;
-
-  // Proximity checks
-  const isNearHOD = market.currentPrice >= market.hod - 2 * market.pipSize && market.currentPrice <= market.hod + 10 * market.pipSize;
-  const isNearLOD = market.currentPrice <= market.lod + 2 * market.pipSize && market.currentPrice >= market.lod - 10 * market.pipSize;
-  const isNearHOS = market.currentPrice >= market.hos - 2 * market.pipSize && market.currentPrice <= market.hos + 10 * market.pipSize;
-  const isNearLOS = market.currentPrice <= market.los + 2 * market.pipSize && market.currentPrice >= market.los - 10 * market.pipSize;
-
-  if (!isNearHOD && !isNearLOD && !isNearHOS && !isNearLOS) return;
-
-  // Fetch 1-minute candles for Level 2 confirmation (via active provider)
-  let minuteCandles;
-  let m15Candles;
-  try {
-    minuteCandles = await globalProvider().getMinuteCandles(symbol, toBrokerSymbol(symbol), 100);
-    m15Candles = await globalProvider().get15MinuteCandles(symbol, toBrokerSymbol(symbol), 25);
-  } catch {
-    return;
+      if (elapsedMin > 45 || pipsDiff > 80) {
+        alert.status = 'Trade Expired';
+      } else if (pipsDiff <= 8) {
+        alert.status = 'Trade Now';
+      } else if (pipsDiff <= 25) {
+        alert.status = 'Get Ready';
+      } else {
+        alert.status = 'Wait';
+      }
+    });
   }
 
-  if (minuteCandles.length < 25 || !m15Candles || m15Candles.length < 10) return;
-
-  // ── Stacey Burke 15M Logic (BOS & 3 Pushes) ──
-  const swingHighs: { idx: number; price: number }[] = [];
-  const swingLows: { idx: number; price: number }[] = [];
-  
-  for (let i = 2; i < m15Candles.length - 1; i++) {
-    const c = m15Candles[i];
-    const prev1 = m15Candles[i-1];
-    const next1 = m15Candles[i+1];
+  async updatePrices(shouldSyncPrices = true) {
+    const now = new Date();
+    const currentGate = getTimingGate();
+    const provider = getProviderForProfile(this.profileId);
     
-    if (c.high > prev1.high && c.high > next1.high) swingHighs.push({ idx: i, price: c.high });
-    if (c.low < prev1.low && c.low < next1.low) swingLows.push({ idx: i, price: c.low });
-  }
+    this.activeDataSource = provider.source;
 
-  const last15MClosed = m15Candles[m15Candles.length - 2];
-  let has15M_BOS_Short = false;
-  let has15M_BOS_Long = false;
-  let has3PushesUp = swingHighs.length >= 3;
-  let has3PushesDown = swingLows.length >= 3;
-
-  if (swingLows.length > 0) {
-    const lastSwingLow = swingLows[swingLows.length - 1].price;
-    market.last15MSwingLow = lastSwingLow;
-    if (last15MClosed.close < lastSwingLow) has15M_BOS_Short = true;
-  }
-  if (swingHighs.length > 0) {
-    const lastSwingHigh = swingHighs[swingHighs.length - 1].price;
-    market.last15MSwingHigh = lastSwingHigh;
-    if (last15MClosed.close > lastSwingHigh) has15M_BOS_Long = true;
-  }
-
-  // 1-minute 100-EMA (approximates 5-minute 20-EMA in algorithmic terms)
-  let ema100 = minuteCandles[0].close || market.currentPrice;
-  const k = 2 / (100 + 1);
-  for (let i = 1; i < minuteCandles.length; i++) {
-    const c = minuteCandles[i].close;
-    if (c) ema100 = c * k + ema100 * (1 - k);
-  }
-
-  const lastClosedCandle  = minuteCandles[minuteCandles.length - 2];
-  const currentCandle     = minuteCandles[minuteCandles.length - 1];
-  const prevClosedCandle  = minuteCandles[minuteCandles.length - 3];
-
-  if (!lastClosedCandle?.close) return;
-
-  // Candlestick pattern recognition
-  const bodySize  = Math.abs(lastClosedCandle.close - lastClosedCandle.open);
-  const upperWick = lastClosedCandle.high - Math.max(lastClosedCandle.open, lastClosedCandle.close);
-  const lowerWick = Math.min(lastClosedCandle.open, lastClosedCandle.close) - lastClosedCandle.low;
-
-  const isPinHammerShort = upperWick > bodySize * 2 && upperWick > lowerWick;
-  const isPinHammerLong  = lowerWick > bodySize * 2 && lowerWick > upperWick;
-
-  const isEngulfingShort = prevClosedCandle &&
-    lastClosedCandle.close < prevClosedCandle.low &&
-    lastClosedCandle.open >= prevClosedCandle.close;
-  const isEngulfingLong  = prevClosedCandle &&
-    lastClosedCandle.close > prevClosedCandle.high &&
-    lastClosedCandle.open <= prevClosedCandle.close;
-
-  const validShortCandle = isPinHammerShort || isEngulfingShort;
-  const validLongCandle  = isPinHammerLong  || isEngulfingLong;
-
-  let patternDetected: TrapSignal['pattern'] | null = null;
-  let direction: TrapSignal['direction'] = 'SELL';
-  let levelType: TrapSignal['levelType'] = 'HOD';
-  let levelPrice = market.currentPrice;
-
-  // Level 2 EMA-filtered directional logic + Stacey Burke 15M Filter
-  if (isNearHOD && validShortCandle && lastClosedCandle.close < ema100 && has3PushesUp && has15M_BOS_Short) {
-    if (lastClosedCandle.high >= market.hod - market.pipSize || currentCandle?.high >= market.hod - market.pipSize) {
-      patternDetected = 'Peak Formation High / False Break';
-      direction = 'SELL'; levelType = 'HOD'; levelPrice = market.hod;
+    if (currentGate.gate !== this.activeSessionName) {
+      this.activeSessionName = currentGate.gate;
+      if (this.activeSessionName !== 'Gap Time') {
+        this.sessionStartTimes[this.activeSessionName] = now.getTime();
+        for (const symbol of Object.keys(this.markets)) {
+          this.markets[symbol].hos = this.markets[symbol].currentPrice;
+          this.markets[symbol].los = this.markets[symbol].currentPrice;
+        }
+      }
     }
-  } else if (isNearLOD && validLongCandle && lastClosedCandle.close > ema100 && has3PushesDown && has15M_BOS_Long) {
-    if (lastClosedCandle.low <= market.lod + market.pipSize || currentCandle?.low <= market.lod + market.pipSize) {
-      patternDetected = 'Peak Formation Low / False Break';
-      direction = 'BUY'; levelType = 'LOD'; levelPrice = market.lod;
+
+    if (shouldSyncPrices) {
+      const currentBatch = BATCHES[this.yahooBatchIndex % BATCHES.length];
+      this.yahooBatchIndex++;
+
+      try {
+        const batchInput = currentBatch
+          .filter(s => this.markets[s])
+          .map(s => ({ yahoo: s, broker: toBrokerSymbol(s) }));
+
+        const quotes = await provider.getLiveQuoteBatch(batchInput);
+
+        const currNY = (parseInt(GLOBAL_FORMATTER_HM.format(now).split(':')[0], 10) === 24 ? 0 : parseInt(GLOBAL_FORMATTER_HM.format(now).split(':')[0], 10)) * 60 + parseInt(GLOBAL_FORMATTER_HM.format(now).split(':')[1], 10);
+
+        for (const q of quotes) {
+          const symbol = Object.keys(this.markets).find(
+            k => k === q.symbol || toBrokerSymbol(k) === q.symbol
+          );
+          if (!symbol) continue;
+
+          const market = this.markets[symbol];
+          const currentPrice = q.price;
+
+          market.currentPrice = currentPrice;
+          market.high = Math.max(market.high, currentPrice);
+          market.low  = Math.min(market.low,  currentPrice);
+          market.hod  = market.high;
+          market.lod  = market.low;
+          market.change = currentPrice - market.prevClose;
+          market.changePercent = market.prevClose !== 0
+            ? (market.change / market.prevClose) * 100
+            : 0;
+
+          let prevNY = -1;
+          if (market.lastUpdated) {
+            const [hPrev, mPrev] = GLOBAL_FORMATTER_HM.format(new Date(market.lastUpdated)).split(':');
+            prevNY = (parseInt(hPrev, 10) === 24 ? 0 : parseInt(hPrev, 10)) * 60 + parseInt(mPrev, 10);
+          }
+
+          if (prevNY !== -1) {
+            if (prevNY < 1200 && currNY >= 1200) { market.asianHigh = currentPrice; market.asianLow = currentPrice; }
+            if (prevNY < 120 && currNY >= 120) { market.londonHigh = currentPrice; market.londonLow = currentPrice; }
+          }
+
+          if (currNY >= 1200 || currNY < 120) {
+            market.asianHigh = Math.max(market.asianHigh, currentPrice);
+            market.asianLow = Math.min(market.asianLow, currentPrice);
+          } else if (currNY >= 120 && currNY < 480) {
+            market.londonHigh = Math.max(market.londonHigh, currentPrice);
+            market.londonLow = Math.min(market.londonLow, currentPrice);
+          }
+
+          market.lastUpdated = now.toISOString();
+
+          if (this.activeSessionName !== 'Gap Time') {
+            const sessionStart = this.sessionStartTimes[this.activeSessionName];
+            if (sessionStart && now.getTime() - sessionStart < 3_600_000) {
+              market.hos = Math.max(market.hos, currentPrice);
+              market.los = Math.min(market.los, currentPrice);
+            }
+          }
+
+          this.liveSpreads[symbol] = { bid: q.bid, ask: q.ask };
+
+          await this.checkForTrapTrigger(symbol, market, { bid: q.bid, ask: q.ask });
+        }
+      } catch (err) {
+        console.error(`[ProfileStore ${this.profileId}] ${provider.source} price sync error:`, err);
+      }
     }
-  } else if (isNearHOS && validShortCandle && lastClosedCandle.close < ema100 && has3PushesUp && has15M_BOS_Short) {
-    if (lastClosedCandle.high >= market.hos - market.pipSize || currentCandle?.high >= market.hos - market.pipSize) {
-      patternDetected = 'Session Window High Trap'; direction = 'SELL'; levelType = 'HOS'; levelPrice = market.hos;
+
+    const eurusd = this.markets['EURUSD=X']?.currentPrice || 1.0723;
+    const gbpusd = this.markets['GBPUSD=X']?.currentPrice || 1.2918;
+    const usdjpy = this.markets['USDJPY=X']?.currentPrice || 154.50;
+
+    if (this.markets['GBPJPY=X']) {
+      this.markets['GBPJPY=X'].currentPrice = gbpusd * usdjpy;
+      this.markets['GBPJPY=X'].change = this.markets['GBPJPY=X'].currentPrice - this.markets['GBPJPY=X'].prevClose;
     }
-  } else if (isNearLOS && validLongCandle && lastClosedCandle.close > ema100 && has3PushesDown && has15M_BOS_Long) {
-    if (lastClosedCandle.low <= market.los + market.pipSize || currentCandle?.low <= market.los + market.pipSize) {
-      patternDetected = 'Session Window Low Trap'; direction = 'BUY'; levelType = 'LOS'; levelPrice = market.los;
+    if (this.markets['EURGBP=X']) {
+      this.markets['EURGBP=X'].currentPrice = eurusd / gbpusd;
+      this.markets['EURGBP=X'].change = this.markets['EURGBP=X'].currentPrice - this.markets['EURGBP=X'].prevClose;
     }
+
+    this.updateAlertStatuses();
   }
 
-  if (!patternDetected) return;
-  console.log(`[TRAP TRIGGER] ${symbol} pattern: ${patternDetected} (dir: ${direction}, lvl: ${levelType}, price: ${levelPrice})`);
+  async checkForTrapTrigger(symbol: string, market: MarketData, quote: { bid: number; ask: number }) {
+    const timing = getTimingGate();
+    if (timing.isBlackout || timing.gate === 'Gap Time') return;
 
-  // Dedup: don't re-fire the same symbol+pattern within 60 minutes
-  const existingIndex = alerts.findIndex(
-    a => a.symbol === symbol && a.pattern === patternDetected &&
-         now.getTime() - new Date(a.timestamp).getTime() < 3_600_000
-  );
-  if (existingIndex !== -1) return;
+    const bid = quote.bid || market.currentPrice;
+    const ask = quote.ask || market.currentPrice;
+    const spread = Math.abs(ask - bid) / market.pipSize;
+    
+    if (spread > 3.0) return; 
 
-  const entryPrice = lastClosedCandle.close;
-  let stopLossDistPips: number;
-  if (direction === 'SELL') {
-    stopLossDistPips = ((lastClosedCandle.high - entryPrice) / market.pipSize) + spread + 2.0;
-  } else {
-    stopLossDistPips = ((entryPrice - lastClosedCandle.low) / market.pipSize) + spread + 2.0;
-  }
+    const now = new Date();
+    const nyHoursStr = GLOBAL_FORMATTER_HM.format(now).split(':')[0];
+    const nyMinutesStr = GLOBAL_FORMATTER_HM.format(now).split(':')[1];
+    const nyHours = parseInt(nyHoursStr, 10);
+    const nyMinutes = parseInt(nyMinutesStr, 10);
+    
+    if (nyMinutes % 15 > 2) return;
 
-  if (stopLossDistPips > 25) return; // Trap too wide — abort per playbook
+    const isMorningWindow = nyHours >= 7 && nyHours < 11;
+    const isAfternoonWindow = nyHours >= 13 && nyHours < 15;
+    if (!isMorningWindow && !isAfternoonWindow) return;
 
-  // Three-Session Setup Logic:
-  // Asian sets high/low. London breaks it. NY reverses it.
-  const londonBrokeAsia = market.londonHigh > market.asianHigh || market.londonLow < market.asianLow;
-  const nyReversing = (londonBrokeAsia && market.currentPrice > market.londonLow && market.currentPrice < market.londonHigh);
-  const isThreeSessionSetup = londonBrokeAsia && nyReversing && timing.gate === 'New York Session';
+    const ADR_THRESHOLD = 80;
+    const BOX_MAX = 30;
+    const TRAP_DEPTH_MIN = 10;
+    
+    const adr = market.adr14 || 0;
+    if (adr < ADR_THRESHOLD) return;
 
-  // Day 1 Filter Logic
-  if (market.dayOfWeekCycle === 1 && !isThreeSessionSetup) {
-    return; // Block Day 1 trades unless it's a 3-Session Setup
-  }
+    const asianRangePips = (market.asianHigh - market.asianLow) / market.pipSize;
+    if (asianRangePips > BOX_MAX) return;
 
-  const isThreeDaySetup = market.dayOfWeekCycle === 3;
-  const isHolyGrailConfluence = isThreeDaySetup && isThreeSessionSetup;
+    let m15Candles;
+    try {
+      const provider = getProviderForProfile(this.profileId);
+      m15Candles = await provider.get15MinuteCandles(symbol, toBrokerSymbol(symbol), 5);
+    } catch {
+      return;
+    }
+    if (!m15Candles || m15Candles.length < 3) return;
 
-  const confluence = calculateConfluenceScore(market, symbol, timing.gate, now.toISOString());
-  const grade = Math.max(1, Math.min(5, confluence?.grade ?? 3)) as TrapSignal['grade'];
+    const triggerCandle = m15Candles[m15Candles.length - 2];
+    if (!triggerCandle) return;
 
-  const newAlert: TrapSignal = {
-    id: `${symbol}-${Date.now()}`,
-    symbol,
-    displayName: market.displayName,
-    pattern: patternDetected,
-    direction,
-    triggerPrice: ask,
-    levelType,
-    keyLevel: levelPrice,
-    grade,
-    timingGate: timing.gate,
-    timestamp: now.toISOString(),
-    details: `${patternDetected} ${direction} trap at ${levelType} (${levelPrice.toFixed(5)}). ${timing.details}`,
-    confluenceMatrix: confluence?.matrix,
-    suggestedStopLoss: stopLossDistPips,
-    suggestedTakeProfit: stopLossDistPips * 2, // 1:2 default R:R
-    isThreeDaySetup,
-    isThreeSessionSetup,
-    isHolyGrailConfluence,
-    status: 'Trade Now',
-  };
+    const bodySize = Math.abs(triggerCandle.close - triggerCandle.open);
+    const upperWick = triggerCandle.high - Math.max(triggerCandle.open, triggerCandle.close);
+    const lowerWick = Math.min(triggerCandle.open, triggerCandle.close) - triggerCandle.low;
+    const candleRange = triggerCandle.high - triggerCandle.low;
+    if (candleRange === 0) return;
+    
+    const pipsAboveAsian = (triggerCandle.high - market.asianHigh) / market.pipSize;
+    const pipsBelowAsian = (market.asianLow - triggerCandle.low) / market.pipSize;
 
-  // Guard against concurrent duplicate execution
-  const signalKey = `${symbol}-${patternDetected}`;
-  if (executingSignals.has(signalKey)) return;
-  executingSignals.add(signalKey);
+    let direction: 'BUY'|'SELL' | null = null;
+    let patternDetected = '';
+    let stopLossDistPips = 0;
+    let levelType: TrapSignal['levelType'] = 'HOS';
+    let levelPrice = market.currentPrice;
 
-  // 1. INSTANT BOT EXECUTION (Bypassing AI latency)
-  try {
-    await executeTradeForUsers(newAlert, stopLossDistPips, 50, 5.0);
-    console.log(`[MarketStore] Bot executed instantly: ${symbol} ${direction}. Bypassing AI for speed.`);
-  } catch (err) {
-    console.error(`[MarketStore] Bot execution error for ${symbol}:`, err);
-  }
+    if (pipsAboveAsian >= TRAP_DEPTH_MIN) {
+       if (triggerCandle.close < triggerCandle.open) {
+          const engulfRatio = bodySize / candleRange;
+          if (engulfRatio > 0.4 || upperWick > bodySize * 2) {
+             direction = 'SELL';
+             patternDetected = 'Holy Grail Aggressive High Trap';
+             stopLossDistPips = ((triggerCandle.high - triggerCandle.close) / market.pipSize) + spread + 2.0;
+             levelType = 'HOD';
+             levelPrice = market.asianHigh;
+          }
+       }
+    } else if (pipsBelowAsian >= TRAP_DEPTH_MIN) {
+       if (triggerCandle.close > triggerCandle.open) {
+          const engulfRatio = bodySize / candleRange;
+          if (engulfRatio > 0.4 || lowerWick > bodySize * 2) {
+             direction = 'BUY';
+             patternDetected = 'Holy Grail Aggressive Low Trap';
+             stopLossDistPips = ((triggerCandle.close - triggerCandle.low) / market.pipSize) + spread + 2.0;
+             levelType = 'LOD';
+             levelPrice = market.asianLow;
+          }
+       }
+    }
 
-  // 2. GEMINI AUDIT FOR SIGNAL UI
-  // The user requested that nothing appears in the Signals window without Gemini Audit.
-  try {
-    const aiDecision = await evaluateSignalWithAI(newAlert, market);
-    if (aiDecision.approve) {
+    if (!direction) return;
+    if (stopLossDistPips > 35) return;
+
+    console.log(`[ProfileStore ${this.profileId}] TRAP TRIGGER ${symbol}: ${patternDetected} (dir: ${direction}, lvl: ${levelType}, price: ${levelPrice})`);
+
+    const existingIndex = this.alerts.findIndex(
+      a => a.symbol === symbol && a.pattern === patternDetected &&
+           now.getTime() - new Date(a.timestamp).getTime() < 3_600_000
+    );
+    if (existingIndex !== -1) return;
+
+    const takeProfitDistPips = stopLossDistPips * 5;
+
+    const newAlert: TrapSignal = {
+      id: `${symbol}-${Date.now()}`,
+      symbol,
+      displayName: market.displayName,
+      pattern: patternDetected,
+      direction,
+      triggerPrice: ask,
+      levelType,
+      keyLevel: levelPrice,
+      grade: 5,
+      timingGate: timing.gate,
+      timestamp: now.toISOString(),
+      details: `${patternDetected} ${direction} trap at ${levelType}. SL: ${stopLossDistPips.toFixed(1)} pips.`,
+      suggestedStopLoss: stopLossDistPips,
+      suggestedTakeProfit: takeProfitDistPips,
+      isThreeDaySetup: false,
+      isThreeSessionSetup: false,
+      isHolyGrailConfluence: true, 
+      status: 'Trade Now',
+    };
+
+    const signalKey = `${symbol}-${patternDetected}`;
+    if (this.executingSignals.has(signalKey)) return;
+    this.executingSignals.add(signalKey);
+
+    try {
+      // EXECUTE TRADE FOR THIS PROFILE ONLY
+      await executeTradeForProfile(this.profileId, newAlert, stopLossDistPips, takeProfitDistPips, 5.0);
+      console.log(`[ProfileStore ${this.profileId}] Bot executed: ${symbol} ${direction}.`);
+
       newAlert.status = 'Trade Now';
-      newAlert.details += ` [GEMINI AUDITED: ${aiDecision.reasoning}]`;
+      this.alerts.unshift(newAlert);
+      if (this.alerts.length > 50) this.alerts.length = 50;
       
-      // Only push to UI after Gemini approval
-      alerts.unshift(newAlert);
-      if (alerts.length > 50) alerts.length = 50;
-      console.log(`[MarketStore] Gemini Approved ${symbol} signal. Broadcasting to UI.`);
-    } else {
-      console.log(`[MarketStore] Gemini Rejected ${symbol} signal for UI display: ${aiDecision.reasoning}`);
-      // It will NOT be pushed to the alerts array.
+    } catch (err) {
+      console.error(`[ProfileStore ${this.profileId}] Bot execution error for ${symbol}:`, err);
+    } finally {
+      this.executingSignals.delete(signalKey);
     }
-  } catch (err) {
-    console.error('[MarketStore] Error during AI evaluation:', err);
-  } finally {
-    executingSignals.delete(signalKey);
   }
 }
 
-// ── Public accessors ──────────────────────────────────────────────────────────
+// Global registry of active ProfileStores
+export const profileStores = new Map<number, ProfileStore>();
+
+export async function getOrCreateProfileStore(profileId: number): Promise<ProfileStore> {
+  if (!profileStores.has(profileId)) {
+    const store = new ProfileStore(profileId);
+    await store.init();
+    profileStores.set(profileId, store);
+  }
+  return profileStores.get(profileId)!;
+}
+
 export function manuallyTriggerTrap(_symbol: string, _patternType: string): TrapSignal {
-  return {} as TrapSignal; // UI compatibility — no fake trades
+  return {} as TrapSignal;
 }
 
-export function getMarkets() {
-  return Object.values(markets);
+// Helpers for the engine to grab data per profile
+export function getProfileMarkets(profileId: number) {
+  const store = profileStores.get(profileId);
+  return store ? Object.values(store.markets) : [];
 }
 
-// 🛡️ BUG FIX #3: Export live spreads so botManagerTick can pass real bid/ask to bots
-export function getMarketSpreads(): Record<string, { bid: number; ask: number }> {
-  return liveSpreads;
+export function getProfileMarketSpreads(profileId: number) {
+  const store = profileStores.get(profileId);
+  return store ? store.liveSpreads : {};
 }
 
-export function getAlerts() {
-  return alerts;
+export function getProfileAlerts(profileId: number) {
+  const store = profileStores.get(profileId);
+  return store ? store.alerts : [];
 }
 
-export function getAlertById(id: string) {
-  return alerts.find(a => a.id === id);
+export function getProfileAlertById(profileId: number, alertId: string) {
+  const store = profileStores.get(profileId);
+  return store ? store.alerts.find(a => a.id === alertId) : undefined;
+}
+
+export function getProfileActiveDataSource(profileId: number) {
+  const store = profileStores.get(profileId);
+  return store ? store.activeDataSource : 'yahoo';
 }

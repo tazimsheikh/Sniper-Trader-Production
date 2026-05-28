@@ -204,14 +204,14 @@ async function getConnection(token: string, accountId: string): Promise<any> {
  * MetaAPI timeframe strings accepted by the SDK
  *   PERIOD_M1 | PERIOD_M5 | PERIOD_M15 | PERIOD_H1 | PERIOD_D1
  */
-function buildMetaApiProvider(token: string, accountId: string): CandleProvider {
+function buildMetaApiProvider(profile: {token: string, accountId: string}): CandleProvider {
   return {
     source: 'metaapi',
 
     async getDailyCandles(_yahoo, broker, days) {
       try {
-        await getConnection(token, accountId);
-        const account = await getSharedAccount(token, accountId);
+        await getConnection(profile.token, profile.accountId);
+        const account = await getSharedAccount(profile.token, profile.accountId);
         const startTime = new Date();
         startTime.setDate(startTime.getDate() - days);
         const candles: any[] = await account.getHistoricalCandles(broker, '1d', startTime, days + 2);
@@ -222,19 +222,19 @@ function buildMetaApiProvider(token: string, accountId: string): CandleProvider 
             open: c.open, high: c.high, low: c.low, close: c.close, volume: c.tickVolume,
           }));
       } catch (err: any) {
-        console.warn(`[MetaApiProvider] Daily candles failed for ${broker}, falling back to Yahoo:`, err.message);
+        console.warn(`[MetaApiProvider] Daily candles failed for ${broker} on account ${profile.accountId}:`, err.message);
         if (err.message.includes('connect') || err.message.includes('disconnect') || err.message.includes('token') || err.message.includes('auth')) {
-          clearSharedConnection(token, accountId);
-          metaApiSyncStatus = 'offline';
+          clearSharedConnection(profile.token, profile.accountId);
         }
-        return YahooProvider.getDailyCandles(_yahoo, broker, days);
       }
+      metaApiSyncStatus = 'offline';
+      return YahooProvider.getDailyCandles(_yahoo, broker, days);
     },
 
     async getMinuteCandles(_yahoo, broker, minutes) {
       try {
-        await getConnection(token, accountId);
-        const account = await getSharedAccount(token, accountId);
+        await getConnection(profile.token, profile.accountId);
+        const account = await getSharedAccount(profile.token, profile.accountId);
         const startTime = new Date();
         startTime.setMinutes(startTime.getMinutes() - minutes - 5);
         const candles: any[] = await account.getHistoricalCandles(broker, '1m', startTime, minutes + 10);
@@ -245,19 +245,19 @@ function buildMetaApiProvider(token: string, accountId: string): CandleProvider 
             open: c.open, high: c.high, low: c.low, close: c.close, volume: c.tickVolume,
           }));
       } catch (err: any) {
-        console.warn(`[MetaApiProvider] Minute candles failed for ${broker}, falling back to Yahoo:`, err.message);
+        console.warn(`[MetaApiProvider] Minute candles failed for ${broker} on account ${profile.accountId}:`, err.message);
         if (err.message.includes('connect') || err.message.includes('disconnect') || err.message.includes('token') || err.message.includes('auth')) {
-          clearSharedConnection(token, accountId);
-          metaApiSyncStatus = 'offline';
+          clearSharedConnection(profile.token, profile.accountId);
         }
-        return YahooProvider.getMinuteCandles(_yahoo, broker, minutes);
       }
+      metaApiSyncStatus = 'offline';
+      return YahooProvider.getMinuteCandles(_yahoo, broker, minutes);
     },
 
     async get15MinuteCandles(_yahoo, broker, count) {
       try {
-        await getConnection(token, accountId);
-        const account = await getSharedAccount(token, accountId);
+        await getConnection(profile.token, profile.accountId);
+        const account = await getSharedAccount(profile.token, profile.accountId);
         const startTime = new Date();
         startTime.setMinutes(startTime.getMinutes() - count * 15 - 60);
         const candles: any[] = await account.getHistoricalCandles(broker, '15m', startTime, count + 10);
@@ -268,26 +268,24 @@ function buildMetaApiProvider(token: string, accountId: string): CandleProvider 
             open: c.open, high: c.high, low: c.low, close: c.close, volume: c.tickVolume,
           }));
       } catch (err: any) {
-        console.warn(`[MetaApiProvider] 15Minute candles failed for ${broker}, falling back to Yahoo:`, err.message);
+        console.warn(`[MetaApiProvider] 15Minute candles failed for ${broker} on account ${profile.accountId}:`, err.message);
         if (err.message.includes('connect') || err.message.includes('disconnect') || err.message.includes('token') || err.message.includes('auth')) {
-          clearSharedConnection(token, accountId);
-          metaApiSyncStatus = 'offline';
+          clearSharedConnection(profile.token, profile.accountId);
         }
-        return YahooProvider.get15MinuteCandles(_yahoo, broker, count);
       }
+      metaApiSyncStatus = 'offline';
+      return YahooProvider.get15MinuteCandles(_yahoo, broker, count);
     },
 
     async getLiveQuote(_yahoo, broker) {
       try {
         let connection: any;
         try {
-          connection = await getSharedStreamingConnection(token, accountId, true);
+          connection = await getSharedStreamingConnection(profile.token, profile.accountId, true);
           metaApiSyncStatus = 'connected';
         } catch (e: any) {
           if (e.message.includes('Fast fail')) {
             metaApiSyncStatus = 'syncing';
-          } else {
-            metaApiSyncStatus = 'offline';
           }
           throw e;
         }
@@ -303,8 +301,7 @@ function buildMetaApiProvider(token: string, accountId: string): CandleProvider 
           };
         }
 
-        // Fall back to RPC getSymbolPrice if streaming price is not loaded yet
-        const rpcConn = await getConnection(token, accountId);
+        const rpcConn = await getConnection(profile.token, profile.accountId);
         const rpcQ = await rpcConn.getSymbolPrice(broker);
         return {
           symbol: broker,
@@ -314,18 +311,18 @@ function buildMetaApiProvider(token: string, accountId: string): CandleProvider 
           time: rpcQ.time ?? new Date(),
         };
       } catch (err: any) {
-        console.warn(`[MetaApiProvider] Live quote failed for ${broker}, falling back to Yahoo:`, err.message);
+        console.warn(`[MetaApiProvider] Live quote failed for ${broker} on account ${profile.accountId}:`, err.message);
         if (err.message.includes('connect') || err.message.includes('disconnect') || err.message.includes('token') || err.message.includes('auth')) {
-          clearSharedConnection(token, accountId);
-          metaApiSyncStatus = 'offline';
+          clearSharedConnection(profile.token, profile.accountId);
         }
-        return YahooProvider.getLiveQuote(_yahoo, broker);
       }
+      metaApiSyncStatus = 'offline';
+      return YahooProvider.getLiveQuote(_yahoo, broker);
     },
 
     async getLiveQuoteBatch(symbols) {
       try {
-        await getSharedStreamingConnection(token, accountId, true);
+        await getSharedStreamingConnection(profile.token, profile.accountId, true);
         metaApiSyncStatus = 'connected';
 
         const results = await Promise.allSettled(
@@ -337,31 +334,24 @@ function buildMetaApiProvider(token: string, accountId: string): CandleProvider 
       } catch (err: any) {
         if (err.message.includes('Fast fail')) {
           metaApiSyncStatus = 'syncing';
-        } else {
-          metaApiSyncStatus = 'offline';
         }
-        return YahooProvider.getLiveQuoteBatch(symbols);
       }
+      metaApiSyncStatus = 'offline';
+      return YahooProvider.getLiveQuoteBatch(symbols);
     },
   };
 }
 
 // ── Provider registry & selection ─────────────────────────────────────────────
 
+/**
+ * Gets a dedicated CandleProvider for a specific profile.
+ * Falls back to Yahoo if the profile is invalid or has no token.
+ */
 import { SimulationProvider } from './simulationProvider';
 
-/**
- * Returns the best available CandleProvider for the global engine.
- *
- * Strategy: if ANY user has a valid MetaAPI token + account ID, use their
- * credentials for the shared market-data feed (the data itself is public
- * pricing, not account-specific). Falls back to Yahoo if no user is configured.
- *
- * This is called once at startup and again if user credentials change.
- */
-export function getGlobalCandleProvider(): CandleProvider {
+export function getProviderForProfile(profileId: number): CandleProvider {
   if (process.env.SIMULATION_MODE === 'true') {
-    console.log('[CandleProvider] ⏱️ Simulation Mode active. Using local historical data.');
     return SimulationProvider;
   }
 
@@ -370,42 +360,20 @@ export function getGlobalCandleProvider(): CandleProvider {
       `SELECT u.metaapi_token, tp.metaapi_account_id
        FROM trading_profiles tp
        JOIN users u ON u.id = tp.user_id
-       WHERE u.metaapi_token IS NOT NULL
-         AND tp.metaapi_account_id IS NOT NULL
-         AND u.metaapi_token != 'dummy_token'
-         AND tp.metaapi_account_id != 'dummy_acc'
-       LIMIT 1`
-    ).get() as any;
+       WHERE tp.id = ?`
+    ).get(profileId) as any;
 
-    if (profile?.metaapi_token && profile?.metaapi_account_id) {
-      let rawToken: string;
+    if (profile && profile.metaapi_token && profile.metaapi_account_id && profile.metaapi_token !== 'dummy_token' && profile.metaapi_account_id !== 'dummy_acc') {
       try {
-        rawToken = isEncrypted(profile.metaapi_token) ? decrypt(profile.metaapi_token) : profile.metaapi_token;
+        const rawToken = isEncrypted(profile.metaapi_token) ? decrypt(profile.metaapi_token) : profile.metaapi_token;
+        return buildMetaApiProvider({ token: rawToken, accountId: profile.metaapi_account_id });
       } catch {
-        return YahooProvider; // Decryption failed — fall back
+        // Decryption failed — skip this profile
       }
-      console.log('[CandleProvider] ✅ MetaAPI data source selected (authenticated profile found).');
-      return buildMetaApiProvider(rawToken, profile.metaapi_account_id);
     }
   } catch (err: any) {
-    console.warn('[CandleProvider] DB lookup failed, defaulting to Yahoo:', err.message);
+    console.warn(`[CandleProvider] DB lookup failed for profile ${profileId}, defaulting to Yahoo:`, err.message);
   }
 
-  console.log('[CandleProvider] 📡 Yahoo Finance data source selected (no authenticated user).');
   return YahooProvider;
-}
-
-/**
- * Exported singleton — refreshed by marketStore on each full re-init cycle.
- * marketStore.ts calls refreshGlobalProvider() after user settings change.
- */
-let _globalProvider: CandleProvider = YahooProvider;
-
-export function refreshGlobalProvider(): CandleProvider {
-  _globalProvider = getGlobalCandleProvider();
-  return _globalProvider;
-}
-
-export function globalProvider(): CandleProvider {
-  return _globalProvider;
 }

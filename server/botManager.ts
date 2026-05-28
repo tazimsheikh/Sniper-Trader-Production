@@ -17,25 +17,9 @@ import { TradingBot, BotConfig, BotContext, BotTradeState } from './bots/BotInte
 import { MarketData } from '../src/types.js';
 import { getSharedConnection, clearSharedConnection, isMetaApiConnecting, setMetaApiConnectedCallback } from './metaApiHandler.js';
 import { isNewsBlackout } from './newsStore.js';
-import SniperSystemAI from './bots/SniperSystemAI.js';
-import AUDJPYNyFade from './bots/audjpyNyFade.js';
-import AUDUSDLondonFade from './bots/audusdLondonFade.js';
-import CHFJPYNyFade from './bots/chfjpyNyFade.js';
-import EURAUDLondonFade from './bots/euraudLondonFade.js';
-import EURCADLondonFade from './bots/eurcadLondonFade.js';
-import EURCHFLondonFade from './bots/eurchfLondonFade.js';
-import EURJPYLondonFade from './bots/eurjpyLondonFade.js';
-import GBPAUDNyFade from './bots/gbpaudNyFade.js';
-import GBPCADNyFade from './bots/gbpcadNyFade.js';
-import GBPCHFLondonFade from './bots/gbpchfLondonFade.js';
-import GBPJPYNyFade from './bots/gbpjpyNyFade.js';
-import GBPUSDLondonFade from './bots/gbpusdLondonFade.js';
-import NZDUSDLondonFade from './bots/nzdusdLondonFade.js';
-import USDCADLondonFade from './bots/usdcadLondonFade.js';
-import USDCHFNyFade from './bots/usdchfNyFade.js';
-import USDJPYNyFade from './bots/usdjpyNyFade.js';
-import XAUUSDLondonFade from './bots/xauusdLondonFade.js';
-
+import { SniperSystemAI } from './bots/SniperSystemAI.js';
+const defaultSniperBot = new SniperSystemAI();
+import { PAIR_BOTS } from './bots/pairConfigs.js';
 
 // @ts-ignore
 import MetaApiPkg from 'metaapi.cloud-sdk/esm-node';
@@ -45,25 +29,23 @@ const MetaApi = MetaApiPkg.default ?? MetaApiPkg;
 // ── Bot Registry ─────────────────────────────────────────────────────────────
 // Add new bots here and they automatically appear in the UI and engine.
 export const BOT_REGISTRY: Record<string, TradingBot> = {
-  'sniper-system-ai': SniperSystemAI,
-  'audjpy-ny-fade': AUDJPYNyFade,
-  'audusd-london-fade': AUDUSDLondonFade,
-  'chfjpy-ny-fade': CHFJPYNyFade,
-  'euraud-london-fade': EURAUDLondonFade,
-  'eurcad-london-fade': EURCADLondonFade,
-  'eurchf-london-fade': EURCHFLondonFade,
-  'eurjpy-london-fade': EURJPYLondonFade,
-  'gbpaud-ny-fade': GBPAUDNyFade,
-  'gbpcad-ny-fade': GBPCADNyFade,
-  'gbpchf-london-fade': GBPCHFLondonFade,
-  'gbpjpy-ny-fade': GBPJPYNyFade,
-  'gbpusd-london-fade': GBPUSDLondonFade,
-  'nzdusd-london-fade': NZDUSDLondonFade,
-  'usdcad-london-fade': USDCADLondonFade,
-  'usdchf-ny-fade': USDCHFNyFade,
-  'usdjpy-ny-fade': USDJPYNyFade,
-  'xauusd-london-fade': XAUUSDLondonFade,
+  'sniper-system-ai': defaultSniperBot,
+  ...PAIR_BOTS,
 };
+
+const profileBotInstances = new Map<string, TradingBot>();
+
+function getProfileBot(profileId: number, botId: string): TradingBot | undefined {
+  const key = `${profileId}-${botId}`;
+  if (!profileBotInstances.has(key)) {
+    if (botId === 'sniper-system-ai') {
+      profileBotInstances.set(key, new SniperSystemAI());
+    } else if (PAIR_BOTS[botId]) {
+      profileBotInstances.set(key, PAIR_BOTS[botId]);
+    }
+  }
+  return profileBotInstances.get(key);
+}
 
 export const ALL_BOT_CONFIGS: BotConfig[] = Object.values(BOT_REGISTRY).map(b => b.config);
 
@@ -344,180 +326,184 @@ function updateHighLow(metaOrderId: string, highest: number, lowest: number) {
 // ── Main Tick Function ────────────────────────────────────────────────────────
 // Called every 30 seconds from the server's polling loop.
 export async function botManagerTick(
+  profileId: number,
   marketDataProvider: () => Record<string, MarketData>
 ) {
   const now = new Date();
   resetFiredTodayIfNeeded();
 
-  // Pending signals have been deprecated in favor of instant execution.
-
   const isSim = process.env.SIMULATION_MODE === 'true';
-  const profiles = db.prepare(
+  const query = isSim ? 
     `SELECT tp.id, tp.user_id, u.metaapi_token, tp.metaapi_account_id, tp.risk_multiplier, tp.active_bots
      FROM trading_profiles tp
      JOIN users u ON u.id = tp.user_id
-     WHERE tp.automation_active = 1
+     WHERE tp.id = ? 
+       AND tp.automation_active = 1
        AND u.metaapi_token IS NOT NULL
        AND tp.metaapi_account_id IS NOT NULL
-       ${isSim ? 'AND tp.id = 999' : `AND u.metaapi_token != 'dummy_token' AND tp.metaapi_account_id != 'dummy_acc'`}`
-  ).all() as any[];
+       AND tp.id = 999` :
+    `SELECT tp.id, tp.user_id, u.metaapi_token, tp.metaapi_account_id, tp.risk_multiplier, tp.active_bots
+     FROM trading_profiles tp
+     JOIN users u ON u.id = tp.user_id
+     WHERE tp.id = ?
+       AND tp.automation_active = 1
+       AND u.metaapi_token IS NOT NULL
+       AND tp.metaapi_account_id IS NOT NULL
+       AND u.metaapi_token != 'dummy_token' AND tp.metaapi_account_id != 'dummy_acc'`;
 
-  if (profiles.length === 0) return;
+  const profile = db.prepare(query).get(profileId) as any;
+  if (!profile) return;
 
   const marketData = marketDataProvider();
+  const activeBotIds = getActiveBots(profile);
+  if (activeBotIds.length === 0) return;
 
-  for (const profile of profiles) {
-    const activeBotIds = getActiveBots(profile);
-    if (activeBotIds.length === 0) continue;
+  // Decrypt token once per profile
+  let rawToken: string;
+  try {
+    rawToken = isEncrypted(profile.metaapi_token) ? decrypt(profile.metaapi_token) : profile.metaapi_token;
+  } catch (e: any) {
+    console.error(`[BotManager Profile ${profile.id}] Token decrypt failed:`, e.message);
+    return;
+  }
 
-    // Decrypt token once per profile
-    let rawToken: string;
-    try {
-      rawToken = isEncrypted(profile.metaapi_token) ? decrypt(profile.metaapi_token) : profile.metaapi_token;
-    } catch (e: any) {
-      console.error(`[BotManager Profile ${profile.id}] Token decrypt failed:`, e.message);
-      continue;
+  // Proactively check/maintain connection for active profile to prevent false lockouts
+  try {
+    await getConnection(rawToken, profile.metaapi_account_id);
+  } catch (e: any) {
+    if (!e.message.includes('Fast fail')) {
+      console.warn(`[BotManager Profile ${profile.id}] Connection check failed:`, e.message);
     }
+  }
 
-    // Proactively check/maintain connection for active profile to prevent false lockouts
-    try {
-      await getConnection(rawToken, profile.metaapi_account_id);
-    } catch (e: any) {
-      if (!e.message.includes('Fast fail')) {
-        console.warn(`[BotManager Profile ${profile.id}] Connection check failed:`, e.message);
-      }
+  const sniperBot = getProfileBot(profile.id, 'sniper-system-ai');
+  if (!sniperBot) return;
+
+  // Treat active flip switches as authorized pairs for the master bot
+  const authorizedSymbols = new Set<string>();
+  for (const botId of activeBotIds) {
+    const b = getProfileBot(profile.id, botId);
+    if (b && b.config.id !== 'sniper-system-ai') {
+      for (const sym of b.config.symbols) authorizedSymbols.add(sym);
     }
+  }
+  
+  // Explicitly add symbols if they turned on Sniper AI directly
+  if (activeBotIds.includes('sniper-system-ai')) {
+      for (const sym of sniperBot.config.symbols) authorizedSymbols.add(sym);
+  }
 
-    const sniperBot = BOT_REGISTRY['sniper-system-ai'];
-    if (!sniperBot) continue;
+  const botId = 'sniper-system-ai';
+  const bot = sniperBot;
 
-    // Treat active flip switches as authorized pairs for the master bot
-    const authorizedSymbols = new Set<string>();
-    for (const botId of activeBotIds) {
-      const b = BOT_REGISTRY[botId];
-      if (b && b.config.id !== 'sniper-system-ai') {
-        for (const sym of b.config.symbols) authorizedSymbols.add(sym);
-      }
-    }
-    
-    // Explicitly add symbols if they turned on Sniper AI directly (though it's designed to trade authorized ones)
-    if (activeBotIds.includes('sniper-system-ai')) {
-        for (const sym of sniperBot.config.symbols) authorizedSymbols.add(sym);
-    }
+  // Process each authorized symbol using the master Sniper AI bot
+  for (const brokerSymbol of Array.from(authorizedSymbols)) {
+      // Find the matching yahoo key for this broker symbol
+      const yahooKey = Object.entries({ 'GC=F': 'XAUUSD', 'NQ=F': 'USTEC', 'EURUSD=X': 'EURUSD', 'GBPUSD=X': 'GBPUSD', 'USDJPY=X': 'USDJPY', 'AUDUSD=X': 'AUDUSD', 'USDCAD=X': 'USDCAD', 'NZDUSD=X': 'NZDUSD', 'USDCHF=X': 'USDCHF', 'AUDJPY=X': 'AUDJPY', 'CHFJPY=X': 'CHFJPY', 'EURAUD=X': 'EURAUD', 'EURCAD=X': 'EURCAD', 'EURCHF=X': 'EURCHF', 'EURJPY=X': 'EURJPY', 'GBPAUD=X': 'GBPAUD', 'GBPCAD=X': 'GBPCAD', 'GBPCHF=X': 'GBPCHF', 'GBPJPY=X': 'GBPJPY' })
+        .find(([_, v]) => v === brokerSymbol)?.[0];
+      const market = yahooKey ? marketData[yahooKey] : null;
+      if (!market) continue;
 
-    const botId = 'sniper-system-ai';
-    const bot = sniperBot;
+      const spread = 0;
 
-    // Process each authorized symbol using the master Sniper AI bot
-    for (const brokerSymbol of Array.from(authorizedSymbols)) {
-        // Find the matching yahoo key for this broker symbol
-        // 🛡️ BUG FIX #4: Added NZDUSD=X and USDCHF=X — previously missing, causing those bots to never receive market data
-        const yahooKey = Object.entries({ 'GC=F': 'XAUUSD', 'NQ=F': 'USTEC', 'EURUSD=X': 'EURUSD', 'GBPUSD=X': 'GBPUSD', 'USDJPY=X': 'USDJPY', 'AUDUSD=X': 'AUDUSD', 'USDCAD=X': 'USDCAD', 'NZDUSD=X': 'NZDUSD', 'USDCHF=X': 'USDCHF', 'AUDJPY=X': 'AUDJPY', 'CHFJPY=X': 'CHFJPY', 'EURAUD=X': 'EURAUD', 'EURCAD=X': 'EURCAD', 'EURCHF=X': 'EURCHF', 'EURJPY=X': 'EURJPY', 'GBPAUD=X': 'GBPAUD', 'GBPCAD=X': 'GBPCAD', 'GBPCHF=X': 'GBPCHF', 'GBPJPY=X': 'GBPJPY' })
-          .find(([_, v]) => v === brokerSymbol)?.[0];
-        const market = yahooKey ? marketData[yahooKey] : null;
-        if (!market) continue;
+      const context: BotContext = {
+        currentPrice: market.currentPrice,
+        bid: market.currentPrice,
+        ask: market.currentPrice,
+        spread,
+        brokerSymbol,
+        now,
+        recentDailyCandles: market.recentDailyCandles || [],
+        last15MSwingHigh: market.last15MSwingHigh,
+        last15MSwingLow: market.last15MSwingLow,
+      };
 
-        const spread = 0;
+      // ── MANAGE EXISTING OPEN TRADES ────────────────────────────────────────
+      const openTrades = getOpenTradesForBot(profile.id, botId, brokerSymbol);
+      for (const openTrade of openTrades) {
+        if (!openTrade.metaOrderId) continue;
 
-        const context: BotContext = {
-          currentPrice: market.currentPrice,
-          bid: market.currentPrice,
-          ask: market.currentPrice,
-          spread,
-          brokerSymbol,
-          now,
-          recentDailyCandles: market.recentDailyCandles || [],
-          last15MSwingHigh: market.last15MSwingHigh,
-          last15MSwingLow: market.last15MSwingLow,
-        };
+        // Update highest/lowest
+        const newHighest = Math.max(openTrade.highestPrice, context.currentPrice);
+        const newLowest  = Math.min(openTrade.lowestPrice,  context.currentPrice);
+        updateHighLow(openTrade.metaOrderId, newHighest, newLowest);
+        openTrade.highestPrice = newHighest;
+        openTrade.lowestPrice  = newLowest;
 
-        // ── MANAGE EXISTING OPEN TRADES ────────────────────────────────────────
-        const openTrades = getOpenTradesForBot(profile.id, botId, brokerSymbol);
-        for (const openTrade of openTrades) {
-          if (!openTrade.metaOrderId) continue;
+        let action = await bot.manageTrade(openTrade, context);
 
-          // Update highest/lowest
-          const newHighest = Math.max(openTrade.highestPrice, context.currentPrice);
-          const newLowest  = Math.min(openTrade.lowestPrice,  context.currentPrice);
-          updateHighLow(openTrade.metaOrderId, newHighest, newLowest);
-          openTrade.highestPrice = newHighest;
-          openTrade.lowestPrice  = newLowest;
+        // 🛡️ UNIVERSAL EOD CLOSURE OVERRIDE 🛡️
+        if (context.now.getUTCHours() === 23 && context.now.getUTCMinutes() >= 55) {
+          action = { action: 'CLOSE', reason: 'EOD_CLOSE' };
+        }
 
-          let action = await bot.manageTrade(openTrade, context);
-
-          // 🛡️ UNIVERSAL EOD CLOSURE OVERRIDE 🛡️
-          if (context.now.getUTCHours() === 23 && context.now.getUTCMinutes() >= 55) {
-            action = { action: 'CLOSE', reason: 'EOD_CLOSE' };
-          }
-
-          if (action.action === 'CLOSE') {
-            try {
-              if (process.env.SIMULATION_MODE !== 'true') {
-                const conn = await getConnection(rawToken, profile.metaapi_account_id);
-                if (openTrade.metaOrderId) {
-                  try {
-                    await conn.closePosition(openTrade.metaOrderId, {});
-                  } catch (e: any) {
-                    const msg = e.message || '';
-                    if (msg.includes('not found') || msg.includes('ValidationException') || msg.includes('NotFound') || msg.includes('position not found')) {
-                      console.log(`[BotManager] Position ${openTrade.metaOrderId} already closed on broker server.`);
-                    } else {
-                      throw e; // Rethrow other errors (e.g. network/connection issues)
-                    }
+        if (action.action === 'CLOSE') {
+          try {
+            if (process.env.SIMULATION_MODE !== 'true') {
+              const conn = await getConnection(rawToken, profile.metaapi_account_id);
+              if (openTrade.metaOrderId) {
+                try {
+                  await conn.closePosition(openTrade.metaOrderId, {});
+                } catch (e: any) {
+                  const msg = e.message || '';
+                  if (msg.includes('not found') || msg.includes('ValidationException') || msg.includes('NotFound') || msg.includes('position not found')) {
+                    console.log(`[BotManager] Position ${openTrade.metaOrderId} already closed on broker server.`);
+                  } else {
+                    throw e; // Rethrow other errors (e.g. network/connection issues)
                   }
                 }
               }
-              closeTrade(openTrade.metaOrderId, 'CLOSED');
-              
-              const spec = SYMBOL_SPECS[brokerSymbol] || { pipSize: 0.01, pipValuePerLot: 10 };
-              const exitPrice = context.currentPrice;
-              const pips = openTrade.direction === 'BUY' 
-                ? (exitPrice - openTrade.entryPrice) / spec.pipSize 
-                : (openTrade.entryPrice - exitPrice) / spec.pipSize;
-              const profit = pips * spec.pipValuePerLot * openTrade.lots;
-              const status = pips >= 0 ? 'WON' : 'LOST';
-              
-              logToDiary(profile.user_id, profile.id, botId, brokerSymbol, openTrade.direction, openTrade.entryPrice, exitPrice, openTrade.lots, pips, profit, status, openTrade.openTime);
+            }
+            closeTrade(openTrade.metaOrderId, 'CLOSED');
+            
+            const spec = SYMBOL_SPECS[brokerSymbol] || { pipSize: 0.01, pipValuePerLot: 10 };
+            const exitPrice = context.currentPrice;
+            const pips = openTrade.direction === 'BUY' 
+              ? (exitPrice - openTrade.entryPrice) / spec.pipSize 
+              : (openTrade.entryPrice - exitPrice) / spec.pipSize;
+            const profit = pips * spec.pipValuePerLot * openTrade.lots;
+            const status = pips >= 0 ? 'WON' : 'LOST';
+            
+            logToDiary(profile.user_id, profile.id, botId, brokerSymbol, openTrade.direction, openTrade.entryPrice, exitPrice, openTrade.lots, pips, profit, status, openTrade.openTime);
 
-              console.log(`[BotManager] [${botId}] Profile ${profile.id} trade CLOSED: ${action.reason}`);
-            } catch (e: any) {
-              console.error(`[BotManager] Close failed for Profile ${profile.id}:`, e.message);
-              clearSharedConnection(rawToken, profile.metaapi_account_id);
-            }
-          } else if (action.action === 'MODIFY_SL') {
-            try {
-              if (process.env.SIMULATION_MODE !== 'true') {
-                const conn = await getConnection(rawToken, profile.metaapi_account_id);
-                if (openTrade.metaOrderId) {
-                  await conn.modifyPosition(openTrade.metaOrderId, action.newSlPrice, openTrade.tpPrice);
-                }
-              }
-              updateTradeSl(openTrade.metaOrderId, action.newSlPrice);
-              console.log(`[BotManager] [${botId}] Profile ${profile.id} SL moved to ${action.newSlPrice}`);
-            } catch (e: any) {
-              console.error(`[BotManager] ModifySL failed for Profile ${profile.id}:`, e.message);
-              clearSharedConnection(rawToken, profile.metaapi_account_id);
-            }
-          } else if (action.action === 'PARTIAL_CLOSE') {
-            try {
-              if (process.env.SIMULATION_MODE !== 'true') {
-                const conn = await getConnection(rawToken, profile.metaapi_account_id);
-                if (openTrade.metaOrderId) {
-                  const closeVolume = Math.round(openTrade.lots * (action.closePercent / 100) * 100) / 100;
-                  await conn.closePositionPartially(openTrade.metaOrderId, closeVolume, {});
-                  await conn.modifyPosition(openTrade.metaOrderId, action.newSlPrice, openTrade.tpPrice);
-                }
-              }
-              markT1Hit(openTrade.metaOrderId, action.newSlPrice);
-              console.log(`[BotManager] [${botId}] Profile ${profile.id} T1 hit — partial close, SL → BE`);
-            } catch (e: any) {
-              console.error(`[BotManager] PartialClose failed for Profile ${profile.id}:`, e.message);
-              clearSharedConnection(rawToken, profile.metaapi_account_id);
-            }
+            console.log(`[BotManager] [${botId}] Profile ${profile.id} trade CLOSED: ${action.reason}`);
+          } catch (e: any) {
+            console.error(`[BotManager] Close failed for Profile ${profile.id}:`, e.message);
+            clearSharedConnection(rawToken, profile.metaapi_account_id);
           }
-
-          continue; // Don't look for new signals while trade is open
+        } else if (action.action === 'MODIFY_SL') {
+          try {
+            if (process.env.SIMULATION_MODE !== 'true') {
+              const conn = await getConnection(rawToken, profile.metaapi_account_id);
+              if (openTrade.metaOrderId) {
+                await conn.modifyPosition(openTrade.metaOrderId, action.newSlPrice, openTrade.tpPrice);
+              }
+            }
+            updateTradeSl(openTrade.metaOrderId, action.newSlPrice);
+            console.log(`[BotManager] [${botId}] Profile ${profile.id} SL moved to ${action.newSlPrice}`);
+          } catch (e: any) {
+            console.error(`[BotManager] ModifySL failed for Profile ${profile.id}:`, e.message);
+            clearSharedConnection(rawToken, profile.metaapi_account_id);
+          }
+        } else if (action.action === 'PARTIAL_CLOSE') {
+          try {
+            if (process.env.SIMULATION_MODE !== 'true') {
+              const conn = await getConnection(rawToken, profile.metaapi_account_id);
+              if (openTrade.metaOrderId) {
+                const closeVolume = Math.round(openTrade.lots * (action.closePercent / 100) * 100) / 100;
+                await conn.closePositionPartially(openTrade.metaOrderId, closeVolume, {});
+                await conn.modifyPosition(openTrade.metaOrderId, action.newSlPrice, openTrade.tpPrice);
+              }
+            }
+            markT1Hit(openTrade.metaOrderId, action.newSlPrice);
+            console.log(`[BotManager] [${botId}] Profile ${profile.id} T1 hit — partial close, SL → BE`);
+          } catch (e: any) {
+            console.error(`[BotManager] PartialClose failed for Profile ${profile.id}:`, e.message);
+            clearSharedConnection(rawToken, profile.metaapi_account_id);
+          }
         }
+
+        continue; // Don't look for new signals while trade is open
       }
   }
 }

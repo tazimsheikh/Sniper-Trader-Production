@@ -163,8 +163,10 @@ function runSim(m1Data: Candle[], config: Config, pipSize: number, pipValue: num
       } else {
         if (trade.status === 'OPEN') {
           if ((trade.direction === 'BUY' && c.high >= trade.tp1Price) || (trade.direction === 'SELL' && c.low <= trade.tp1Price)) {
-            trade.status = 'TP1_HIT'; trade.lots /= 2;
-            BALANCE += (config.tp.tp1 * pipValue * trade.lots); peakBalance = Math.max(peakBalance, BALANCE);
+            trade.status = 'TP1_HIT';
+            const closedLots = trade.lots / 2;
+            trade.lots -= closedLots;
+            BALANCE += (config.tp.tp1 * pipValue * closedLots); peakBalance = Math.max(peakBalance, BALANCE);
             trade.slPrice = trade.entryPrice + (trade.direction==='BUY'? 2*pipSize : -2*pipSize);
           }
         }
@@ -265,7 +267,7 @@ function runSim(m1Data: Candle[], config: Config, pipSize: number, pipValue: num
     if (pnD) { sScore += 2; sNarr.push('PumpDump'); }
 
     if (sScore >= config.minConfluence && isBearEngulf && (has3PushUp || bos_short)) {
-      const entry = c.close - (SPREAD_PIPS * pipSize) - (SLIPPAGE_PIPS * pipSize);
+      const entry = c.close - (SLIPPAGE_PIPS * pipSize); // Sell at bid - slippage (spread is paid on exit)
       let sl = Math.max(c.high, prevM1.high) + (5 * pipSize);
       if (config.slMode === '15M_STRUCTURE' && swingHighs.length > 0) sl = swingHighs[swingHighs.length-1] + (2 * pipSize);
       const slPips = (sl - entry) / pipSize;
@@ -279,7 +281,7 @@ function runSim(m1Data: Candle[], config: Config, pipSize: number, pipValue: num
             dayCount: consGreen, atMoneyZone: atMZHigh, asianTrap: bullTrap, pumpDump: pnD,
             entryHour: utcH, slPips, riskReward: config.tp.tp1 / slPips
           });
-          m15Candles = []; tradesToday++;
+          tradesToday++;
         }
       }
     }
@@ -294,7 +296,7 @@ function runSim(m1Data: Candle[], config: Config, pipSize: number, pipValue: num
     if (dnP) { lScore += 2; lNarr.push('DumpPump'); }
 
     if (lScore >= config.minConfluence && isBullEngulf && (has3PushDown || bos_long)) {
-      const entry = c.close + (SPREAD_PIPS * pipSize) + (SLIPPAGE_PIPS * pipSize);
+      const entry = c.close + (SPREAD_PIPS * pipSize) + (SLIPPAGE_PIPS * pipSize); // Buy at ask + slippage
       let sl = Math.min(c.low, prevM1.low) - (5 * pipSize);
       if (config.slMode === '15M_STRUCTURE' && swingLows.length > 0) sl = swingLows[swingLows.length-1] - (2 * pipSize);
       const slPips = (entry - sl) / pipSize;
@@ -308,7 +310,7 @@ function runSim(m1Data: Candle[], config: Config, pipSize: number, pipValue: num
             dayCount: consRed, atMoneyZone: atMZLow, asianTrap: bearTrap, pumpDump: dnP,
             entryHour: utcH, slPips, riskReward: config.tp.tp1 / slPips
           });
-          m15Candles = []; tradesToday++;
+          tradesToday++;
         }
       }
     }

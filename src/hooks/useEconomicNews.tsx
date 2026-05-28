@@ -122,8 +122,13 @@ export function useEconomicNews() {
           return finalEvt;
         });
         
-        setActiveWarning(currentWarning);
-        return changed ? updated : (currentWarning !== activeWarning ? updated : prev);
+        setActiveWarning(prevWarning => {
+            if (prevWarning?.event.id === currentWarning?.event.id && prevWarning?.minutesLeft === currentWarning?.minutesLeft) {
+                return prevWarning;
+            }
+            return currentWarning;
+        });
+        return changed ? updated : prev;
       });
 
     }, 30000);
@@ -132,7 +137,7 @@ export function useEconomicNews() {
       isMounted = false;
       clearInterval(timer);
     };
-  }, [fetchRealCalendar, activeWarning]);
+  }, [fetchRealCalendar]);
 
   return { events, currentTime, activeWarning, refreshCalendar, isRefreshing };
 }

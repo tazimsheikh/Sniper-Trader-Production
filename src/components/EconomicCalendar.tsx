@@ -112,7 +112,10 @@ export default function EconomicCalendar({ selectedTimezone = 'UTC' }: EconomicC
     return result;
   }, [events, selectedDateStr, impactFilter]);
 
+  const activeFetchRef = React.useRef<string | null>(null);
+
   const handleAskAI = async (evt: NewsEvent) => {
+     activeFetchRef.current = evt.id;
      setActiveSummaryUrl(evt.id);
      setSummaryLoading(true);
      setSummaryText(null);
@@ -126,15 +129,21 @@ export default function EconomicCalendar({ selectedTimezone = 'UTC' }: EconomicC
           body: JSON.stringify({ prompt, history: [] })
        });
        const data = await res.json();
-       if (data.success && data.response) {
-          setSummaryText(data.response);
-       } else {
-          setSummaryText("Failed to retrieve intelligence from AI core.");
+       
+       if (activeFetchRef.current === evt.id) {
+           if (data.success && data.response) {
+              setSummaryText(data.response);
+           } else {
+              setSummaryText("Failed to retrieve intelligence from AI core.");
+           }
+           setSummaryLoading(false);
        }
      } catch(e) {
-       setSummaryText("Temporary connection block to AI core.");
+       if (activeFetchRef.current === evt.id) {
+           setSummaryText("Temporary connection block to AI core.");
+           setSummaryLoading(false);
+       }
      }
-     setSummaryLoading(false);
   };
 
   return (
