@@ -5,7 +5,7 @@ import {
 export class GBPCHFLondonFadeBot extends TradingBot {
   config: BotConfig = {
     id: 'gbpchf-london-fade',
-    name: 'GBPCHF London Fade',
+    name: 'GBPCHF',
     tagline: 'Sniper AI Authorization Switch',
     description: 'Toggle this on to authorize the Master Sniper System AI to trade GBPCHF automatically at 7:30 UTC.',
     symbols: ['GBPCHF'],

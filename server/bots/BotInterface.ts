@@ -70,6 +70,8 @@ export interface BotContext {
   now: Date;
   // Rolling candle history (last 14 daily candles)
   recentDailyCandles: { open: number; high: number; low: number; close: number; date: string }[];
+  last15MSwingHigh?: number;
+  last15MSwingLow?: number;
 }
 
 export type TradeAction =

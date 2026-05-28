@@ -5,7 +5,7 @@ import {
 export class USDJPYNyFadeBot extends TradingBot {
   config: BotConfig = {
     id: 'usdjpy-ny-fade',
-    name: 'USDJPY Ny Fade',
+    name: 'USDJPY',
     tagline: 'Sniper AI Authorization Switch',
     description: 'Toggle this on to authorize the Master Sniper System AI to trade USDJPY automatically at 13:00 UTC.',
     symbols: ['USDJPY'],

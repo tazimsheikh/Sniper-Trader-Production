@@ -33,16 +33,16 @@ const generateDynamicLifecycleUpdate = (alert: TrapSignal, newPhase: TradePhase,
   
   if (newPhase === 'pre-execution') {
     const scenarios = [
-      `Price action is testing the ${alert.levelType || 'session extreme'}. Wait for the 1-minute false breakout and structure shift.`,
-      `We are outside the 50/50 chop zone. The ${alert.timingGate} timing window is active. Watch for the Stop Hunt.`,
+      `Price action is testing the ${alert.levelType || 'session extreme'}. Wait for the 15-Minute 3-Push exhaustion to complete.`,
+      `We are outside the 50/50 chop zone. The ${alert.timingGate} timing window is active. Watch for the 15-minute Break of Structure.`,
       `Monitoring the setup. We need an M1 Engulfing or Pin Hammer to confirm the liquidity trap at the extreme.`,
-      `The market makers are trapping breakout traders. Be patient. Wait for the exact M1 execution trigger.`
+      `The market makers are trapping breakout traders on Day 1. Be patient. Wait for the exact M1 execution trigger.`
     ];
     return `Stacey Burke Protocol. ${scenarios[Math.floor(Math.random() * scenarios.length)]}`;
   }
 
   if (newPhase === 'execution' && isFirstUpdateForPhase) {
-    return `EXECUTION TRIGGERED. The M1 structural trap has confirmed at the ${alert.levelType || 'extreme'}. Dual trades fired. TP1 is 50 pips. TP2 is targeting the opposite session boundary. Hard stop is ${sl} pips behind the wick.`;
+    return `EXECUTION TRIGGERED. The 15-Minute structure shift and M1 trap has confirmed at the ${alert.levelType || 'extreme'}. Dual trades fired. TP1 is 50 pips. TP2 is targeting the opposite session boundary. Hard stop is ${sl} pips behind the wick.`;
   }
 
   if (newPhase === 'in-trade') {

@@ -4,8 +4,9 @@ import readline from 'readline';
 import { fileURLToPath } from 'url';
 import { CandleProvider, LiveQuote, OHLCVCandle } from './candleProvider';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const activeMetaUrl = typeof import.meta !== 'undefined' && import.meta.url ? import.meta.url : undefined;
+const resolvedFilename = activeMetaUrl ? fileURLToPath(activeMetaUrl) : (typeof __filename !== 'undefined' ? __filename : '');
+const resolvedDirname = activeMetaUrl ? path.dirname(resolvedFilename) : (typeof __dirname !== 'undefined' ? __dirname : '');
 
 // Memory-efficient flat TypedArray storage for historical data
 interface CsvCandleData {
@@ -37,7 +38,7 @@ export function setSimulatedTime(ms: number) {
 
 // Memory-efficient streaming CSV parser
 export async function loadCsvData(symbol: string, fileName: string): Promise<void> {
-  const filePath = path.join(__dirname, '..', 'data', fileName);
+  const filePath = path.join(resolvedDirname, '..', 'data', fileName);
   if (!fs.existsSync(filePath)) {
     console.warn(`[SimulationProvider] Missing CSV for ${symbol}: ${filePath}`);
     return;
@@ -210,6 +211,55 @@ export const SimulationProvider: CandleProvider = {
     }
 
     return result;
+  },
+
+  async get15MinuteCandles(_yahoo: string, broker: string, count: number): Promise<OHLCVCandle[]> {
+    const currentIdx = getCandleIndexAtTime(broker, simulatedTimeMs);
+    if (currentIdx === -1) return [];
+
+    const data = historicalData[broker];
+    if (!data) return [];
+
+    const result: OHLCVCandle[] = [];
+    
+    let i = currentIdx;
+    let current15M: OHLCVCandle | null = null;
+    let current15MStartMs = 0;
+
+    while (i >= 0 && result.length < count) {
+      const ms = data.timestamps[i];
+      const d = new Date(ms);
+      
+      d.setSeconds(0, 0);
+      d.setMinutes(Math.floor(d.getMinutes() / 15) * 15);
+      const boundaryMs = d.getTime();
+
+      if (!current15M || current15MStartMs !== boundaryMs) {
+        if (current15M) {
+          result.push(current15M);
+          if (result.length >= count) break;
+        }
+        current15MStartMs = boundaryMs;
+        current15M = {
+          date: new Date(boundaryMs).toISOString(),
+          open: data.opens[i],
+          high: data.highs[i],
+          low: data.lows[i],
+          close: data.closes[i]
+        };
+      } else {
+        current15M.high = Math.max(current15M.high, data.highs[i]);
+        current15M.low = Math.min(current15M.low, data.lows[i]);
+        current15M.open = data.opens[i];
+      }
+      i--;
+    }
+    
+    if (current15M && result.length < count) {
+      result.push(current15M);
+    }
+
+    return result.reverse();
   },
 
   async getLiveQuote(_yahoo: string, broker: string): Promise<LiveQuote> {

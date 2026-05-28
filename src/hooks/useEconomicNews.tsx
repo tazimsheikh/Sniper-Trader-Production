@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 
 export interface NewsEvent {
   id: string;
@@ -24,48 +24,57 @@ export function useEconomicNews() {
     status: 'UPCOMING' | 'RECENT';
   } | null>(null);
 
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const fetchRealCalendar = useCallback(async (force: boolean = false) => {
+    try {
+      if (force) setIsRefreshing(true);
+      const url = force ? '/api/economic-calendar?refresh=true' : '/api/economic-calendar';
+      const response = await fetch(url);
+      if (!response.ok) throw new Error('Network response was not ok');
+      const data = await response.json();
+      
+      const parsedEvents: NewsEvent[] = data.map((item: any, index: number) => {
+        const dateObj = new Date(item.date);
+        const dateStr = dateObj.toISOString().split('T')[0];
+        const timeStr = `${dateObj.getUTCHours().toString().padStart(2, '0')}:${dateObj.getUTCMinutes().toString().padStart(2, '0')}`;
+        
+        let impactLevel: 'HIGH' | 'MID' | 'LOW' = 'LOW';
+        if (item.impact === 'High') impactLevel = 'HIGH';
+        if (item.impact === 'Medium') impactLevel = 'MID';
+
+        return {
+          id: `real-news-${index}`,
+          date: dateStr,
+          timeUTC: timeStr,
+          currency: item.country,
+          event: item.title,
+          impact: impactLevel,
+          forecast: item.forecast || '--',
+          previous: item.previous || '--',
+          actual: null,
+          deviation: 'neutral' as const
+        };
+      });
+
+      setEvents(parsedEvents);
+    } catch (error) {
+      console.error("Failed to fetch real economic calendar data:", error);
+    } finally {
+      if (force) setIsRefreshing(false);
+    }
+  }, []);
+
+  const refreshCalendar = useCallback(async () => {
+    await fetchRealCalendar(true);
+  }, [fetchRealCalendar]);
+
   useEffect(() => {
     let isMounted = true;
-
-    async function fetchRealCalendar() {
-      try {
-              const response = await fetch('/api/economic-calendar');
-        if (!response.ok) throw new Error('Network response was not ok');
-        const data = await response.json();
-        
-        const parsedEvents: NewsEvent[] = data.map((item: any, index: number) => {
-          // Date comes as "2026-05-25T01:00:00-04:00"
-          const dateObj = new Date(item.date);
-          const dateStr = dateObj.toISOString().split('T')[0];
-          const timeStr = `${dateObj.getUTCHours().toString().padStart(2, '0')}:${dateObj.getUTCMinutes().toString().padStart(2, '0')}`;
-          
-          let impactLevel: 'HIGH' | 'MID' | 'LOW' = 'LOW';
-          if (item.impact === 'High') impactLevel = 'HIGH';
-          if (item.impact === 'Medium') impactLevel = 'MID';
-
-          return {
-            id: `real-news-${index}`,
-            date: dateStr,
-            timeUTC: timeStr,
-            currency: item.country,
-            event: item.title,
-            impact: impactLevel,
-            forecast: item.forecast || '--',
-            previous: item.previous || '--',
-            actual: null, // We won't have actuals immediately unless we parse them differently, but for now we set it to null and let the timer reveal 'Released'
-            deviation: 'neutral' as const
-          };
-        });
-
-        if (isMounted) {
-          setEvents(parsedEvents);
-        }
-      } catch (error) {
-        console.error("Failed to fetch real economic calendar data:", error);
-      }
+    
+    if (isMounted) {
+      fetchRealCalendar();
     }
-
-    fetchRealCalendar();
 
     const timer = setInterval(() => {
       const currentNow = new Date();
@@ -117,13 +126,13 @@ export function useEconomicNews() {
         return changed ? updated : (currentWarning !== activeWarning ? updated : prev);
       });
 
-    }, 30000); // Check every 30 seconds instead of rapid re-renders
+    }, 30000);
 
     return () => {
       isMounted = false;
       clearInterval(timer);
     };
-  }, []);
+  }, [fetchRealCalendar, activeWarning]);
 
-  return { events, currentTime, activeWarning };
+  return { events, currentTime, activeWarning, refreshCalendar, isRefreshing };
 }

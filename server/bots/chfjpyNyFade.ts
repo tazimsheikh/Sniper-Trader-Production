@@ -5,7 +5,7 @@ import {
 export class CHFJPYNyFadeBot extends TradingBot {
   config: BotConfig = {
     id: 'chfjpy-ny-fade',
-    name: 'CHFJPY Ny Fade',
+    name: 'CHFJPY',
     tagline: 'Sniper AI Authorization Switch',
     description: 'Toggle this on to authorize the Master Sniper System AI to trade CHFJPY automatically at 13:30 UTC.',
     symbols: ['CHFJPY'],

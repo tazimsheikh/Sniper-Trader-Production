@@ -5,7 +5,7 @@ import {
 export class GBPUSDLondonFadeBot extends TradingBot {
   config: BotConfig = {
     id: 'gbpusd-london-fade',
-    name: 'GBPUSD London Fade',
+    name: 'GBPUSD',
     tagline: 'Sniper AI Authorization Switch',
     description: 'Toggle this on to authorize the Master Sniper System AI to trade GBPUSD automatically at 7:30 UTC.',
     symbols: ['GBPUSD'],

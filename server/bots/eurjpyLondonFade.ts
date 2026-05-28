@@ -5,7 +5,7 @@ import {
 export class EURJPYLondonFadeBot extends TradingBot {
   config: BotConfig = {
     id: 'eurjpy-london-fade',
-    name: 'EURJPY London Fade',
+    name: 'EURJPY',
     tagline: 'Sniper AI Authorization Switch',
     description: 'Toggle this on to authorize the Master Sniper System AI to trade EURJPY automatically at 9:30 UTC.',
     symbols: ['EURJPY'],

@@ -7,7 +7,8 @@ import { initMarketStore, updateMarketPrices, getMarkets, getMarketSpreads, getA
 import { refreshGlobalProvider } from './server/candleProvider';
 import { askTutorAgent, verifySignalWithAI } from './server/tutorAgent';
 import { authRouter } from './server/auth';
-import { ensureBotSchema, botManagerTick, metaApiExecutionHealth, metaApiLastConnected, pendingSignalCount, missedSignalCount, isMetaApiTradeBlocked, isMetaApiConnecting } from './server/botManager';
+import { settingsRouter } from './server/settings';
+import { ensureBotSchema, botManagerTick, metaApiExecutionHealth, metaApiLastConnected, isMetaApiTradeBlocked, isMetaApiConnecting } from './server/botManager';
 import { validateAllBots } from './server/botValidator';
 import { getCalendarData, getSyntheticCalendarFallback } from './server/newsStore';
 import { monitorOpenTrades } from './server/tradeManager';
@@ -21,7 +22,9 @@ async function startServer() {
   app.use(cookieParser()); // FIX: Required to read HttpOnly auth cookies
 
   // ── Auth routes ─────────────────────────────────────────────────────────────
+  // ── Auth routes ─────────────────────────────────────────────────────────────
   app.use('/api/auth', authRouter);
+  app.use('/api/settings', settingsRouter);
 
   // ── Market store init ────────────────────────────────────────────────────────
   // await validateAllBots(); // Deprecated: Validation logic is now obsolete since bots are just UI switches
@@ -155,8 +158,8 @@ async function startServer() {
       success: true, 
       health: metaApiExecutionHealth, 
       lastConnected: metaApiLastConnected,
-      pendingSignals: pendingSignalCount,
-      missedSignals: missedSignalCount,
+      pendingSignals: 0,
+      missedSignals: 0,
       // Failsafe lockout fields
       tradingBlocked: blocked,
       offlineSince: blocked ? (metaApiLastConnected || null) : null,
@@ -169,9 +172,10 @@ async function startServer() {
     res.json({ success: true, source: activeDataSource });
   });
 
-  app.get('/api/economic-calendar', async (_req, res) => {
+  app.get('/api/economic-calendar', async (req, res) => {
     try {
-      const data = await getCalendarData();
+      const forceRefresh = req.query.refresh === 'true';
+      const data = await getCalendarData(forceRefresh);
       if (!Array.isArray(data) || data.length === 0) throw new Error('AI returned empty calendar data');
       res.json(data);
     } catch (err: any) {

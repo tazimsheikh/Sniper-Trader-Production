@@ -6,6 +6,7 @@ import db, { getSessionLosses } from './db';
 import { decrypt, isEncrypted } from './crypto';
 import { TrapSignal } from '../src/types';
 import { SimulationProvider } from './simulationProvider';
+import { isNewsBlackout } from './newsStore.js';
 
 // ── Broker symbol map ─────────────────────────────────────────────────────────
 const BROKER_SYMBOL_MAP: Record<string, string> = {
@@ -81,7 +82,9 @@ function quantizeLots(raw: number): number {
 }
 
 // ── Verify Connection Hook ───────────────────────────────────────────────────
+
 export async function verifyMetaApiConnection(token: string, accountId: string): Promise<boolean> {
+  accountId = safeDecryptAccountId(accountId);
   try {
     const api = getApiInstance(token);
     const accountPromise = api.metatraderAccountApi.getAccount(accountId);
@@ -104,28 +107,35 @@ export async function verifyMetaApiConnection(token: string, accountId: string):
   }
 }
 
-export async function verifyMetaApiToken(token: string): Promise<boolean> {
+export async function verifyMetaApiAccount(token: string, accountId: string): Promise<boolean> {
   try {
     const api = getApiInstance(token);
-    const accountsPromise = api.metatraderAccountApi.getAccountsWithClassicPagination();
-    await Promise.race([
-      accountsPromise,
+    const accountPromise = api.metatraderAccountApi.getAccount(accountId);
+    const account = await Promise.race([
+      accountPromise,
       new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 5000))
-    ]);
-    return true; // Token is valid, whether it timed out or successfully returned
+    ]) as any;
+
+    if (account && account.id === accountId) {
+      return true;
+    }
+    return false;
   } catch (err: any) {
     if (err.message === 'timeout') {
-      console.warn(`[MetaAPI] Token verification timed out. Assuming valid.`);
+      console.warn(`[MetaAPI] Account verification timed out. Assuming valid for now.`);
       return true;
     }
     if (
       err.status === 401 || 
       err.status === 403 || 
+      err.status === 404 || 
+      err.name === 'NotFoundError' || 
       err.name === 'UnauthorizedError' ||
       err.name === 'MethodAccessError' ||
       err.message?.includes('auth') || 
       err.message?.includes('token') ||
-      err.message?.includes('access token')
+      err.message?.includes('access token') ||
+      err.message?.includes('not found')
     ) {
       return false; // Invalid token
     }
@@ -142,11 +152,22 @@ export function setMetaApiConnectedCallback(cb: () => void) {
   onMetaApiConnected = cb;
 }
 
+export function safeDecryptAccountId(accountId: string): string {
+  if (!accountId) return accountId;
+  try {
+    return isEncrypted(accountId) ? decrypt(accountId) : accountId;
+  } catch (e: any) {
+    console.error(`[Decrypt Error] Failed to decrypt accountId: ${e.message}`);
+    return accountId;
+  }
+}
+
 export function isMetaApiConnecting(): boolean {
   return isConnecting.size > 0;
 }
 
 export async function getSharedConnection(token: string, accountId: string, background = false): Promise<any> {
+  accountId = safeDecryptAccountId(accountId);
   const key = createHash('sha256').update(token + accountId).digest('hex');
   
   if (connectionCache.has(key)) {
@@ -220,6 +241,7 @@ const ALL_BROKER_SYMBOLS = [
 ];
 
 export async function getSharedStreamingConnection(token: string, accountId: string, background = false): Promise<any> {
+  accountId = safeDecryptAccountId(accountId);
   const key = createHash('sha256').update(token + accountId).digest('hex');
   
   if (streamingConnectionCache.has(key)) {
@@ -313,6 +335,7 @@ export async function getSharedAccount(token: string, accountId: string): Promis
 }
 
 export function clearSharedConnection(token: string, accountId: string) {
+  accountId = safeDecryptAccountId(accountId);
   const key = createHash('sha256').update(token + accountId).digest('hex');
   connectionCache.delete(key);
   accountCache.delete(key);
@@ -333,7 +356,7 @@ export async function executeTradeForUsers(
   forceRiskPct?: number
 ) {
   const profiles = db.prepare(
-    `SELECT tp.id, tp.user_id, u.metaapi_token, tp.metaapi_account_id, tp.risk_multiplier 
+    `SELECT tp.id, tp.user_id, u.metaapi_token, tp.metaapi_account_id, tp.risk_multiplier, tp.active_bots
      FROM trading_profiles tp
      JOIN users u ON u.id = tp.user_id
      WHERE tp.automation_active = 1 
@@ -349,14 +372,34 @@ export async function executeTradeForUsers(
   const brokerSymbol = BROKER_SYMBOL_MAP[signal.symbol] ?? signal.symbol.replace('=X', '').replace('=F', '');
   const spec = getSymbolSpec(brokerSymbol);
 
+  // 🛡️ NEWS BLACKOUT WINDOW: Block new trades +/- 5 mins of High Impact News
+  if (isNewsBlackout(brokerSymbol, new Date())) {
+    console.log(`[MetaAPI] ⛔ TRADE REJECTED — News Blackout Window active for ${brokerSymbol}`);
+    return;
+  }
+
   // Base risk from actual signal grade: grade 5 = 5%, grade 1 = 1%
   let baseRiskPct = forceRiskPct ?? signal.grade;
   if (signal.isHolyGrailConfluence) {
     baseRiskPct = 10;
   }
 
-  const promises = activeProfiles.map(async (profile) => {
+  const promises = profiles.map(async (profile) => {
+    let rawToken: string = '';
     try {
+      // ── AUTHORIZATION CHECK: User must have the pair toggled ON ──────────────
+      let activeBots: string[] = [];
+      try { activeBots = JSON.parse(profile.active_bots || '[]'); } catch (e) { activeBots = []; }
+      
+      const lowerBrokerSymbol = brokerSymbol.toLowerCase();
+      const isAuthorized = activeBots.includes('sniper-system-ai') || 
+                           activeBots.some(botId => botId.startsWith(lowerBrokerSymbol));
+                           
+      if (!isAuthorized) {
+        console.log(`[MetaAPI Profile ${profile.id}] Trade rejected: ${brokerSymbol} is not authorized by active bots.`);
+        return;
+      }
+
       // ── LOCKOUT RULE: Max 1 losing trade per session ──────────────────────
       const losses = getSessionLosses(profile.id, signal.timingGate);
       if (losses >= 1) {
@@ -375,7 +418,6 @@ export async function executeTradeForUsers(
       }
 
       // ── FIX: Decrypt token before use ─────────────────────────────────────
-      let rawToken: string;
       try {
         rawToken = isEncrypted(profile.metaapi_token) ? decrypt(profile.metaapi_token) : profile.metaapi_token;
       } catch (e: any) {
@@ -403,6 +445,21 @@ export async function executeTradeForUsers(
            throw new Error(`Stale quote for ${brokerSymbol}: ${quoteAgeMs}ms old. Trade aborted.`);
          }
       }
+
+      // 🛡️ SPREAD TOLERANCE CHECK
+      const spread = (quote.ask - quote.bid) / spec.pipSize;
+      const isGoldOrIndex = brokerSymbol.includes('XAU') || brokerSymbol.includes('NAS') || brokerSymbol.includes('USTEC');
+      const isMinor = brokerSymbol.includes('JPY') || brokerSymbol.includes('AUD') || brokerSymbol.includes('NZD') || brokerSymbol.includes('CAD') || brokerSymbol.includes('CHF');
+      const maxSpreadAllowed = isGoldOrIndex ? 25 : (isMinor ? 5 : 3);
+      
+      if (spread > maxSpreadAllowed) {
+         console.warn(`[MetaAPI Profile ${profile.id}] ⛔ TRADE REJECTED — Spread is dangerously high (${spread.toFixed(1)} > ${maxSpreadAllowed} pips)`);
+         return;
+      }
+
+      // Calculate Lot Size
+      const riskAmount = balance * (baseRiskPct / 100) * profile.risk_multiplier;
+      const lotSize = (riskAmount / stopLossDistPips) / spec.pipValuePerLot;
 
       // Dual Trade Logic (TP1 & TP2)
       const halfLotSize = quantizeLots(lotSize / 2);
@@ -448,7 +505,8 @@ export async function executeTradeForUsers(
       console.log(`[MetaAPI Profile ${profile.id}] ✅ Dual Orders placed: TP1(${orderResult1?.orderId}), TP2(${orderResult2?.orderId})`);
 
       // 3. Register Trades in Database for botManager tick management
-      const botId = 'sniper-system-ai';
+      const authorizingBot = activeBots.find(b => b.startsWith(lowerBrokerSymbol)) || 'sniper-system-ai';
+      const botId = authorizingBot;
       const openTime = Date.now();
       
       const insertTrade = db.prepare(`
@@ -496,8 +554,8 @@ export async function getProfileTradeHistory(profileId: number, daysBack: number
   const profile = db.prepare('SELECT tp.user_id, u.metaapi_token, tp.metaapi_account_id FROM trading_profiles tp JOIN users u ON u.id = tp.user_id WHERE tp.id = ?').get(profileId) as any;
   if (!profile || !profile.metaapi_token || !profile.metaapi_account_id) return null;
 
+  let rawToken = profile.metaapi_token;
   try {
-    let rawToken = profile.metaapi_token;
     try {
       rawToken = isEncrypted(profile.metaapi_token) ? decrypt(profile.metaapi_token) : profile.metaapi_token;
     } catch(e) {}

@@ -5,7 +5,7 @@ import {
 export class EURCHFLondonFadeBot extends TradingBot {
   config: BotConfig = {
     id: 'eurchf-london-fade',
-    name: 'EURCHF London Fade',
+    name: 'EURCHF',
     tagline: 'Sniper AI Authorization Switch',
     description: 'Toggle this on to authorize the Master Sniper System AI to trade EURCHF automatically at 7:15 UTC.',
     symbols: ['EURCHF'],

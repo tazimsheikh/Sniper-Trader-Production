@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
-import { Zap, Shield, Key, Lock, ArrowLeft } from 'lucide-react';
+import { Zap, Shield, Key, Lock, ArrowLeft, Database } from 'lucide-react';
 
 interface Props {
   onLoginSuccess: (user: any) => void;
@@ -11,6 +11,7 @@ export default function LoginScreen({ onLoginSuccess }: Props) {
   const [email, setEmail]       = useState('');
   const [password, setPassword] = useState('');
   const [metaapiToken, setMetaapiToken] = useState('');
+  const [accountId, setAccountId] = useState('');
   const [otp, setOtp]           = useState('');
   const [step, setStep]         = useState<'auth' | 'otp'>('auth');
   const [error, setError]       = useState('');
@@ -21,9 +22,9 @@ export default function LoginScreen({ onLoginSuccess }: Props) {
     setError('');
 
     // Client-side validation
-    if (!email || !password || !metaapiToken) { setError('Email, password, and Meta API Token are required.'); return; }
+    if (!email || !password || !metaapiToken || !accountId) { setError('Email, password, Meta API Token, and Account ID are required.'); return; }
     if (!isLogin && password.length < 8) { setError('Password must be at least 8 characters.'); return; }
-    if (metaapiToken.trim().length < 20) { setError('Invalid Meta API Token.'); return; }
+    if (metaapiToken.trim().length < 20 || accountId.trim().length < 5) { setError('A valid MetaAPI Token and Account ID are required.'); return; }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setError('Please enter a valid email address.'); return; }
 
     setLoading(true);
@@ -34,7 +35,7 @@ export default function LoginScreen({ onLoginSuccess }: Props) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
-        body: JSON.stringify({ email, password, metaapiToken }),
+        body: JSON.stringify({ email, password, metaapiToken: metaapiToken.trim(), accountId: accountId.trim() }),
       });
       const data = await res.json();
 
@@ -116,58 +117,85 @@ export default function LoginScreen({ onLoginSuccess }: Props) {
           )}
 
           {step === 'auth' ? (
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <label className="block text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-1.5 ml-1">Secure Email</label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <Shield size={16} className="text-slate-500" />
+            <form onSubmit={handleSubmit} className="space-y-6">
+              {/* Local Security Group */}
+              <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/50 space-y-4">
+                <h3 className="text-[10px] font-mono text-indigo-400 uppercase tracking-widest mb-1">Local Security</h3>
+                
+                <div>
+                  <label className="block text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-1.5 ml-1">Secure Email</label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                      <Shield size={16} className="text-slate-500" />
+                    </div>
+                    <input
+                      type="email" required autoComplete="email"
+                      value={email} onChange={e => setEmail(e.target.value)}
+                      className="w-full bg-slate-950/50 border border-slate-700 text-white rounded-xl pl-10 pr-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all placeholder:text-slate-600 font-mono text-sm"
+                      placeholder="operative@domain.com"
+                    />
                   </div>
-                  <input
-                    type="email" required autoComplete="email"
-                    value={email} onChange={e => setEmail(e.target.value)}
-                    className="w-full bg-slate-950/50 border border-slate-700 text-white rounded-xl pl-10 pr-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all placeholder:text-slate-600 font-mono text-sm"
-                    placeholder="operative@domain.com"
-                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-1.5 ml-1">Access Key</label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                      <Key size={16} className="text-slate-500" />
+                    </div>
+                    <input
+                      type="password" required autoComplete={isLogin ? 'current-password' : 'new-password'}
+                      value={password} onChange={e => setPassword(e.target.value)}
+                      className="w-full bg-slate-950/50 border border-slate-700 text-white rounded-xl pl-10 pr-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all placeholder:text-slate-600 font-mono text-sm"
+                      placeholder="••••••••"
+                    />
+                  </div>
+                  {!isLogin && (
+                    <p className="mt-1.5 ml-1 text-[9px] font-mono text-slate-600 uppercase tracking-wider">
+                      Minimum 8 characters
+                    </p>
+                  )}
                 </div>
               </div>
 
-              <div>
-                <label className="block text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-1.5 ml-1">Access Key</label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <Key size={16} className="text-slate-500" />
+              {/* MetaAPI Bridge Group */}
+              <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/50 space-y-4">
+                <h3 className="text-[10px] font-mono text-indigo-400 uppercase tracking-widest mb-1">MetaAPI Bridge</h3>
+                
+                <div>
+                  <label className="block text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-1.5 ml-1">Meta API Token</label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                      <Zap size={16} className="text-slate-500" />
+                    </div>
+                    <input
+                      type="password" required
+                      value={metaapiToken} onChange={e => setMetaapiToken(e.target.value)}
+                      className="w-full bg-slate-950/50 border border-slate-700 text-white rounded-xl pl-10 pr-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all placeholder:text-slate-600 font-mono text-sm"
+                      placeholder="Enter Meta API Token..."
+                    />
                   </div>
-                  <input
-                    type="password" required autoComplete={isLogin ? 'current-password' : 'new-password'}
-                    value={password} onChange={e => setPassword(e.target.value)}
-                    className="w-full bg-slate-950/50 border border-slate-700 text-white rounded-xl pl-10 pr-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all placeholder:text-slate-600 font-mono text-sm"
-                    placeholder="••••••••"
-                  />
-                </div>
-                {!isLogin && (
                   <p className="mt-1.5 ml-1 text-[9px] font-mono text-slate-600 uppercase tracking-wider">
-                    Minimum 8 characters
+                    Don't have one? Get it at <a href="https://app.metaapi.cloud/" target="_blank" rel="noreferrer" className="text-indigo-400 hover:underline">app.metaapi.cloud</a>
                   </p>
-                )}
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-1.5 ml-1">Meta API Token</label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <Zap size={16} className="text-slate-500" />
-                  </div>
-                  <input
-                    type="password" required
-                    value={metaapiToken} onChange={e => setMetaapiToken(e.target.value)}
-                    className="w-full bg-slate-950/50 border border-slate-700 text-white rounded-xl pl-10 pr-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all placeholder:text-slate-600 font-mono text-sm"
-                    placeholder="Enter Meta API Token..."
-                  />
                 </div>
-                <p className="mt-1.5 ml-1 text-[9px] font-mono text-slate-600 uppercase tracking-wider">
-                  Don't have one? Get it at <a href="https://app.metaapi.cloud/" target="_blank" rel="noreferrer" className="text-indigo-400 hover:underline">app.metaapi.cloud</a>
-                </p>
+
+                <div>
+                  <label className="block text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-1.5 ml-1">MetaAPI Account ID</label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
+                      <Database size={16} />
+                    </div>
+                    <input
+                      type="text"
+                      value={accountId}
+                      onChange={(e) => setAccountId(e.target.value)}
+                      placeholder="Enter MetaAPI Account ID"
+                      className="w-full bg-slate-950/50 border border-slate-700 text-white rounded-xl pl-10 pr-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all placeholder:text-slate-600 font-mono text-sm"
+                      required
+                    />
+                  </div>
+                </div>
               </div>
 
               <button

@@ -21,6 +21,7 @@ db.exec(`
     password_hash TEXT NOT NULL,
     metaapi_token TEXT,
     metaapi_account_id TEXT,
+    gemini_api_key TEXT DEFAULT NULL,
     risk_multiplier INTEGER DEFAULT 1,
     automation_active INTEGER DEFAULT 0,
     ai_sniper_active INTEGER DEFAULT 0,
@@ -82,6 +83,10 @@ db.exec(`
 // Apply migration for existing users safely
 try {
   db.exec('ALTER TABLE users ADD COLUMN ai_sniper_active INTEGER DEFAULT 0');
+} catch (e: any) {}
+
+try {
+  db.exec('ALTER TABLE users ADD COLUMN gemini_api_key TEXT DEFAULT NULL');
 } catch (e: any) {}
 
 try {

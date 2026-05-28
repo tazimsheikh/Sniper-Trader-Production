@@ -549,21 +549,17 @@ export default function AutomateDashboard() {
       if (data.success) {
         showMsg('Configuration saved — verifying connection…', 'success');
 
-        // Trigger server-side data-source switch to MetaAPI
-        try {
-          const dsRes = await fetch('/api/refresh-data-source', {
-            method: 'POST',
-            credentials: 'same-origin',
-          });
-          const dsData = await dsRes.json();
+        // Trigger server-side data-source switch to MetaAPI asynchronously
+        fetch('/api/refresh-data-source', {
+          method: 'POST',
+          credentials: 'same-origin',
+        }).then(r => r.json()).then(dsData => {
           if (dsData.success) {
             setDataSource(dsData.source);
             const srcLabel = dsData.source === 'metaapi' ? '🟢 Switched to MetaAPI Live Data' : '📡 Using Yahoo Finance (fallback)';
             showMsg(`Configuration saved. ${srcLabel}`, 'success');
           }
-        } catch {
-          // Non-fatal — config was saved, data-source refresh is best-effort
-        }
+        }).catch(() => {});
       } else {
         showMsg(data.error || 'Failed to save.', 'error');
       }

@@ -62,15 +62,32 @@ export class SniperSystemAI extends TradingBot {
       ? (currentPrice - trade.entryPrice) / PIP_SIZE
       : (trade.entryPrice - currentPrice) / PIP_SIZE;
 
-    // 1. Time-Based Manual Bailout (1-Hour Limit)
-    // If trade is floating in drawdown after 1 hour, exit to protect capital.
+    // 1. Time-Based Manual Bailout (45-Minute Limit)
+    // If trade is floating in drawdown after 45 minutes (3x 15m candles), exit to protect capital.
     const openTime = new Date(trade.openTime);
     const hrsOpen = (now.getTime() - openTime.getTime()) / (1000 * 60 * 60);
-    if (hrsOpen >= 1.0 && currentProfitPips < 0) {
-      return { action: 'CLOSE', reason: 'TIME_BAILOUT_1HR' };
+    if (hrsOpen >= 0.75 && currentProfitPips < 0) {
+      return { action: 'CLOSE', reason: 'TIME_BAILOUT_45MIN' };
+    }
+    // 2. Structural Trailing Stop Loss (Once TP1 is hit / +50 pips)
+    if (currentProfitPips >= 50) {
+      const isBuy = trade.direction === 'BUY';
+      const buffer = 1 * PIP_SIZE; // 1 pip under/above
+      
+      if (isBuy && context.last15MSwingLow !== undefined) {
+        const trailPrice = context.last15MSwingLow - buffer;
+        if (trailPrice > trade.slPrice && trailPrice < currentPrice) {
+          return { action: 'MODIFY_SL', newSlPrice: trailPrice };
+        }
+      } else if (!isBuy && context.last15MSwingHigh !== undefined) {
+        const trailPrice = context.last15MSwingHigh + buffer;
+        if (trailPrice < trade.slPrice && trailPrice > currentPrice) {
+          return { action: 'MODIFY_SL', newSlPrice: trailPrice };
+        }
+      }
     }
 
-    // 2. Breakeven Trailing Stop (No Early Breakeven until +30 pips)
+    // 3. Breakeven Trailing Stop (No Early Breakeven until +30 pips)
     if (currentProfitPips >= 30) {
       const isBuy = trade.direction === 'BUY';
       // Move SL to Break Even (Entry Price + a tiny spread buffer to ensure strict BE)

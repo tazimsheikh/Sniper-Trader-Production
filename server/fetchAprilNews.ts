@@ -30,8 +30,10 @@ Rules:
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      tools: [{ googleSearch: {} }],
-      config: { responseMimeType: 'application/json' }
+      config: { 
+        responseMimeType: 'application/json',
+        tools: [{ googleSearch: {} }]
+      }
     });
 
     if (response.text) {

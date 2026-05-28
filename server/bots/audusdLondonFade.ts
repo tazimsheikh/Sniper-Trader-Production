@@ -5,7 +5,7 @@ import {
 export class AUDUSDLondonFadeBot extends TradingBot {
   config: BotConfig = {
     id: 'audusd-london-fade',
-    name: 'AUDUSD London Fade',
+    name: 'AUDUSD',
     tagline: 'Sniper AI Authorization Switch',
     description: 'Toggle this on to authorize the Master Sniper System AI to trade AUDUSD automatically at 9:15 UTC.',
     symbols: ['AUDUSD'],

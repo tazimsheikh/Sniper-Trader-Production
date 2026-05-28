@@ -48,6 +48,9 @@ export interface CandleProvider {
   /** Fetch the last `minutes` 1-minute candles (used for trap detection) */
   getMinuteCandles(yahooSymbol: string, brokerSymbol: string, minutes: number): Promise<OHLCVCandle[]>;
 
+  /** Fetch the last `count` 15-minute candles (used for 3-push and BOS detection) */
+  get15MinuteCandles(yahooSymbol: string, brokerSymbol: string, count: number): Promise<OHLCVCandle[]>;
+
   /** Get live bid/ask for a single symbol */
   getLiveQuote(yahooSymbol: string, brokerSymbol: string): Promise<LiveQuote>;
 
@@ -121,6 +124,18 @@ export const YahooProvider: CandleProvider = {
     const chart = await yf.chart(yahooSymbol, { interval: '1m', range: '1d' });
     const all: any[] = chart?.quotes || [];
     const slice = all.slice(-Math.max(minutes + 1, 30)); // always get at least 30
+    return slice
+      .filter((c: any) => c.open && c.close)
+      .map((c: any) => ({
+        date: new Date(c.date).toISOString(),
+        open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume,
+      }));
+  },
+
+  async get15MinuteCandles(yahooSymbol, _broker, count) {
+    const chart = await yf.chart(yahooSymbol, { interval: '15m', range: '5d' });
+    const all: any[] = chart?.quotes || [];
+    const slice = all.slice(-Math.max(count + 1, 30));
     return slice
       .filter((c: any) => c.open && c.close)
       .map((c: any) => ({
@@ -236,6 +251,29 @@ function buildMetaApiProvider(token: string, accountId: string): CandleProvider 
           metaApiSyncStatus = 'offline';
         }
         return YahooProvider.getMinuteCandles(_yahoo, broker, minutes);
+      }
+    },
+
+    async get15MinuteCandles(_yahoo, broker, count) {
+      try {
+        await getConnection(token, accountId);
+        const account = await getSharedAccount(token, accountId);
+        const startTime = new Date();
+        startTime.setMinutes(startTime.getMinutes() - count * 15 - 60);
+        const candles: any[] = await account.getHistoricalCandles(broker, '15m', startTime, count + 10);
+        return candles
+          .filter((c: any) => c.open && c.close)
+          .map((c: any) => ({
+            date: new Date(c.time).toISOString(),
+            open: c.open, high: c.high, low: c.low, close: c.close, volume: c.tickVolume,
+          }));
+      } catch (err: any) {
+        console.warn(`[MetaApiProvider] 15Minute candles failed for ${broker}, falling back to Yahoo:`, err.message);
+        if (err.message.includes('connect') || err.message.includes('disconnect') || err.message.includes('token') || err.message.includes('auth')) {
+          clearSharedConnection(token, accountId);
+          metaApiSyncStatus = 'offline';
+        }
+        return YahooProvider.get15MinuteCandles(_yahoo, broker, count);
       }
     },
 

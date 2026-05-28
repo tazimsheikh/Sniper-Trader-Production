@@ -40,7 +40,7 @@ let alerts: TrapSignal[] = [];
 const liveSpreads: Record<string, { bid: number; ask: number }> = {};
 
 // Track the active data-source for the UI badge
-export let activeDataSource: 'yahoo' | 'metaapi' = 'yahoo';
+export let activeDataSource: 'yahoo' | 'metaapi' | 'simulation' = 'yahoo';
 
 // In-flight execution guard (prevents duplicate trades per signal)
 const executingSignals = new Set<string>();
@@ -89,6 +89,7 @@ const GLOBAL_FORMATTER_MINUTE = new Intl.DateTimeFormat('en-US', {
   timeZone: 'America/New_York',
   minute: 'numeric',
 });
+
 
 export function getTimingGate(): { gate: TrapSignal['timingGate']; details: string; isBlackout: boolean } {
   const now = new Date();
@@ -171,8 +172,7 @@ export async function initMarketStore() {
           close: q.close,
         }));
 
-        const dayStr = GLOBAL_FORMATTER_WEEKDAY.format(now);
-        const dayOfWeek = parseInt(dayStr, 10) - 1; // 0=Sun, 1=Mon, ..., 5=Fri
+        const dayOfWeek = now.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
 
         let mondayHigh = yesterday.high;
         let mondayLow = yesterday.low;
@@ -180,27 +180,50 @@ export async function initMarketStore() {
         let how = yesterday.high;
         let low_week = yesterday.low;
 
-        let mondayIndex = -1;
-        for (let i = candles.length - 1; i >= Math.max(0, candles.length - 7); i--) {
-          const cDay = new Date(candles[i].date).getUTCDay();
-          if (cDay === 1) { mondayIndex = i; break; }
-        }
-        if (mondayIndex === -1) {
-          for (let i = candles.length - 1; i >= Math.max(0, candles.length - 7); i--) {
-            const cDay = new Date(candles[i].date).getUTCDay();
-            if (cDay === 2) { mondayIndex = i; break; }
+        // Stacey Burke Algorithmic Day Counting
+        let dayCountCycle: 1|2|3 = 1;
+        let lastTrend = 0; // 1 for up, -1 for down
+
+        for (let i = 1; i < candles.length - 1; i++) {
+          const prev = candles[i - 1];
+          const curr = candles[i];
+          
+          const isGreen = curr.close > curr.open;
+          const isRed = curr.close < curr.open;
+          const brokeHigh = curr.high > prev.high;
+          const brokeLow = curr.low < prev.low;
+          
+          let isDay1 = false;
+          
+          if (brokeHigh && isRed) {
+             // First Red Day
+             isDay1 = true;
+             lastTrend = -1;
+          } else if (brokeLow && isGreen) {
+             // First Green Day
+             isDay1 = true;
+             lastTrend = 1;
+          } else if (brokeHigh && curr.close > prev.high) {
+             // Starting a trend outside
+             if (lastTrend !== 1) {
+                isDay1 = true;
+                lastTrend = 1;
+             }
+          } else if (brokeLow && curr.close < prev.low) {
+             if (lastTrend !== -1) {
+                isDay1 = true;
+                lastTrend = -1;
+             }
+          }
+          
+          if (isDay1) {
+            dayCountCycle = 1;
+          } else {
+            dayCountCycle = (dayCountCycle % 3) + 1 as 1|2|3;
           }
         }
-
-        if (mondayIndex !== -1) {
-          mondayHigh = candles[mondayIndex].high;
-          mondayLow = candles[mondayIndex].low;
-          const weekCandles = candles.slice(mondayIndex);
-          how = Math.max(...weekCandles.map(c => c.high));
-          low_week = Math.min(...weekCandles.map(c => c.low));
-          const count = weekCandles.length;
-          dayOfWeekCycle = count === 1 ? 1 : (count === 2 ? 2 : 3);
-        }
+        
+        dayOfWeekCycle = dayCountCycle;
 
         markets[key] = {
           symbol:      config.symbol,
@@ -409,13 +432,45 @@ async function checkForTrapTrigger(symbol: string, market: MarketData, quote: { 
 
   // Fetch 1-minute candles for Level 2 confirmation (via active provider)
   let minuteCandles;
+  let m15Candles;
   try {
     minuteCandles = await globalProvider().getMinuteCandles(symbol, toBrokerSymbol(symbol), 100);
+    m15Candles = await globalProvider().get15MinuteCandles(symbol, toBrokerSymbol(symbol), 25);
   } catch {
     return;
   }
 
-  if (minuteCandles.length < 25) return;
+  if (minuteCandles.length < 25 || !m15Candles || m15Candles.length < 10) return;
+
+  // ── Stacey Burke 15M Logic (BOS & 3 Pushes) ──
+  const swingHighs: { idx: number; price: number }[] = [];
+  const swingLows: { idx: number; price: number }[] = [];
+  
+  for (let i = 2; i < m15Candles.length - 1; i++) {
+    const c = m15Candles[i];
+    const prev1 = m15Candles[i-1];
+    const next1 = m15Candles[i+1];
+    
+    if (c.high > prev1.high && c.high > next1.high) swingHighs.push({ idx: i, price: c.high });
+    if (c.low < prev1.low && c.low < next1.low) swingLows.push({ idx: i, price: c.low });
+  }
+
+  const last15MClosed = m15Candles[m15Candles.length - 2];
+  let has15M_BOS_Short = false;
+  let has15M_BOS_Long = false;
+  let has3PushesUp = swingHighs.length >= 3;
+  let has3PushesDown = swingLows.length >= 3;
+
+  if (swingLows.length > 0) {
+    const lastSwingLow = swingLows[swingLows.length - 1].price;
+    market.last15MSwingLow = lastSwingLow;
+    if (last15MClosed.close < lastSwingLow) has15M_BOS_Short = true;
+  }
+  if (swingHighs.length > 0) {
+    const lastSwingHigh = swingHighs[swingHighs.length - 1].price;
+    market.last15MSwingHigh = lastSwingHigh;
+    if (last15MClosed.close > lastSwingHigh) has15M_BOS_Long = true;
+  }
 
   // 1-minute 100-EMA (approximates 5-minute 20-EMA in algorithmic terms)
   let ema100 = minuteCandles[0].close || market.currentPrice;
@@ -441,10 +496,10 @@ async function checkForTrapTrigger(symbol: string, market: MarketData, quote: { 
 
   const isEngulfingShort = prevClosedCandle &&
     lastClosedCandle.close < prevClosedCandle.low &&
-    lastClosedCandle.open  > prevClosedCandle.close;
+    lastClosedCandle.open >= prevClosedCandle.close;
   const isEngulfingLong  = prevClosedCandle &&
     lastClosedCandle.close > prevClosedCandle.high &&
-    lastClosedCandle.open  < prevClosedCandle.close;
+    lastClosedCandle.open <= prevClosedCandle.close;
 
   const validShortCandle = isPinHammerShort || isEngulfingShort;
   const validLongCandle  = isPinHammerLong  || isEngulfingLong;
@@ -454,28 +509,29 @@ async function checkForTrapTrigger(symbol: string, market: MarketData, quote: { 
   let levelType: TrapSignal['levelType'] = 'HOD';
   let levelPrice = market.currentPrice;
 
-  // Level 2 EMA-filtered directional logic
-  if (isNearHOD && validShortCandle && lastClosedCandle.close < ema100) {
-    if (lastClosedCandle.high > market.hod || currentCandle?.high > market.hod) {
+  // Level 2 EMA-filtered directional logic + Stacey Burke 15M Filter
+  if (isNearHOD && validShortCandle && lastClosedCandle.close < ema100 && has3PushesUp && has15M_BOS_Short) {
+    if (lastClosedCandle.high >= market.hod - market.pipSize || currentCandle?.high >= market.hod - market.pipSize) {
       patternDetected = 'Peak Formation High / False Break';
       direction = 'SELL'; levelType = 'HOD'; levelPrice = market.hod;
     }
-  } else if (isNearLOD && validLongCandle && lastClosedCandle.close > ema100) {
-    if (lastClosedCandle.low < market.lod || currentCandle?.low < market.lod) {
+  } else if (isNearLOD && validLongCandle && lastClosedCandle.close > ema100 && has3PushesDown && has15M_BOS_Long) {
+    if (lastClosedCandle.low <= market.lod + market.pipSize || currentCandle?.low <= market.lod + market.pipSize) {
       patternDetected = 'Peak Formation Low / False Break';
       direction = 'BUY'; levelType = 'LOD'; levelPrice = market.lod;
     }
-  } else if (isNearHOS && validShortCandle && lastClosedCandle.close < ema100) {
-    if (lastClosedCandle.high > market.hos || currentCandle?.high > market.hos) {
+  } else if (isNearHOS && validShortCandle && lastClosedCandle.close < ema100 && has3PushesUp && has15M_BOS_Short) {
+    if (lastClosedCandle.high >= market.hos - market.pipSize || currentCandle?.high >= market.hos - market.pipSize) {
       patternDetected = 'Session Window High Trap'; direction = 'SELL'; levelType = 'HOS'; levelPrice = market.hos;
     }
-  } else if (isNearLOS && validLongCandle && lastClosedCandle.close > ema100) {
-    if (lastClosedCandle.low < market.los || currentCandle?.low < market.los) {
+  } else if (isNearLOS && validLongCandle && lastClosedCandle.close > ema100 && has3PushesDown && has15M_BOS_Long) {
+    if (lastClosedCandle.low <= market.los + market.pipSize || currentCandle?.low <= market.los + market.pipSize) {
       patternDetected = 'Session Window Low Trap'; direction = 'BUY'; levelType = 'LOS'; levelPrice = market.los;
     }
   }
 
   if (!patternDetected) return;
+  console.log(`[TRAP TRIGGER] ${symbol} pattern: ${patternDetected} (dir: ${direction}, lvl: ${levelType}, price: ${levelPrice})`);
 
   // Dedup: don't re-fire the same symbol+pattern within 60 minutes
   const existingIndex = alerts.findIndex(

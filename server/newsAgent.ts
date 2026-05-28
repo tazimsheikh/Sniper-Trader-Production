@@ -60,39 +60,3 @@ Rules:
   
   return [];
 }
-
-export async function fetchEventResult(title: string, country: string, dateIso: string): Promise<{ actual: string; deviation: string } | null> {
-  const ai = getAI();
-  if (!ai) return null;
-
-  const prompt = `Search the web for the ACTUAL released result of the macroeconomic event "${title}" for ${country} that occurred on ${dateIso}.
-Look for financial news sites (e.g., Forex Factory, Investing.com) for the release.
-Return a JSON object with this exact schema:
-{
-  "actual": "string with the actual number, or empty string if not found yet",
-  "deviation": "positive, negative, or neutral based on how it compares to the forecast. Use null if not found."
-}
-Return ONLY the JSON object. Do not explain.`;
-
-  try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      tools: [{ googleSearch: {} }],
-      config: { responseMimeType: 'application/json' }
-    });
-
-    if (response.text) {
-      const data = JSON.parse(response.text);
-      if (data && typeof data.actual !== 'undefined') {
-        return {
-          actual: data.actual,
-          deviation: data.deviation || null
-        };
-      }
-    }
-  } catch (err: any) {
-    console.error(`[NewsAgent] Failed to fetch actuals for ${title}:`, err.message);
-  }
-  return null;
-}

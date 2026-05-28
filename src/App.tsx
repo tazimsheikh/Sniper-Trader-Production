@@ -8,6 +8,8 @@ import EconomicCalendar from './components/EconomicCalendar';
 import SimpleAlertFeed from './components/SimpleAlertFeed';
 import AutomateDashboard from './components/AutomateDashboard';
 import LoginScreen from './components/LoginScreen';
+import GlobalSettings from './components/GlobalSettings';
+import BacktestViewer from './pages/BacktestViewer';
 import { GraduationCap, Clock, HelpCircle, Activity, Award, CheckCircle, Presentation, Zap, Radio, MessageSquare, AlertTriangle, LogOut, Settings, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useEconomicNews } from './hooks/useEconomicNews';
@@ -44,7 +46,7 @@ export default function App() {
   const [tokenUpdateStatus, setTokenUpdateStatus] = useState('');
 
   const [isThinking, setIsThinking]     = useState(false);
-  const [activeView, setActiveView]     = useState<'monitor' | 'calendar' | 'ai-assistant'>('monitor');
+  const [activeView, setActiveView]     = useState<'monitor' | 'calendar' | 'ai-assistant' | 'backtest'>('monitor');
   const [selectedTimezone, setSelectedTimezone] = useState<string>('IST');
   const [showMonitorAlerts, setShowMonitorAlerts]     = useState(true);
   const [showMonitorWatchlist, setShowMonitorWatchlist] = useState(true);
@@ -421,43 +423,10 @@ export default function App() {
         {/* ── GLOBAL SETTINGS MODAL ── */}
         <AnimatePresence>
           {showGlobalSettings && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowGlobalSettings(false)} />
-              <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-slate-900 border border-slate-700 p-6 rounded-2xl w-full max-w-md relative z-10 shadow-2xl">
-                <button onClick={() => setShowGlobalSettings(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white">
-                  <X size={20} />
-                </button>
-                <h3 className="text-xl font-display font-black text-white mb-4 flex items-center gap-2 uppercase tracking-wide">
-                  <Settings className="text-indigo-400" />
-                  Global Settings
-                </h3>
-                
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-1.5 ml-1">Update Meta API Token</label>
-                    <input
-                      type="password"
-                      value={newTokenInput}
-                      onChange={e => setNewTokenInput(e.target.value)}
-                      className="w-full bg-slate-950/50 border border-slate-700 text-white rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all placeholder:text-slate-600 font-mono text-sm"
-                      placeholder="Paste new Meta API Token..."
-                    />
-                    {tokenUpdateStatus && (
-                      <p className={`mt-2 text-xs font-mono ml-1 ${tokenUpdateStatus.includes('Success') ? 'text-emerald-400' : tokenUpdateStatus === 'Verifying...' ? 'text-indigo-400 animate-pulse' : 'text-red-400'}`}>
-                        {tokenUpdateStatus}
-                      </p>
-                    )}
-                  </div>
-                  
-                  <button
-                    onClick={handleUpdateMetaApiToken}
-                    className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 rounded-xl transition-colors font-display tracking-wide uppercase text-sm"
-                  >
-                    Save Changes
-                  </button>
-                </div>
-              </motion.div>
-            </div>
+            <GlobalSettings 
+              onClose={() => setShowGlobalSettings(false)} 
+              onLogout={handleLogout} 
+            />
           )}
         </AnimatePresence>
 
@@ -479,6 +448,7 @@ export default function App() {
                   { id: 'monitor',      label: '📊 Scanner Monitor' },
                   { id: 'calendar',     label: '📅 Economic Calendar' },
                   { id: 'ai-assistant', label: '🤖 AI Assistant' },
+                  { id: 'backtest',     label: '📈 Backtest Analytics' },
                 ].map(tab => (
                   <button
                     key={tab.id}
@@ -558,6 +528,12 @@ export default function App() {
                         </div>
                       </div>
                     </div>
+                  </div>
+                )}
+
+                {activeView === 'backtest' && (
+                  <div className="max-w-7xl mx-auto">
+                    <BacktestViewer />
                   </div>
                 )}
               </div>

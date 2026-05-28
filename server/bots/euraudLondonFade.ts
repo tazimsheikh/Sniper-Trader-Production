@@ -5,7 +5,7 @@ import {
 export class EURAUDLondonFadeBot extends TradingBot {
   config: BotConfig = {
     id: 'euraud-london-fade',
-    name: 'EURAUD London Fade',
+    name: 'EURAUD',
     tagline: 'Sniper AI Authorization Switch',
     description: 'Toggle this on to authorize the Master Sniper System AI to trade EURAUD automatically at 8:00 UTC.',
     symbols: ['EURAUD'],

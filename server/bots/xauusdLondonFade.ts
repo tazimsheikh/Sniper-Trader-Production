@@ -5,7 +5,7 @@ import {
 export class XAUUSDLondonFadeBot extends TradingBot {
   config: BotConfig = {
     id: 'xauusd-london-fade',
-    name: 'XAUUSD London Fade',
+    name: 'XAUUSD',
     tagline: 'Sniper AI Authorization Switch',
     description: 'Toggle this on to authorize the Master Sniper System AI to trade XAUUSD automatically at 9:00 UTC.',
     symbols: ['XAUUSD'],

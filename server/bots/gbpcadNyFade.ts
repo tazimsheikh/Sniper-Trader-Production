@@ -5,7 +5,7 @@ import {
 export class GBPCADNyFadeBot extends TradingBot {
   config: BotConfig = {
     id: 'gbpcad-ny-fade',
-    name: 'GBPCAD Ny Fade',
+    name: 'GBPCAD',
     tagline: 'Sniper AI Authorization Switch',
     description: 'Toggle this on to authorize the Master Sniper System AI to trade GBPCAD automatically at 13:30 UTC.',
     symbols: ['GBPCAD'],

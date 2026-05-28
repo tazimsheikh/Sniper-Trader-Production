@@ -7,7 +7,7 @@ import { getGlobalCandleProvider, refreshGlobalProvider, metaApiSyncStatus } fro
 import { encrypt, decrypt, isEncrypted } from './crypto';
 import { ALL_BOT_CONFIGS, BOT_REGISTRY } from './botManager';
 import { sendOtpEmail } from './email';
-import { verifyMetaApiToken } from './metaApiHandler';
+import { verifyMetaApiAccount } from './metaApiHandler';
 
 const jwtLib = jwtPkg as any;
 
@@ -28,7 +28,7 @@ export const authRouter = Router();
 // ==========================================
 
 authRouter.get('/metaapi/status', (req, res) => {
-  res.json({ status: metaApiSyncStatus });
+  res.json({ success: true, status: metaApiSyncStatus });
 });
 
 export interface AuthRequest extends Request {
@@ -74,10 +74,10 @@ export const requireAuth = (req: AuthRequest, res: Response, next: NextFunction)
 // ── POST /register ────────────────────────────────────────────────────────────
 authRouter.post('/register', authLimiter, async (req, res) => {
   try {
-    const { email, password, metaapiToken } = req.body;
+    const { email, password, metaapiToken, accountId } = req.body;
 
-    if (!email || !password || !metaapiToken) {
-      return res.status(400).json({ success: false, error: 'Email, password, and Meta API Token are required.' });
+    if (!email || !password || !metaapiToken || !accountId) {
+      return res.status(400).json({ success: false, error: 'Email, password, Meta API Token, and Account ID are required.' });
     }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return res.status(400).json({ success: false, error: 'Invalid email format.' });
@@ -85,13 +85,13 @@ authRouter.post('/register', authLimiter, async (req, res) => {
     if (password.length < 8) {
       return res.status(400).json({ success: false, error: 'Password must be at least 8 characters.' });
     }
-    if (metaapiToken.trim().length < 20) {
-      return res.status(400).json({ success: false, error: 'Invalid Meta API Token.' });
+    if (metaapiToken.trim().length < 20 || accountId.trim().length < 5) {
+      return res.status(400).json({ success: false, error: 'Invalid Meta API Token or Account ID length.' });
     }
 
-    const isValidToken = await verifyMetaApiToken(metaapiToken.trim());
-    if (!isValidToken) {
-      return res.status(400).json({ success: false, error: 'Invalid Meta API Token. Please check and try again.' });
+    const isValid = await verifyMetaApiAccount(metaapiToken.trim(), accountId.trim());
+    if (!isValid) {
+      return res.status(400).json({ success: false, error: 'Invalid Meta API Token or Account ID. Connection rejected.' });
     }
 
     const existingUser = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
@@ -99,20 +99,30 @@ authRouter.post('/register', authLimiter, async (req, res) => {
       return res.status(400).json({ success: false, error: 'An account with this email already exists.' });
     }
 
-    const passwordHash = await bcrypt.hash(password, 12);
-    const encryptedToken = encrypt(metaapiToken.trim());
+    const hashedPassword = await bcrypt.hash(password, 12);
 
     // Register user directly (bypassing OTP)
-    const result = db.prepare('INSERT INTO users (email, password_hash, metaapi_token) VALUES (?, ?, ?)').run(email, passwordHash, encryptedToken);
+    const result = db.prepare(`
+      INSERT INTO users (email, password_hash, metaapi_token, metaapi_account_id) 
+      VALUES (?, ?, ?, ?)
+    `).run(email, hashedPassword, encrypt(metaapiToken.trim()), encrypt(accountId.trim()));
 
-    const token = (jwtLib.default || jwtLib).sign(
-      { id: result.lastInsertRowid, email },
-      JWT_SECRET,
-      { expiresIn: '7d' }
-    );
+    const userId = result.lastInsertRowid;
+    
+    db.prepare(`
+      INSERT INTO trading_profiles (user_id, profile_name, metaapi_account_id, automation_active)
+      VALUES (?, ?, ?, ?)
+    `).run(userId, 'Default Profile', encrypt(accountId.trim()), 1);
 
-    res.cookie('auth_token', token, COOKIE_OPTIONS);
-    res.json({ success: true, requiresOtp: false, user: { id: result.lastInsertRowid, email } });
+    const jwtToken = (jwtLib.default || jwtLib).sign({ id: userId, email, role: 'user' }, JWT_SECRET, { expiresIn: '7d' });
+    res.cookie('auth_token', jwtToken, COOKIE_OPTIONS);
+
+    try {
+      const { refreshGlobalProvider } = require('./candleProvider');
+      refreshGlobalProvider();
+    } catch(e) {}
+
+    res.json({ success: true, user: { id: userId, email, role: 'user', tier: 'Standard' } });
   } catch (err: any) {
     console.error('[Auth] Register error:', err.message);
     res.status(500).json({ success: false, error: 'Registration failed. Please try again.' });
@@ -177,17 +187,18 @@ authRouter.post('/register/confirm', authLimiter, async (req, res) => {
 // ── POST /login ───────────────────────────────────────────────────────────────
 authRouter.post('/login', authLimiter, async (req, res) => {
   try {
-    const { email, password, metaapiToken } = req.body;
-    if (!email || !password || !metaapiToken) {
-      return res.status(400).json({ success: false, error: 'Email, password, and Meta API Token are required.' });
+    const { email, password, metaapiToken, accountId } = req.body;
+    if (!email || !password || !metaapiToken || !accountId) {
+      return res.status(400).json({ success: false, error: 'Email, password, Meta API Token, and Account ID are required.' });
     }
-    if (metaapiToken.trim().length < 20) {
-      return res.status(400).json({ success: false, error: 'Invalid Meta API Token.' });
+    if (metaapiToken.trim().length < 20 || accountId.trim().length < 5) {
+      return res.status(400).json({ success: false, error: 'Invalid Meta API Token or Account ID length.' });
     }
 
-    const isValidToken = await verifyMetaApiToken(metaapiToken.trim());
+    const { verifyMetaApiAccount } = require('./metaApiHandler');
+    const isValidToken = await verifyMetaApiAccount(metaapiToken.trim(), accountId.trim());
     if (!isValidToken) {
-      return res.status(400).json({ success: false, error: 'Invalid Meta API Token. Please check and try again.' });
+      return res.status(400).json({ success: false, error: 'Invalid Meta API Token or Account ID. Connection rejected.' });
     }
 
     const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email) as any;
@@ -202,8 +213,19 @@ authRouter.post('/login', authLimiter, async (req, res) => {
 
     const encryptedToken = encrypt(metaapiToken.trim());
     
-    // Update user's token directly and log in (bypassing OTP)
+    // Update user's token directly and log in
     db.prepare('UPDATE users SET metaapi_token = ? WHERE id = ?').run(encryptedToken, user.id);
+
+    // Sync account ID to default profile
+    const profile = db.prepare('SELECT id FROM trading_profiles WHERE user_id = ? LIMIT 1').get(user.id) as any;
+    if (profile) {
+      db.prepare('UPDATE trading_profiles SET metaapi_account_id = ?, automation_active = 1 WHERE id = ?').run(encrypt(accountId.trim()), profile.id);
+    } else {
+      db.prepare(`
+        INSERT INTO trading_profiles (user_id, profile_name, metaapi_account_id, automation_active)
+        VALUES (?, ?, ?, ?)
+      `).run(user.id, 'Default Profile', encrypt(accountId.trim()), 1);
+    }
 
     const token = (jwtLib.default || jwtLib).sign(
       { id: user.id, email: user.email },
@@ -212,6 +234,12 @@ authRouter.post('/login', authLimiter, async (req, res) => {
     );
 
     res.cookie('auth_token', token, COOKIE_OPTIONS);
+    
+    try {
+      const { refreshGlobalProvider } = require('./candleProvider');
+      refreshGlobalProvider();
+    } catch(e) {}
+
     const { password_hash: _omit, ...safeUser } = user;
     res.json({ success: true, requiresOtp: false, user: safeUser });
   } catch (err: any) {
@@ -316,6 +344,7 @@ authRouter.get('/profiles', requireAuth, (req: AuthRequest, res) => {
     
     const enrichedProfiles = profiles.map((p: any) => ({
       ...p,
+      metaapi_account_id: p.metaapi_account_id && isEncrypted(p.metaapi_account_id) ? decrypt(p.metaapi_account_id) : p.metaapi_account_id,
       hasMetaApiToken: true // Token is now user-level, if they are here they have it
     }));
 
@@ -539,10 +568,15 @@ authRouter.get('/profiles/:id/metaapi/analytics', requireAuth, async (req: AuthR
       rawToken = isEncrypted(user.metaapi_token) ? decrypt(user.metaapi_token) : user.metaapi_token;
     } catch(e) {}
 
+    let rawAccountId = profile.metaapi_account_id;
+    try {
+      rawAccountId = isEncrypted(profile.metaapi_account_id) ? decrypt(profile.metaapi_account_id) : profile.metaapi_account_id;
+    } catch(e) {}
+
     const { getConnection } = require('./botManager');
     let connection: any;
     try {
-      connection = await getConnection(rawToken, profile.metaapi_account_id);
+      connection = await getConnection(rawToken, rawAccountId);
     } catch (e: any) {
       if (e.message.includes('Fast fail')) {
         return res.json({ success: true, status: 'syncing' });

@@ -5,7 +5,7 @@ import {
 export class USDCHFNyFadeBot extends TradingBot {
   config: BotConfig = {
     id: 'usdchf-ny-fade',
-    name: 'USDCHF Ny Fade',
+    name: 'USDCHF',
     tagline: 'Sniper AI Authorization Switch',
     description: 'Toggle this on to authorize the Master Sniper System AI to trade USDCHF automatically at 13:00 UTC.',
     symbols: ['USDCHF'],

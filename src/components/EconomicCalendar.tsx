@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Clock, ShieldAlert, AlertTriangle, Info, Calendar, Target, CheckCircle2, ShieldCheck, Filter, MessageSquare, Play, Sparkles } from 'lucide-react';
+import { Clock, ShieldAlert, AlertTriangle, Info, Calendar, Target, CheckCircle2, ShieldCheck, Filter, MessageSquare, Play, Sparkles, RefreshCw } from 'lucide-react';
 import { useEconomicNews, NewsEvent } from '../hooks/useEconomicNews';
 
 interface EconomicCalendarProps {
@@ -7,7 +7,7 @@ interface EconomicCalendarProps {
 }
 
 export default function EconomicCalendar({ selectedTimezone = 'UTC' }: EconomicCalendarProps) {
-  const { events, activeWarning, currentTime } = useEconomicNews();
+  const { events, activeWarning, currentTime, refreshCalendar, isRefreshing } = useEconomicNews();
   const [selectedDateStr, setSelectedDateStr] = useState<string | null>(null);
   const [impactFilter, setImpactFilter] = useState<'ALL' | 'HIGH' | 'MID' | 'LOW'>('ALL');
   
@@ -152,7 +152,19 @@ export default function EconomicCalendar({ selectedTimezone = 'UTC' }: EconomicC
             </div>
           </div>
           <div className="flex items-center gap-3">
-             <div className="text-[10px] font-mono text-slate-500 flex items-center gap-1.5">
+             <button
+               onClick={refreshCalendar}
+               disabled={isRefreshing}
+               title="Refresh Calendar"
+               className={`p-1.5 rounded border transition-colors ${
+                 isRefreshing
+                   ? 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20 cursor-not-allowed'
+                   : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700 hover:text-white'
+               }`}
+             >
+               <RefreshCw size={14} className={isRefreshing ? 'animate-spin' : ''} />
+             </button>
+             <div className="text-[10px] font-mono text-slate-500 flex items-center gap-1.5 ml-2">
                 <Filter size={12}/> Filter:
              </div>
              <select 

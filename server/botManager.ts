@@ -75,8 +75,6 @@ setMetaApiConnectedCallback(() => {
   metaApiExecutionHealth = 'healthy';
   metaApiLastConnected = Date.now();
 });
-export let missedSignalCount: number = 0;
-export let pendingSignalCount: number = 0;
 
 // ── MetaAPI Trade Lockout Failsafe ────────────────────────────────────────────
 // If MetaAPI has not successfully executed a trade/connection in 5+ minutes,
@@ -351,14 +349,7 @@ export async function botManagerTick(
   const now = new Date();
   resetFiredTodayIfNeeded();
 
-  // ── PHASE 0: Process pending signal queue (retries) ──────────────────────
-  // Only retry queued signals if MetaAPI is not in lockout
-  if (!isMetaApiTradeBlocked()) {
-    await processPendingSignals(marketDataProvider);
-  } else {
-    const offlineMins = Math.floor((Date.now() - metaApiLastConnected) / 60000);
-    console.log(`[BotManager] ⛔ MetaAPI offline for ${offlineMins}m — trade execution LOCKED. Pending signals paused.`);
-  }
+  // Pending signals have been deprecated in favor of instant execution.
 
   const isSim = process.env.SIMULATION_MODE === 'true';
   const profiles = db.prepare(
@@ -426,16 +417,18 @@ export async function botManagerTick(
         const market = yahooKey ? marketData[yahooKey] : null;
         if (!market) continue;
 
-        const spread = Math.abs((market.ask || market.currentPrice) - (market.bid || market.currentPrice)) / market.pipSize;
+        const spread = 0;
 
         const context: BotContext = {
           currentPrice: market.currentPrice,
-          bid: market.bid || market.currentPrice,
-          ask: market.ask || market.currentPrice,
+          bid: market.currentPrice,
+          ask: market.currentPrice,
           spread,
           brokerSymbol,
           now,
           recentDailyCandles: market.recentDailyCandles || [],
+          last15MSwingHigh: market.last15MSwingHigh,
+          last15MSwingLow: market.last15MSwingLow,
         };
 
         // ── MANAGE EXISTING OPEN TRADES ────────────────────────────────────────
@@ -525,326 +518,7 @@ export async function botManagerTick(
 
           continue; // Don't look for new signals while trade is open
         }
-
-        // ── GENERATE NEW SIGNAL ───────────────────────────────────────────────
-        // 🛡️ FAILSAFE: Block ALL new trade entries if MetaAPI has been offline for 5+ minutes.
-        // Open trade management (exits, SL moves) is intentionally NOT blocked above — 
-        // we still exit existing positions even when blocked from opening new ones.
-        if (isMetaApiTradeBlocked()) {
-          const offlineMins = metaApiLastConnected === 0
-            ? 'never connected'
-            : `${Math.floor((Date.now() - metaApiLastConnected) / 60000)}m`;
-          console.log(`[BotManager] [${botId}] ⛔ NEW TRADE BLOCKED — MetaAPI offline (${offlineMins}). No Yahoo fallback trades allowed.`);
-          continue;
-        }
-
-        // 🛡️ NEWS BLACKOUT WINDOW: Block new trades +/- 5 mins of High Impact News
-        if (isNewsBlackout(brokerSymbol, now)) {
-          console.log(`[BotManager] [${botId}] ⛔ NEW TRADE BLOCKED — News Blackout Window active for ${brokerSymbol}`);
-          continue;
-        }
-
-        // 🛡️ BUG FIX #1: Block signal if ANY other bot already has an open position on this symbol
-        if (hasAnyOpenTradeOnSymbol(profile.id, brokerSymbol)) {
-          console.log(`[BotManager] [${botId}] Skipping signal — another bot already has an open trade on ${brokerSymbol} for profile ${profile.id}`);
-          continue;
-        }
-
-        const lockKey = `${profile.id}-${brokerSymbol}`;
-        if (activeTradeLocks.has(lockKey)) {
-          console.log(`[BotManager] [${botId}] Skipping signal — trade evaluation already in progress for ${brokerSymbol} (preventing race condition)`);
-          continue;
-        }
-
-        activeTradeLocks.add(lockKey);
-        try {
-          const signal = await bot.generateSignal(context);
-          if (!signal.shouldTrade || !signal.direction || !signal.suggestedSlPips) continue;
-
-          // 🛡️ SPREAD TOLERANCE CHECK 🛡️
-          // Reject trade if the broker's live spread is abnormally high (e.g. during/after news).
-          const isGoldOrIndex = brokerSymbol.includes('XAU') || brokerSymbol.includes('NAS') || brokerSymbol.includes('USTEC');
-          const isMinor = brokerSymbol.includes('JPY') || brokerSymbol.includes('AUD') || brokerSymbol.includes('NZD') || brokerSymbol.includes('CAD') || brokerSymbol.includes('CHF');
-          const maxSpreadAllowed = isGoldOrIndex ? 25 : (isMinor ? 5 : 3);
-          
-          if (context.spread > maxSpreadAllowed) {
-            console.log(`[BotManager] [${botId}] ⛔ NEW TRADE REJECTED — Spread is dangerously high (${context.spread.toFixed(1)} > ${maxSpreadAllowed} pips)`);
-            continue;
-          }
-
-          // 🛡️ STRUCTURAL SL CAPPING 🛡️
-          // Cap maximum allowed SL pips to prevent bots from setting excessively wide stops
-          // during extreme volatility which ties up too much free margin.
-          const maxSl = brokerSymbol.includes('XAU') || brokerSymbol.includes('NAS') ? 250 : 150;
-          signal.suggestedSlPips = Math.min(signal.suggestedSlPips, maxSl);
-
-          // 🛡️ FIRED-TODAY GUARD — prevent double-fires in widened 2-min windows
-          if (hasFiredToday(profile.id, botId, brokerSymbol)) {
-            continue; // Already fired today for this bot/symbol/profile combo
-          }
-
-          const spec = SYMBOL_SPECS[brokerSymbol];
-          if (!spec) continue;
-
-          try {
-            const conn = await getConnection(rawToken, profile.metaapi_account_id);
-            const accountInfo = await conn.getAccountInformation();
-            const balance: number = accountInfo.balance;
-
-            // 🛡️ DAY 1 & CONFLUENCE RISK OVERRIDE 🛡️
-            const isThreeSessionSetup = 
-              (market.londonHigh > market.asianHigh || market.londonLow < market.asianLow) && 
-              (market.currentPrice > market.londonLow && market.currentPrice < market.londonHigh);
-            
-            if (market.dayOfWeekCycle === 1 && !isThreeSessionSetup) {
-              console.log(`[BotManager] [${botId}] ⛔ NEW TRADE REJECTED — Day 1 without 3-Session setup.`);
-              continue;
-            }
-
-            // Risk: bot's base risk * profile risk multiplier
-            let targetRiskPct = bot.config.riskPct * (profile.risk_multiplier || 1);
-            if (market.dayOfWeekCycle === 3 && isThreeSessionSetup) {
-              targetRiskPct = 10; // Holy Grail Confluence overrides risk to 10%
-              console.log(`[BotManager] [${botId}] 🎯 HOLY GRAIL CONFLUENCE DETECTED — Overriding risk to 10%`);
-            }
-
-            let riskAmount = balance * (targetRiskPct / 100);
-
-            // 🛡️ DYNAMIC TRADE REJECTION & MICRO-ACCOUNT AGGRESSION CURVE 🛡️
-            const minRiskAmount = 0.01 * signal.suggestedSlPips * spec.pipValuePerLot;
-            
-            if (minRiskAmount > riskAmount) {
-              if (balance < 100) {
-                // Micro-Account Aggression Curve: Bending the rules up to 15% to take trades
-                const minRiskPct = (minRiskAmount / balance) * 100;
-                if (minRiskPct <= 15) {
-                  console.log(`[BotManager] [${botId}] Profile ${profile.id} | Micro-Account scaling risk from ${targetRiskPct.toFixed(1)}% to ${minRiskPct.toFixed(1)}% to meet 0.01 lot minimum.`);
-                  riskAmount = minRiskAmount; // Override riskAmount to allow the trade at exactly 0.01 lots
-                } else {
-                  console.log(`[BotManager] [${botId}] Profile ${profile.id} REJECTED: Min risk ($${minRiskAmount.toFixed(2)}) is ${minRiskPct.toFixed(1)}%, exceeding 15% hard ceiling.`);
-                  logToDiary(profile.user_id, profile.id, botId, brokerSymbol, signal.direction, 0, 0, 0, 0, 0, 'REJECTED', Date.now());
-                  continue;
-                }
-              } else {
-                // Standard strict rejection for normal accounts
-                console.log(`[BotManager] [${botId}] Profile ${profile.id} REJECTED: Min 0.01 lot risk ($${minRiskAmount.toFixed(2)}) exceeds allowed target risk ($${riskAmount.toFixed(2)})`);
-                logToDiary(profile.user_id, profile.id, botId, brokerSymbol, signal.direction, 0, 0, 0, 0, 0, 'REJECTED', Date.now());
-                continue;
-              }
-            }
-
-            let lots = riskAmount / (signal.suggestedSlPips * spec.pipValuePerLot);
-            // Hard cap max lots to 0.1
-            lots = Math.max(0.01, Math.min(0.1, Math.round(lots * 100) / 100));
-
-            const quote = await conn.getSymbolPrice(brokerSymbol);
-            const slDist = signal.suggestedSlPips * spec.pipSize;
-            const tpDist = (signal.suggestedTpPips || signal.suggestedSlPips * 2) * spec.pipSize;
-
-            let orderId: string;
-            let entryPrice: number;
-            let slPrice: number;
-            let tpPrice: number;
-
-            if (signal.direction === 'BUY') {
-              entryPrice = quote.ask;
-              slPrice    = parseFloat((quote.ask - slDist).toFixed(5));
-              tpPrice    = parseFloat((quote.ask + tpDist).toFixed(5));
-              const result = await conn.createMarketBuyOrder(brokerSymbol, lots, slPrice, tpPrice, {
-                comment: `[${botId}]`,
-                slippage: 30,
-              });
-              orderId = result.orderId;
-            } else {
-              entryPrice = quote.bid;
-              slPrice    = parseFloat((quote.bid + slDist).toFixed(5));
-              tpPrice    = parseFloat((quote.bid - tpDist).toFixed(5));
-              const result = await conn.createMarketSellOrder(brokerSymbol, lots, slPrice, tpPrice, {
-                comment: `[${botId}]`,
-                slippage: 30,
-              });
-              orderId = result.orderId;
-            }
-
-            const newState: BotTradeState = {
-              botId, userId: profile.user_id, profileId: profile.id, brokerSymbol,
-              direction: signal.direction,
-              entryPrice, slPrice, tpPrice, lots,
-              openTime: Date.now(),
-              metaOrderId: orderId,
-              t1Hit: false,
-              highestPrice: entryPrice,
-              lowestPrice: entryPrice,
-            };
-            saveTradeState(newState, orderId);
-
-            console.log(
-              `[BotManager] ✅ [${botId}] Profile ${profile.id} | ${signal.direction} ${brokerSymbol} ` +
-              `| ${lots} lots | SL: ${slPrice} | TP: ${tpPrice} | Reason: ${signal.reason}`
-            );
-
-            // Mark as fired today to prevent double-fire in widened window
-            markFiredToday(profile.id, botId, brokerSymbol);
-            metaApiExecutionHealth = 'healthy';
-            metaApiLastConnected = Date.now();
-          } catch (e: any) {
-            console.error(`[BotManager] Trade entry failed for Profile ${profile.id} Bot ${botId}:`, e.message);
-
-            // 🛡️ SIGNAL QUEUE — Queue the signal for retry instead of dropping it
-            if (e.message.includes('Fast fail') || e.message.includes('timeout') || e.message.includes('xhr poll')) {
-              metaApiExecutionHealth = 'offline';
-              clearSharedConnection(rawToken, profile.metaapi_account_id);
-              queueSignal(profile.id, profile.user_id, botId, brokerSymbol, signal);
-              markFiredToday(profile.id, botId, brokerSymbol); // Don't re-generate while queued
-            }
-          }
-        } finally {
-          activeTradeLocks.delete(lockKey);
-        }
       }
-  }
-}
-
-function queueSignal(profileId: number, userId: number, botId: string, brokerSymbol: string, signal: any) {
-  const expiresAt = Date.now() + 5 * 60 * 1000;
-  db.prepare(`
-    INSERT INTO pending_signals
-    (profile_id, user_id, bot_id, broker_symbol, direction, suggested_sl_pips, suggested_tp_pips, reason, created_at, expires_at, status)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')
-  `).run(
-    profileId, userId, botId, brokerSymbol, signal.direction, signal.suggestedSlPips, signal.suggestedTpPips || null, signal.reason || null, Date.now(), expiresAt
-  );
-  pendingSignalCount++;
-}
-
-async function processPendingSignals(marketDataProvider: any) {
-  const now = Date.now();
-  const expired = db.prepare(`UPDATE pending_signals SET status = 'EXPIRED' WHERE status = 'PENDING' AND expires_at < ?`).run(now);
-  if (expired.changes > 0) {
-    missedSignalCount += expired.changes;
-    pendingSignalCount = Math.max(0, pendingSignalCount - expired.changes);
-  }
-
-  const pending = db.prepare(`SELECT * FROM pending_signals WHERE status = 'PENDING'`).all() as any[];
-  if (pending.length === 0) return;
-
-  for (const sig of pending) {
-    const profile = db.prepare(`SELECT tp.*, u.metaapi_token FROM trading_profiles tp JOIN users u ON u.id = tp.user_id WHERE tp.id = ?`).get(sig.profile_id) as any;
-    if (!profile) {
-      db.prepare(`UPDATE pending_signals SET status = 'FAILED' WHERE id = ?`).run(sig.id);
-      pendingSignalCount = Math.max(0, pendingSignalCount - 1);
-      continue;
-    }
-
-    let rawToken: string;
-    try {
-      rawToken = isEncrypted(profile.metaapi_token) ? decrypt(profile.metaapi_token) : profile.metaapi_token;
-    } catch (e: any) {
-      continue;
-    }
-
-    const bot = BOT_REGISTRY[sig.bot_id];
-    if (!bot) continue;
-
-    const spec = SYMBOL_SPECS[sig.broker_symbol];
-    if (!spec) continue;
-
-    const signalObj = {
-       direction: sig.direction,
-       suggestedSlPips: sig.suggested_sl_pips,
-       suggestedTpPips: sig.suggested_tp_pips,
-       reason: sig.reason || 'Delayed Execution'
-    };
-
-    try {
-      const conn = await getConnection(rawToken, profile.metaapi_account_id);
-      const accountInfo = await conn.getAccountInformation();
-      const balance: number = accountInfo.balance;
-
-      const targetRiskPct = bot.config.riskPct * (profile.risk_multiplier || 1);
-      let riskAmount = balance * (targetRiskPct / 100);
-
-      const minRiskAmount = 0.01 * signalObj.suggestedSlPips * spec.pipValuePerLot;
-      
-      if (minRiskAmount > riskAmount) {
-        if (balance < 100) {
-          const minRiskPct = (minRiskAmount / balance) * 100;
-          if (minRiskPct <= 15) {
-            riskAmount = minRiskAmount;
-          } else {
-            db.prepare(`UPDATE pending_signals SET status = 'FAILED' WHERE id = ?`).run(sig.id);
-            pendingSignalCount = Math.max(0, pendingSignalCount - 1);
-            continue;
-          }
-        } else {
-          db.prepare(`UPDATE pending_signals SET status = 'FAILED' WHERE id = ?`).run(sig.id);
-          pendingSignalCount = Math.max(0, pendingSignalCount - 1);
-          continue;
-        }
-      }
-
-      let lots = riskAmount / (signalObj.suggestedSlPips * spec.pipValuePerLot);
-      // Hard cap max lots to 0.1
-      lots = Math.max(0.01, Math.min(0.1, Math.round(lots * 100) / 100));
-
-      const quote = await conn.getSymbolPrice(sig.broker_symbol);
-      const slDist = signalObj.suggestedSlPips * spec.pipSize;
-      const tpDist = (signalObj.suggestedTpPips || signalObj.suggestedSlPips * 2) * spec.pipSize;
-
-      let orderId: string;
-      let entryPrice: number;
-      let slPrice: number;
-      let tpPrice: number;
-
-      if (signalObj.direction === 'BUY') {
-        entryPrice = quote.ask;
-        slPrice    = parseFloat((quote.ask - slDist).toFixed(5));
-        tpPrice    = parseFloat((quote.ask + tpDist).toFixed(5));
-        const result = await conn.createMarketBuyOrder(sig.broker_symbol, lots, slPrice, tpPrice, {
-          comment: `[${sig.bot_id}] RETRY`,
-          slippage: 30,
-        });
-        orderId = result.orderId;
-      } else {
-        entryPrice = quote.bid;
-        slPrice    = parseFloat((quote.bid + slDist).toFixed(5));
-        tpPrice    = parseFloat((quote.bid - tpDist).toFixed(5));
-        const result = await conn.createMarketSellOrder(sig.broker_symbol, lots, slPrice, tpPrice, {
-          comment: `[${sig.bot_id}] RETRY`,
-          slippage: 30,
-        });
-        orderId = result.orderId;
-      }
-
-      const newState: BotTradeState = {
-        botId: sig.bot_id, userId: profile.user_id, profileId: profile.id, brokerSymbol: sig.broker_symbol,
-        direction: signalObj.direction,
-        entryPrice, slPrice, tpPrice, lots,
-        openTime: Date.now(),
-        metaOrderId: orderId,
-        t1Hit: false,
-        highestPrice: entryPrice,
-        lowestPrice: entryPrice,
-      };
-      saveTradeState(newState, orderId);
-
-      db.prepare(`UPDATE pending_signals SET status = 'EXECUTED' WHERE id = ?`).run(sig.id);
-      pendingSignalCount = Math.max(0, pendingSignalCount - 1);
-      
-      console.log(`[BotManager] ✅ [${sig.bot_id}] RETRY Profile ${profile.id} | ${signalObj.direction} ${sig.broker_symbol} `);
-      metaApiExecutionHealth = 'healthy';
-      metaApiLastConnected = Date.now();
-    } catch (e: any) {
-      if (e.message.includes('Fast fail') || e.message.includes('timeout') || e.message.includes('xhr poll')) {
-          metaApiExecutionHealth = 'offline';
-          clearSharedConnection(rawToken, profile.metaapi_account_id);
-          // Leave it PENDING until it expires
-      } else {
-          db.prepare(`UPDATE pending_signals SET status = 'FAILED' WHERE id = ?`).run(sig.id);
-          pendingSignalCount = Math.max(0, pendingSignalCount - 1);
-          missedSignalCount++;
-      }
-    }
   }
 }
 

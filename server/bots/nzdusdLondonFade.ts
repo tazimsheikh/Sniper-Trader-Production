@@ -5,7 +5,7 @@ import {
 export class NZDUSDLondonFadeBot extends TradingBot {
   config: BotConfig = {
     id: 'nzdusd-london-fade',
-    name: 'NZDUSD London Fade',
+    name: 'NZDUSD',
     tagline: 'Sniper AI Authorization Switch',
     description: 'Toggle this on to authorize the Master Sniper System AI to trade NZDUSD automatically at 9:15 UTC.',
     symbols: ['NZDUSD'],

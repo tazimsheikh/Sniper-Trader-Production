@@ -5,7 +5,7 @@ import {
 export class USDCADLondonFadeBot extends TradingBot {
   config: BotConfig = {
     id: 'usdcad-london-fade',
-    name: 'USDCAD London Fade',
+    name: 'USDCAD',
     tagline: 'Sniper AI Authorization Switch',
     description: 'Toggle this on to authorize the Master Sniper System AI to trade USDCAD automatically at 9:30 UTC.',
     symbols: ['USDCAD'],

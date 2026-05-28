@@ -5,7 +5,7 @@ import {
 export class EURCADLondonFadeBot extends TradingBot {
   config: BotConfig = {
     id: 'eurcad-london-fade',
-    name: 'EURCAD London Fade',
+    name: 'EURCAD',
     tagline: 'Sniper AI Authorization Switch',
     description: 'Toggle this on to authorize the Master Sniper System AI to trade EURCAD automatically at 9:45 UTC.',
     symbols: ['EURCAD'],
