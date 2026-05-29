@@ -62,43 +62,27 @@ export class SniperSystemAI extends TradingBot {
       ? (currentPrice - trade.entryPrice) / PIP_SIZE
       : (trade.entryPrice - currentPrice) / PIP_SIZE;
 
-    // 1. Time-Based Manual Bailout (45-Minute Limit)
-    // If trade is floating in drawdown after 45 minutes (3x 15m candles), exit to protect capital.
+    // 1. Time-Based Manual Bailout (3-Hour Strict Limit)
+    // If trade has been open for 3 hours, exit immediately to protect capital from ranging markets.
     const openTime = new Date(trade.openTime);
     const hrsOpen = (now.getTime() - openTime.getTime()) / (1000 * 60 * 60);
-    if (hrsOpen >= 0.75 && currentProfitPips < 0) {
-      return { action: 'CLOSE', reason: 'TIME_BAILOUT_45MIN' };
-    }
-    // 2. Structural Trailing Stop Loss (Once TP1 is hit / +50 pips)
-    if (currentProfitPips >= 50) {
-      const isBuy = trade.direction === 'BUY';
-      const buffer = 1 * PIP_SIZE; // 1 pip under/above
-      
-      if (isBuy && context.last15MSwingLow !== undefined) {
-        const trailPrice = context.last15MSwingLow - buffer;
-        if (trailPrice > trade.slPrice && trailPrice < currentPrice) {
-          return { action: 'MODIFY_SL', newSlPrice: trailPrice };
-        }
-      } else if (!isBuy && context.last15MSwingHigh !== undefined) {
-        const trailPrice = context.last15MSwingHigh + buffer;
-        if (trailPrice < trade.slPrice && trailPrice > currentPrice) {
-          return { action: 'MODIFY_SL', newSlPrice: trailPrice };
-        }
-      }
+    if (hrsOpen >= 3.0) {
+      return { action: 'CLOSE', reason: 'TIME_BAILOUT_3_HOURS' };
     }
 
-    // 3. Breakeven Trailing Stop (No Early Breakeven until +30 pips)
-    if (currentProfitPips >= 30) {
+    // Calculate initial 1R distance from the database's current SL
+    // Note: Once t1Hit is true, the SL is at breakeven, so this distance check is bypassed
+    const initialSlDistancePips = Math.abs(trade.entryPrice - trade.slPrice) / PIP_SIZE;
+
+    // 2. Pyramiding (Double down at 1R profit)
+    // If trade hits 1R, move SL to breakeven and trigger PYRAMID action to open a second full position
+    if (!trade.t1Hit && initialSlDistancePips > 0 && currentProfitPips >= initialSlDistancePips) {
       const isBuy = trade.direction === 'BUY';
       // Move SL to Break Even (Entry Price + a tiny spread buffer to ensure strict BE)
       const buffer = 2 * PIP_SIZE;
       const bePrice = isBuy ? (trade.entryPrice + buffer) : (trade.entryPrice - buffer);
       
-      if (isBuy && trade.slPrice < trade.entryPrice) {
-        return { action: 'MODIFY_SL', newSlPrice: bePrice };
-      } else if (!isBuy && trade.slPrice > trade.entryPrice) {
-        return { action: 'MODIFY_SL', newSlPrice: bePrice };
-      }
+      return { action: 'PYRAMID', newSlPrice: bePrice };
     }
 
     // TP and Hard SL are handled automatically by MetaAPI server-side execution.

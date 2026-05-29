@@ -461,24 +461,15 @@ export async function executeTradeForProfile(
     const riskAmount = balance * (chosenRiskPct / 100);
     const lotSize = (riskAmount / stopLossDistPips) / spec.pipValuePerLot;
 
-    // Dual Trade Logic (TP1 & TP2)
-    const halfLotSize = quantizeLots(lotSize / 2);
-    if (halfLotSize < 0.01) {
-       console.warn(`[MetaAPI Profile ${profile.id}] Lot size too small for dual trades (${lotSize}). Skipping.`);
-       return;
-    }
-
     const slDistance = stopLossDistPips * spec.pipSize;
-    const tp1Distance = (takeProfitDistPips * 0.5) * spec.pipSize;
-    const tp2Distance = takeProfitDistPips * spec.pipSize; // Full TP
+    const tpDistance = takeProfitDistPips * spec.pipSize;
 
-    let orderResult1, orderResult2;
+    let orderResult;
     
     const authorizingBot = activeBots.find(b => b.includes(lowerBrokerSymbol)) || 'sniper-system-ai';
     const botId = authorizingBot;
     const openTime = Date.now();
 
-    // DB-first write to prevent orphaned broker trades on crash
     const insertTrade = db.prepare(`
       INSERT INTO bot_trade_states
         (user_id, profile_id, bot_id, broker_symbol, direction, entry_price, sl_price, tp_price,
@@ -488,45 +479,34 @@ export async function executeTradeForProfile(
 
     let entryPrice = signal.direction === 'BUY' ? quote.ask : quote.bid;
     let slPrice = signal.direction === 'BUY' ? (entryPrice - slDistance) : (entryPrice + slDistance);
-    let tp1Price = signal.direction === 'BUY' ? (entryPrice + tp1Distance) : (entryPrice - tp1Distance);
-    let tp2Price = signal.direction === 'BUY' ? (entryPrice + tp2Distance) : (entryPrice - tp2Distance);
+    let tpPrice = signal.direction === 'BUY' ? (entryPrice + tpDistance) : (entryPrice - tpDistance);
 
     slPrice = parseFloat(slPrice.toFixed(5));
-    tp1Price = parseFloat(tp1Price.toFixed(5));
-    tp2Price = parseFloat(tp2Price.toFixed(5));
+    tpPrice = parseFloat(tpPrice.toFixed(5));
 
-    const tp1DbId = insertTrade.run(profile.user_id, profile.id, botId, brokerSymbol, signal.direction, entryPrice, slPrice, tp1Price, halfLotSize, openTime, 'PENDING_TP1', entryPrice, entryPrice).lastInsertRowid;
-    const tp2DbId = insertTrade.run(profile.user_id, profile.id, botId, brokerSymbol, signal.direction, entryPrice, slPrice, tp2Price, halfLotSize, openTime, 'PENDING_TP2', entryPrice, entryPrice).lastInsertRowid;
+    const dbId = insertTrade.run(profile.user_id, profile.id, botId, brokerSymbol, signal.direction, entryPrice, slPrice, tpPrice, lotSize, openTime, 'PENDING', entryPrice, entryPrice).lastInsertRowid;
 
     try {
       if (process.env.SIMULATION_MODE === 'true') {
-        orderResult1 = { orderId: `SIM_${Date.now()}_TP1` };
-        orderResult2 = { orderId: `SIM_${Date.now()}_TP2` };
+        orderResult = { orderId: `SIM_${Date.now()}` };
       } else {
         const connection = await getSharedConnection(rawToken, profile.metaapi_account_id, false);
         if (signal.direction === 'BUY') {
-          console.log(`[MetaAPI Profile ${profile.id}] BUY TP1 @ ${quote.ask} | SL: ${slPrice} | TP1: ${tp1Price} | Lots: ${halfLotSize}`);
-          orderResult1 = await connection.createMarketBuyOrder(brokerSymbol, halfLotSize, slPrice, tp1Price, { clientId: 'AI_SNIPER_TP1' });
-          
-          console.log(`[MetaAPI Profile ${profile.id}] BUY TP2 @ ${quote.ask} | SL: ${slPrice} | TP2: ${tp2Price} | Lots: ${halfLotSize}`);
-          orderResult2 = await connection.createMarketBuyOrder(brokerSymbol, halfLotSize, slPrice, tp2Price, { clientId: 'AI_SNIPER_TP2' });
+          console.log(`[MetaAPI Profile ${profile.id}] BUY @ ${quote.ask} | SL: ${slPrice} | TP: ${tpPrice} | Lots: ${lotSize}`);
+          orderResult = await connection.createMarketBuyOrder(brokerSymbol, lotSize, slPrice, tpPrice, { clientId: 'AI_SNIPER' });
         } else {
-          console.log(`[MetaAPI Profile ${profile.id}] SELL TP1 @ ${quote.bid} | SL: ${slPrice} | TP1: ${tp1Price} | Lots: ${halfLotSize}`);
-          orderResult1 = await connection.createMarketSellOrder(brokerSymbol, halfLotSize, slPrice, tp1Price, { clientId: 'AI_SNIPER_TP1' });
-          
-          console.log(`[MetaAPI Profile ${profile.id}] SELL TP2 @ ${quote.bid} | SL: ${slPrice} | TP2: ${tp2Price} | Lots: ${halfLotSize}`);
-          orderResult2 = await connection.createMarketSellOrder(brokerSymbol, halfLotSize, slPrice, tp2Price, { clientId: 'AI_SNIPER_TP2' });
+          console.log(`[MetaAPI Profile ${profile.id}] SELL @ ${quote.bid} | SL: ${slPrice} | TP: ${tpPrice} | Lots: ${lotSize}`);
+          orderResult = await connection.createMarketSellOrder(brokerSymbol, lotSize, slPrice, tpPrice, { clientId: 'AI_SNIPER' });
         }
       }
 
-      console.log(`[MetaAPI Profile ${profile.id}] ✅ Dual Orders placed: TP1(${orderResult1?.orderId}), TP2(${orderResult2?.orderId})`);
+      console.log(`[MetaAPI Profile ${profile.id}] ✅ Order placed: (${orderResult?.orderId})`);
 
-      const updateTrade = db.prepare(`UPDATE bot_trade_states SET meta_order_id = ? WHERE id = ?`);
-      if (orderResult1?.orderId) updateTrade.run(orderResult1.orderId, tp1DbId);
-      if (orderResult2?.orderId) updateTrade.run(orderResult2.orderId, tp2DbId);
-
+      if (orderResult?.orderId) {
+        db.prepare(`UPDATE bot_trade_states SET meta_order_id = ? WHERE id = ?`).run(orderResult.orderId, dbId);
+      }
     } catch (err: any) {
-      db.prepare(`DELETE FROM bot_trade_states WHERE id IN (?, ?)`).run(tp1DbId, tp2DbId);
+      db.prepare(`DELETE FROM bot_trade_states WHERE id = ?`).run(dbId);
       throw err;
     }
   } catch (err: any) {

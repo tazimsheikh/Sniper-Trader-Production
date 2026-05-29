@@ -78,4 +78,5 @@ export type TradeAction =
   | { action: 'HOLD' }
   | { action: 'CLOSE'; reason: string }
   | { action: 'MODIFY_SL'; newSlPrice: number }
-  | { action: 'PARTIAL_CLOSE'; closePercent: number; newSlPrice: number };
+  | { action: 'PARTIAL_CLOSE'; closePercent: number; newSlPrice: number }
+  | { action: 'PYRAMID'; newSlPrice: number };

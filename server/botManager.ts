@@ -501,6 +501,43 @@ export async function botManagerTick(
             console.error(`[BotManager] PartialClose failed for Profile ${profile.id}:`, e.message);
             clearSharedConnection(rawToken, profile.metaapi_account_id);
           }
+        } else if (action.action === 'PYRAMID') {
+          try {
+            if (process.env.SIMULATION_MODE !== 'true') {
+              const conn = await getConnection(rawToken, profile.metaapi_account_id);
+              if (openTrade.metaOrderId) {
+                await conn.modifyPosition(openTrade.metaOrderId, action.newSlPrice, openTrade.tpPrice);
+                
+                let pyramidOrderResult;
+                if (openTrade.direction === 'BUY') {
+                  pyramidOrderResult = await conn.createMarketBuyOrder(brokerSymbol, openTrade.lots, action.newSlPrice, openTrade.tpPrice, { clientId: 'AI_SNIPER_PYR' });
+                } else {
+                  pyramidOrderResult = await conn.createMarketSellOrder(brokerSymbol, openTrade.lots, action.newSlPrice, openTrade.tpPrice, { clientId: 'AI_SNIPER_PYR' });
+                }
+                
+                if (pyramidOrderResult?.orderId) {
+                  db.prepare(`
+                    INSERT INTO bot_trade_states
+                      (user_id, profile_id, bot_id, broker_symbol, direction, entry_price, sl_price, tp_price,
+                       lots, open_time, meta_order_id, t1_hit, highest_price, lowest_price, status)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, 'OPEN')
+                  `).run(profile.user_id, profile.id, botId, brokerSymbol, openTrade.direction, context.currentPrice, action.newSlPrice, openTrade.tpPrice, openTrade.lots, Date.now(), pyramidOrderResult.orderId, context.currentPrice, context.currentPrice);
+                }
+              }
+            } else {
+                  db.prepare(`
+                    INSERT INTO bot_trade_states
+                      (user_id, profile_id, bot_id, broker_symbol, direction, entry_price, sl_price, tp_price,
+                       lots, open_time, meta_order_id, t1_hit, highest_price, lowest_price, status)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, 'OPEN')
+                  `).run(profile.user_id, profile.id, botId, brokerSymbol, openTrade.direction, context.currentPrice, action.newSlPrice, openTrade.tpPrice, openTrade.lots, Date.now(), `SIM_PYR_${Date.now()}`, context.currentPrice, context.currentPrice);
+            }
+            markT1Hit(openTrade.metaOrderId, action.newSlPrice);
+            console.log(`[BotManager] [${botId}] Profile ${profile.id} PYRAMID executed. SL moved to BE, Position Doubled.`);
+          } catch (e: any) {
+            console.error(`[BotManager] Pyramid failed for Profile ${profile.id}:`, e.message);
+            clearSharedConnection(rawToken, profile.metaapi_account_id);
+          }
         }
 
         continue; // Don't look for new signals while trade is open

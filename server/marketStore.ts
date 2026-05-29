@@ -89,6 +89,9 @@ export class ProfileStore {
   sessionStartTimes: Record<string, number> = {};
   yahooBatchIndex = 0;
 
+  private lastM15FetchTime: Record<string, number> = {};
+  private cachedM15Candles: Record<string, any[]> = {};
+
   constructor(profileId: number) {
     this.profileId = profileId;
   }
@@ -385,8 +388,19 @@ export class ProfileStore {
 
     let m15Candles;
     try {
-      const provider = getProviderForProfile(this.profileId);
-      m15Candles = await provider.get15MinuteCandles(symbol, toBrokerSymbol(symbol), 5);
+      const nowMs = now.getTime();
+      const cached = this.cachedM15Candles[symbol];
+      const lastFetch = this.lastM15FetchTime[symbol] || 0;
+      
+      // Cache valid for 3 minutes (180_000 ms)
+      if (cached && (nowMs - lastFetch) < 180_000) {
+         m15Candles = cached;
+      } else {
+         const provider = getProviderForProfile(this.profileId);
+         m15Candles = await provider.get15MinuteCandles(symbol, toBrokerSymbol(symbol), 5);
+         this.cachedM15Candles[symbol] = m15Candles;
+         this.lastM15FetchTime[symbol] = nowMs;
+      }
     } catch {
       return;
     }
