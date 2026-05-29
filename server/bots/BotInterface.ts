@@ -37,6 +37,7 @@ export interface BotTradeState {
   t1Hit: boolean;             // Partial close target hit
   highestPrice: number;       // For trailing stop calculation
   lowestPrice: number;
+  pyramidCount?: number;      // How many times this trade has pyramided
 }
 
 export interface BotSignal {

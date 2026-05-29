@@ -5,7 +5,7 @@ import fs from 'fs';
 import path from 'path';
 
 // Optimal configurations discovered by the global scanner
-const OPTIMAL_CONFIGS: Record<string, any> = {
+export const OPTIMAL_CONFIGS: Record<string, any> = {
   "GBPJPY": { "hr": 14, "min": 30, "reverse": true, "sl": 30, "tp": 60, "ema": 100, "breakeven": true, "manualCloseHrs": 8, "confirmation": "engulfing" },
   "XAUUSD": { "hr": 9, "min": 0, "reverse": true, "sl": 200, "tp": 600, "ema": 240, "breakeven": true, "manualCloseHrs": 4, "confirmation": "engulfing" },
   "GBPUSD": { "hr": 7, "min": 30, "reverse": false, "sl": 25, "tp": 50, "ema": 50, "breakeven": false, "manualCloseHrs": 8, "confirmation": "engulfing" },
@@ -76,7 +76,7 @@ export class SniperSystemAI extends TradingBot {
 
     // 2. Pyramiding (Double down at 1R profit)
     // If trade hits 1R, move SL to breakeven and trigger PYRAMID action to open a second full position
-    if (!trade.t1Hit && initialSlDistancePips > 0 && currentProfitPips >= initialSlDistancePips) {
+    if (!trade.t1Hit && (trade.pyramidCount || 0) === 0 && initialSlDistancePips > 0 && currentProfitPips >= initialSlDistancePips) {
       const isBuy = trade.direction === 'BUY';
       // Move SL to Break Even (Entry Price + a tiny spread buffer to ensure strict BE)
       const buffer = 2 * PIP_SIZE;

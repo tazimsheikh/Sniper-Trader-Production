@@ -180,6 +180,7 @@ export function ensureBotSchema() {
       open_time INTEGER NOT NULL,
       meta_order_id TEXT,
       t1_hit INTEGER DEFAULT 0,
+      pyramid_count INTEGER DEFAULT 0,
       highest_price REAL NOT NULL,
       lowest_price REAL NOT NULL,
       status TEXT DEFAULT 'OPEN',
@@ -204,6 +205,7 @@ export function ensureBotSchema() {
   `);
 
   try { db.exec('ALTER TABLE bot_trade_states ADD COLUMN profile_id INTEGER'); } catch (_) {}
+  try { db.exec('ALTER TABLE bot_trade_states ADD COLUMN pyramid_count INTEGER DEFAULT 0'); } catch (_) {}
   try { db.exec('ALTER TABLE trade_diary ADD COLUMN profile_id INTEGER'); } catch (_) {}
 
   // Auto-migrate users to have at least a Default Profile
@@ -263,6 +265,7 @@ function getOpenTradesForBot(profileId: number, botId: string, brokerSymbol: str
     openTime: ownRow.open_time,
     metaOrderId: ownRow.meta_order_id,
     t1Hit: ownRow.t1_hit === 1,
+    pyramidCount: ownRow.pyramid_count || 0,
     highestPrice: ownRow.highest_price,
     lowestPrice: ownRow.lowest_price,
   }));
@@ -503,37 +506,57 @@ export async function botManagerTick(
           }
         } else if (action.action === 'PYRAMID') {
           try {
+            let newLotSize = openTrade.lots;
+            let pyramidOrderId = `SIM_PYR_${Date.now()}`;
+            
             if (process.env.SIMULATION_MODE !== 'true') {
               const conn = await getConnection(rawToken, profile.metaapi_account_id);
               if (openTrade.metaOrderId) {
                 await conn.modifyPosition(openTrade.metaOrderId, action.newSlPrice, openTrade.tpPrice);
                 
+                const spec = SYMBOL_SPECS[brokerSymbol] || { pipSize: 0.01, pipValuePerLot: 10 };
+                const accountInfo = await conn.getAccountInformation();
+                const balance = accountInfo.balance;
+                const chosenRiskPct = profile.risk_multiplier > 0 ? profile.risk_multiplier : 5;
+                const riskAmount = balance * (chosenRiskPct / 100);
+                const stopLossDistPips = Math.abs(context.currentPrice - action.newSlPrice) / spec.pipSize;
+                
+                if (stopLossDistPips > 0) {
+                  newLotSize = (riskAmount / stopLossDistPips) / spec.pipValuePerLot;
+                  newLotSize = parseFloat((Math.min(Math.max(newLotSize, 0.01), 5.0)).toFixed(2));
+                }
+
                 let pyramidOrderResult;
                 if (openTrade.direction === 'BUY') {
-                  pyramidOrderResult = await conn.createMarketBuyOrder(brokerSymbol, openTrade.lots, action.newSlPrice, openTrade.tpPrice, { clientId: 'AI_SNIPER_PYR' });
+                  pyramidOrderResult = await conn.createMarketBuyOrder(brokerSymbol, newLotSize, action.newSlPrice, openTrade.tpPrice, { clientId: 'AI_SNIPER_PYR' });
                 } else {
-                  pyramidOrderResult = await conn.createMarketSellOrder(brokerSymbol, openTrade.lots, action.newSlPrice, openTrade.tpPrice, { clientId: 'AI_SNIPER_PYR' });
+                  pyramidOrderResult = await conn.createMarketSellOrder(brokerSymbol, newLotSize, action.newSlPrice, openTrade.tpPrice, { clientId: 'AI_SNIPER_PYR' });
                 }
-                
-                if (pyramidOrderResult?.orderId) {
-                  db.prepare(`
-                    INSERT INTO bot_trade_states
-                      (user_id, profile_id, bot_id, broker_symbol, direction, entry_price, sl_price, tp_price,
-                       lots, open_time, meta_order_id, t1_hit, highest_price, lowest_price, status)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, 'OPEN')
-                  `).run(profile.user_id, profile.id, botId, brokerSymbol, openTrade.direction, context.currentPrice, action.newSlPrice, openTrade.tpPrice, openTrade.lots, Date.now(), pyramidOrderResult.orderId, context.currentPrice, context.currentPrice);
-                }
+                pyramidOrderId = pyramidOrderResult?.orderId;
               }
             } else {
-                  db.prepare(`
-                    INSERT INTO bot_trade_states
-                      (user_id, profile_id, bot_id, broker_symbol, direction, entry_price, sl_price, tp_price,
-                       lots, open_time, meta_order_id, t1_hit, highest_price, lowest_price, status)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, 'OPEN')
-                  `).run(profile.user_id, profile.id, botId, brokerSymbol, openTrade.direction, context.currentPrice, action.newSlPrice, openTrade.tpPrice, openTrade.lots, Date.now(), `SIM_PYR_${Date.now()}`, context.currentPrice, context.currentPrice);
+               const spec = SYMBOL_SPECS[brokerSymbol] || { pipSize: 0.01, pipValuePerLot: 10 };
+               const stopLossDistPips = Math.abs(context.currentPrice - action.newSlPrice) / spec.pipSize;
+               if (stopLossDistPips > 0) {
+                 const balance = 1000;
+                 const chosenRiskPct = profile.risk_multiplier > 0 ? profile.risk_multiplier : 5;
+                 const riskAmount = balance * (chosenRiskPct / 100);
+                 newLotSize = parseFloat((Math.min(Math.max((riskAmount / stopLossDistPips) / spec.pipValuePerLot, 0.01), 5.0)).toFixed(2));
+               }
             }
-            markT1Hit(openTrade.metaOrderId, action.newSlPrice);
-            console.log(`[BotManager] [${botId}] Profile ${profile.id} PYRAMID executed. SL moved to BE, Position Doubled.`);
+            
+            if (pyramidOrderId) {
+              db.prepare(`
+                INSERT INTO bot_trade_states
+                  (user_id, profile_id, bot_id, broker_symbol, direction, entry_price, sl_price, tp_price,
+                   lots, open_time, meta_order_id, t1_hit, highest_price, lowest_price, status, pyramid_count)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 'OPEN', 0)
+              `).run(profile.user_id, profile.id, botId, brokerSymbol, openTrade.direction, context.currentPrice, action.newSlPrice, openTrade.tpPrice, newLotSize, Date.now(), pyramidOrderId, context.currentPrice, context.currentPrice);
+              
+              db.prepare(`UPDATE bot_trade_states SET pyramid_count = pyramid_count + 1 WHERE meta_order_id = ? AND status = 'OPEN'`).run(openTrade.metaOrderId);
+            }
+
+            console.log(`[BotManager] [${botId}] Profile ${profile.id} PYRAMID executed. Pos size: ${newLotSize}. Total Pyramids: ${(openTrade.pyramidCount || 0) + 1}`);
           } catch (e: any) {
             console.error(`[BotManager] Pyramid failed for Profile ${profile.id}:`, e.message);
             clearSharedConnection(rawToken, profile.metaapi_account_id);

@@ -1,6 +1,7 @@
 import { MarketData, TrapSignal } from '../src/types';
 import { executeTradeForProfile } from './metaApiHandler';
 import { getProviderForProfile, toBrokerSymbol, CandleProvider } from './candleProvider';
+import { OPTIMAL_CONFIGS } from './bots/SniperSystemAI';
 
 // ── Shared pip size registry (single source of truth) ────────────────────────
 export const ASSET_MAP: Record<string, { symbol: string; name: string; pipSize: number }> = {
@@ -89,8 +90,8 @@ export class ProfileStore {
   sessionStartTimes: Record<string, number> = {};
   yahooBatchIndex = 0;
 
-  private lastM15FetchTime: Record<string, number> = {};
-  private cachedM15Candles: Record<string, any[]> = {};
+  private lastM1FetchTime: Record<string, number> = {};
+  private cachedM1Candles: Record<string, any[]> = {};
 
   constructor(profileId: number) {
     this.profileId = profileId;
@@ -386,37 +387,25 @@ export class ProfileStore {
     const asianRangePips = (market.asianHigh - market.asianLow) / market.pipSize;
     if (asianRangePips > BOX_MAX) return;
 
-    let m15Candles;
+    let m1Candles;
     try {
       const nowMs = now.getTime();
-      const cached = this.cachedM15Candles[symbol];
-      const lastFetch = this.lastM15FetchTime[symbol] || 0;
+      const cached = this.cachedM1Candles[symbol];
+      const lastFetch = this.lastM1FetchTime[symbol] || 0;
       
-      // Cache valid for 3 minutes (180_000 ms)
-      if (cached && (nowMs - lastFetch) < 180_000) {
-         m15Candles = cached;
+      // Cache valid for 30 seconds
+      if (cached && (nowMs - lastFetch) < 30_000) {
+         m1Candles = cached;
       } else {
          const provider = getProviderForProfile(this.profileId);
-         m15Candles = await provider.get15MinuteCandles(symbol, toBrokerSymbol(symbol), 5);
-         this.cachedM15Candles[symbol] = m15Candles;
-         this.lastM15FetchTime[symbol] = nowMs;
+         m1Candles = await provider.getMinuteCandles(symbol, toBrokerSymbol(symbol), 60);
+         this.cachedM1Candles[symbol] = m1Candles;
+         this.lastM1FetchTime[symbol] = nowMs;
       }
     } catch {
       return;
     }
-    if (!m15Candles || m15Candles.length < 3) return;
-
-    const triggerCandle = m15Candles[m15Candles.length - 2];
-    if (!triggerCandle) return;
-
-    const bodySize = Math.abs(triggerCandle.close - triggerCandle.open);
-    const upperWick = triggerCandle.high - Math.max(triggerCandle.open, triggerCandle.close);
-    const lowerWick = Math.min(triggerCandle.open, triggerCandle.close) - triggerCandle.low;
-    const candleRange = triggerCandle.high - triggerCandle.low;
-    if (candleRange === 0) return;
-    
-    const pipsAboveAsian = (triggerCandle.high - market.asianHigh) / market.pipSize;
-    const pipsBelowAsian = (market.asianLow - triggerCandle.low) / market.pipSize;
+    if (!m1Candles || m1Candles.length < 5) return;
 
     let direction: 'BUY'|'SELL' | null = null;
     let patternDetected = '';
@@ -424,32 +413,88 @@ export class ProfileStore {
     let levelType: TrapSignal['levelType'] = 'HOS';
     let levelPrice = market.currentPrice;
 
-    if (pipsAboveAsian >= TRAP_DEPTH_MIN) {
-       if (triggerCandle.close < triggerCandle.open) {
-          const engulfRatio = bodySize / candleRange;
-          if (engulfRatio > 0.4 || upperWick > bodySize * 2) {
-             direction = 'SELL';
-             patternDetected = 'Holy Grail Aggressive High Trap';
-             stopLossDistPips = ((triggerCandle.high - triggerCandle.close) / market.pipSize) + spread + 2.0;
-             levelType = 'HOD';
-             levelPrice = market.asianHigh;
-          }
+    // Run the M1 State Machine over the fetched candles
+    const config = OPTIMAL_CONFIGS[toBrokerSymbol(symbol)] || { m1Pullback: 8, m1SlBuffer: 5 };
+    const pullbackTarget = config.m1Pullback || 8;
+    const slBufferPips = config.m1SlBuffer || 5;
+
+    let trapState = 0; 
+    let h1 = -Infinity, l1 = Infinity;
+    let h2 = -Infinity, l2 = Infinity;
+    let trapDirection: 'BUY'|'SELL'|null = null;
+
+    let triggerCandle = null;
+
+    for (const c of m1Candles) {
+       const pipsAboveAsian = (c.high - market.asianHigh) / market.pipSize;
+       const pipsBelowAsian = (market.asianLow - c.low) / market.pipSize;
+
+       if (trapState === 0) {
+          if (pipsAboveAsian >= TRAP_DEPTH_MIN) { trapState = 1; trapDirection = 'SELL'; h1 = c.high; l1 = c.low; }
+          else if (pipsBelowAsian >= TRAP_DEPTH_MIN) { trapState = 1; trapDirection = 'BUY'; l1 = c.low; h1 = c.high; }
+          continue;
        }
-    } else if (pipsBelowAsian >= TRAP_DEPTH_MIN) {
-       if (triggerCandle.close > triggerCandle.open) {
-          const engulfRatio = bodySize / candleRange;
-          if (engulfRatio > 0.4 || lowerWick > bodySize * 2) {
-             direction = 'BUY';
-             patternDetected = 'Holy Grail Aggressive Low Trap';
-             stopLossDistPips = ((triggerCandle.close - triggerCandle.low) / market.pipSize) + spread + 2.0;
-             levelType = 'LOD';
-             levelPrice = market.asianLow;
+
+       if (trapDirection === 'SELL') {
+          if (trapState === 1) {
+             if (c.high > h1) { h1 = c.high; l1 = c.low; } 
+             else if ((h1 - c.low) / market.pipSize >= pullbackTarget) { trapState = 2; h2 = -Infinity; } 
+          } else if (trapState === 2) {
+             if (c.high > h1) { trapState = 1; h1 = c.high; l1 = c.low; } 
+             else if (c.high > h2) { h2 = c.high; } 
+             
+             const bodySize = Math.abs(c.close - c.open);
+             const range = c.high - c.low;
+             if (h2 !== -Infinity && (h1 - h2) / market.pipSize <= Math.max(5.0, pullbackTarget*0.8) && c.close < c.open && range > 0 && bodySize/range > 0.6) {
+                const slPrice = Math.max(h1, h2) + (slBufferPips * market.pipSize);
+                const slPips = Math.abs(c.close - slPrice) / market.pipSize;
+                if (slPips >= 3 && slPips <= 40) {
+                   direction = 'SELL';
+                   patternDetected = 'M1 Double Top Holy Grail';
+                   stopLossDistPips = slPips;
+                   levelType = 'HOD';
+                   levelPrice = market.asianHigh;
+                   triggerCandle = c;
+                   trapState = 0; // Triggered
+                }
+             }
+          }
+       } else if (trapDirection === 'BUY') {
+          if (trapState === 1) {
+             if (c.low < l1) { l1 = c.low; h1 = c.high; } 
+             else if ((c.high - l1) / market.pipSize >= pullbackTarget) { trapState = 2; l2 = Infinity; } 
+          } else if (trapState === 2) {
+             if (c.low < l1) { trapState = 1; l1 = c.low; h1 = c.high; } 
+             else if (c.low < l2) { l2 = c.low; } 
+             
+             const bodySize = Math.abs(c.close - c.open);
+             const range = c.high - c.low;
+             if (l2 !== Infinity && (l2 - l1) / market.pipSize <= Math.max(5.0, pullbackTarget*0.8) && c.close > c.open && range > 0 && bodySize/range > 0.6) {
+                const slPrice = Math.min(l1, l2) - (slBufferPips * market.pipSize);
+                const slPips = Math.abs(c.close - slPrice) / market.pipSize;
+                if (slPips >= 3 && slPips <= 40) {
+                   direction = 'BUY';
+                   patternDetected = 'M1 Double Bottom Holy Grail';
+                   stopLossDistPips = slPips;
+                   levelType = 'LOD';
+                   levelPrice = market.asianLow;
+                   triggerCandle = c;
+                   trapState = 0; // Triggered
+                }
+             }
           }
        }
     }
 
-    if (!direction) return;
-    if (stopLossDistPips > 35) return;
+    if (!direction || !triggerCandle) return;
+    
+    // Ensure the trigger candle is the LAST closed candle or very recent
+    const lastCandle = m1Candles[m1Candles.length - 1];
+    if (triggerCandle.date !== lastCandle.date) {
+        // If the signal was from 5 minutes ago and we haven't executed, it's dead
+        const signalTime = new Date(triggerCandle.date).getTime();
+        if (now.getTime() - signalTime > 120_000) return;
+    }
 
     console.log(`[ProfileStore ${this.profileId}] TRAP TRIGGER ${symbol}: ${patternDetected} (dir: ${direction}, lvl: ${levelType}, price: ${levelPrice})`);
 

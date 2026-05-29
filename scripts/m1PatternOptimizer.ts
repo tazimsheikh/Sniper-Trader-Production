@@ -1,0 +1,230 @@
+import fs from 'fs';
+import readline from 'readline';
+import path from 'path';
+
+const START_DATE = new Date('2021-05-01T00:00:00Z').getTime();
+const END_DATE = new Date('2026-05-01T23:59:59Z').getTime();
+
+interface Candle { time: number; dateStr: string; open: number; high: number; low: number; close: number; }
+interface Trade {
+  id: string; direction: 'BUY' | 'SELL'; entryTime: number; entryPrice: number;
+  slPrice: number; tpPrice: number; lots: number; lotsRemaining: number;
+  status: 'OPEN' | 'CLOSED_WON' | 'CLOSED_LOST' | 'CLOSED_TIME';
+  highestProfitPips: number;
+  pyramidAdded: boolean;
+  totalProfit: number;
+}
+
+async function loadData(filePath: string): Promise<Candle[]> {
+  const globalM1Candles: Candle[] = [];
+  if (!fs.existsSync(filePath)) return [];
+  const fileStream = fs.createReadStream(filePath);
+  const rl = readline.createInterface({ input: fileStream, crlfDelay: Infinity });
+  let isFirstLine = true;
+  for await (const line of rl) {
+    if (isFirstLine) { isFirstLine = false; continue; }
+    const parts = line.split('\t');
+    if (parts.length < 6) continue;
+    const timestamp = new Date(`${parts[0].replace(/\./g, '-')}T${parts[1]}Z`).getTime();
+    if (timestamp < START_DATE || timestamp > END_DATE) continue;
+    globalM1Candles.push({
+      time: timestamp, dateStr: new Date(timestamp).toISOString(),
+      open: parseFloat(parts[2]), high: parseFloat(parts[3]), low: parseFloat(parts[4]), close: parseFloat(parts[5])
+    });
+  }
+  return globalM1Candles;
+}
+
+function runM1Simulation(globalM1Candles: Candle[], isGold: boolean, isJpy: boolean) {
+  const PIP_SIZE = isJpy ? 0.01 : (isGold ? 0.1 : 0.0001);
+  const PIP_VALUE = 10;
+  const SPREAD_PIPS = isJpy ? 1.5 : (isGold ? 2.5 : 1.0); 
+
+  let BALANCE = 100.0;
+  let peakBalance = BALANCE;
+  let openTrades: Trade[] = [];
+  let closedTrades: Trade[] = [];
+
+  let asianHigh = -Infinity, asianLow = Infinity;
+  let currentDayStr = '';
+  let hasTradedToday = false;
+
+  // Pattern State
+  let trapState = 0; 
+  let h1 = -Infinity, l1 = Infinity;
+  let h2 = -Infinity, l2 = Infinity;
+  let trapDirection: 'BUY'|'SELL'|null = null;
+
+  for (let cIdx = 0; cIdx < globalM1Candles.length; cIdx++) {
+    const c = globalM1Candles[cIdx];
+    const dt = new Date(c.time);
+    const dPart = c.dateStr.split('T')[0];
+    const nyHour = dt.getUTCHours() - 4; 
+    const normalizedNyHour = nyHour < 0 ? nyHour + 24 : nyHour;
+
+    if (dPart !== currentDayStr) {
+      currentDayStr = dPart;
+      asianHigh = -Infinity; asianLow = Infinity;
+      hasTradedToday = false;
+      trapState = 0;
+      trapDirection = null;
+    }
+    
+    if (normalizedNyHour >= 20 || normalizedNyHour < 2) {
+      asianHigh = Math.max(asianHigh, c.high);
+      asianLow = Math.min(asianLow, c.low);
+    }
+
+    // Trade Management (Pyramiding + 3Hr Bailout)
+    for (const trade of openTrades) {
+      if (trade.status !== 'OPEN') continue;
+      
+      const spreadVal = SPREAD_PIPS * PIP_SIZE;
+      const slippageVal = 0.5 * PIP_SIZE;
+      const currentPips = trade.direction === 'BUY' ? (c.high - trade.entryPrice) / PIP_SIZE : (trade.entryPrice - c.low) / PIP_SIZE;
+      trade.highestProfitPips = Math.max(trade.highestProfitPips, currentPips);
+
+      const initialSlDistancePips = Math.abs(trade.entryPrice - trade.slPrice) / PIP_SIZE;
+      if (!trade.pyramidAdded && currentPips >= initialSlDistancePips && initialSlDistancePips > 0) {
+         trade.pyramidAdded = true;
+         trade.slPrice = trade.direction === 'BUY' ? trade.entryPrice + (2*PIP_SIZE) : trade.entryPrice - (2*PIP_SIZE);
+         trade.lotsRemaining *= 2; 
+      }
+
+      if ((c.time - trade.entryTime) / 3600000 >= 3.0) {
+         const closePrice = trade.direction === 'BUY' ? c.close - spreadVal : c.close + spreadVal;
+         const pips = trade.direction === 'BUY' ? (closePrice - trade.entryPrice) / PIP_SIZE : (trade.entryPrice - closePrice) / PIP_SIZE;
+         trade.totalProfit += (pips * PIP_VALUE * trade.lotsRemaining);
+         trade.status = 'CLOSED_TIME';
+         BALANCE += (pips * PIP_VALUE * trade.lotsRemaining); 
+         peakBalance = Math.max(peakBalance, BALANCE);
+         closedTrades.push(trade);
+         continue;
+      }
+
+      if (trade.direction === 'BUY') {
+        if (c.low <= trade.slPrice) {
+          const lossPips = (trade.slPrice - slippageVal - trade.entryPrice) / PIP_SIZE;
+          trade.totalProfit += (lossPips * PIP_VALUE * trade.lotsRemaining);
+          trade.status = trade.totalProfit >= 0 ? 'CLOSED_WON' : 'CLOSED_LOST';
+          BALANCE += (lossPips * PIP_VALUE * trade.lotsRemaining); 
+          peakBalance = Math.max(peakBalance, BALANCE); closedTrades.push(trade);
+        } else if (c.high >= trade.tpPrice) {
+          const winPips = (trade.tpPrice - trade.entryPrice) / PIP_SIZE;
+          trade.totalProfit += (winPips * PIP_VALUE * trade.lotsRemaining);
+          trade.status = 'CLOSED_WON';
+          BALANCE += (winPips * PIP_VALUE * trade.lotsRemaining); 
+          peakBalance = Math.max(peakBalance, BALANCE); closedTrades.push(trade);
+        }
+      } else {
+        if (c.high + spreadVal >= trade.slPrice) {
+          const lossPips = (trade.entryPrice - (trade.slPrice + slippageVal)) / PIP_SIZE;
+          trade.totalProfit += (lossPips * PIP_VALUE * trade.lotsRemaining);
+          trade.status = trade.totalProfit >= 0 ? 'CLOSED_WON' : 'CLOSED_LOST';
+          BALANCE += (lossPips * PIP_VALUE * trade.lotsRemaining); 
+          peakBalance = Math.max(peakBalance, BALANCE); closedTrades.push(trade);
+        } else if (c.low <= trade.tpPrice) {
+          const winPips = (trade.entryPrice - trade.tpPrice) / PIP_SIZE;
+          trade.totalProfit += (winPips * PIP_VALUE * trade.lotsRemaining);
+          trade.status = 'CLOSED_WON';
+          BALANCE += (winPips * PIP_VALUE * trade.lotsRemaining); 
+          peakBalance = Math.max(peakBalance, BALANCE); closedTrades.push(trade);
+        }
+      }
+    }
+    openTrades = openTrades.filter(t => t.status === 'OPEN');
+
+    if (openTrades.length > 0) continue;
+    if (hasTradedToday) continue;
+
+    // Pattern Detection Logic
+    const isMorning = normalizedNyHour >= 7 && normalizedNyHour < 11;
+    const isAfternoon = normalizedNyHour >= 13 && normalizedNyHour < 15;
+    if (!isMorning && !isAfternoon) { trapState = 0; continue; }
+    if (asianHigh === -Infinity) continue;
+    if ((asianHigh - asianLow) / PIP_SIZE > 30) continue;
+
+    const pipsAboveAsian = (c.high - asianHigh) / PIP_SIZE;
+    const pipsBelowAsian = (asianLow - c.low) / PIP_SIZE;
+
+    // Start tracking if swept > 10 pips
+    if (trapState === 0) {
+       if (pipsAboveAsian >= 10) { trapState = 1; trapDirection = 'SELL'; h1 = c.high; l1 = c.low; }
+       else if (pipsBelowAsian >= 10) { trapState = 1; trapDirection = 'BUY'; l1 = c.low; h1 = c.high; }
+       continue;
+    }
+
+    if (trapDirection === 'SELL') {
+       if (trapState === 1) {
+          if (c.high > h1) { h1 = c.high; l1 = c.low; } // New peak
+          else if ((h1 - c.low) / PIP_SIZE >= 3.0) { trapState = 2; h2 = -Infinity; } // Pulled back 3 pips
+       } else if (trapState === 2) {
+          if (c.high > h1) { trapState = 1; h1 = c.high; l1 = c.low; } // Failed M, made higher high, reset to state 1
+          else if (c.high > h2) { h2 = c.high; } // Building right shoulder
+          
+          // Check for Engulfing entry off the right shoulder
+          const bodySize = Math.abs(c.close - c.open);
+          const range = c.high - c.low;
+          if (h2 !== -Infinity && (h1 - h2) / PIP_SIZE <= 5.0 && c.close < c.open && bodySize/range > 0.6) {
+             const slPrice = Math.max(h1, h2) + (2 * PIP_SIZE);
+             const slPips = Math.abs(c.close - slPrice) / PIP_SIZE;
+             if (slPips >= 3 && slPips <= 20) {
+                const lots = ((BALANCE * 0.05) / slPips) / PIP_VALUE;
+                openTrades.push({ id: `M1_${c.time}`, direction: 'SELL', entryTime: c.time, entryPrice: c.close, slPrice, tpPrice: c.close - (slPips*3*PIP_SIZE), lots, lotsRemaining: lots, status: 'OPEN', highestProfitPips: 0, pyramidAdded: false, totalProfit: 0 });
+                hasTradedToday = true; trapState = 0;
+             }
+          }
+       }
+    } else if (trapDirection === 'BUY') {
+       if (trapState === 1) {
+          if (c.low < l1) { l1 = c.low; h1 = c.high; } // New bottom
+          else if ((c.high - l1) / PIP_SIZE >= 3.0) { trapState = 2; l2 = Infinity; } // Rallied 3 pips
+       } else if (trapState === 2) {
+          if (c.low < l1) { trapState = 1; l1 = c.low; h1 = c.high; } // Failed W, made lower low, reset to state 1
+          else if (c.low < l2) { l2 = c.low; } // Building right shoulder
+          
+          const bodySize = Math.abs(c.close - c.open);
+          const range = c.high - c.low;
+          if (l2 !== Infinity && (l2 - l1) / PIP_SIZE <= 5.0 && c.close > c.open && bodySize/range > 0.6) {
+             const slPrice = Math.min(l1, l2) - (2 * PIP_SIZE);
+             const slPips = Math.abs(c.close - slPrice) / PIP_SIZE;
+             if (slPips >= 3 && slPips <= 20) {
+                const lots = ((BALANCE * 0.05) / slPips) / PIP_VALUE;
+                openTrades.push({ id: `M1_${c.time}`, direction: 'BUY', entryTime: c.time, entryPrice: c.close + SPREAD_PIPS*PIP_SIZE, slPrice, tpPrice: c.close + (slPips*3*PIP_SIZE), lots, lotsRemaining: lots, status: 'OPEN', highestProfitPips: 0, pyramidAdded: false, totalProfit: 0 });
+                hasTradedToday = true; trapState = 0;
+             }
+          }
+       }
+    }
+  }
+
+  const wins = closedTrades.filter(t => t.totalProfit > 0).length;
+  const losses = closedTrades.filter(t => t.totalProfit <= 0).length;
+  const wr = wins / (wins + losses || 1);
+  return { trades: wins+losses, wr: wr*100, ret: ((BALANCE - 100)/100)*100 };
+}
+
+async function runAll() {
+  const dataDir = path.join(process.cwd(), 'data');
+  const files = fs.readdirSync(dataDir).filter(f => f.endsWith('.csv') && f.includes('_M1_'));
+  
+  let totalTrades = 0, avgWinRate = 0, portfolioReturn = 0;
+  console.log(`\n========================================`);
+  console.log(`TESTING M1 MICRO-STRUCTURE ENTRIES`);
+  console.log(`========================================`);
+
+  for (const file of files) {
+    const sym = file.split('_')[0];
+    const isGold = sym === 'XAUUSD' || sym === 'GC=F';
+    const isJpy = sym.includes('JPY');
+    const data = await loadData(path.join(dataDir, file));
+    if (data.length === 0) continue;
+    const res = runM1Simulation(data, isGold, isJpy);
+    console.log(`[${sym}] Trades: ${res.trades} | WR: ${res.wr.toFixed(1)}% | Return: +${res.ret.toFixed(1)}%`);
+    totalTrades += res.trades; avgWinRate += res.wr; portfolioReturn += res.ret;
+    data.length = 0;
+  }
+  console.log(`\n>>> 17-PAIR PORTFOLIO [M1 ENTRY] <<<`);
+  console.log(`Total Trades: ${totalTrades} | Avg WR: ${(avgWinRate/files.length).toFixed(1)}% | Growth: +${portfolioReturn.toFixed(1)}%`);
+}
+runAll();
