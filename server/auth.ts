@@ -1,13 +1,20 @@
 import { Router, Request, Response, NextFunction } from 'express';
+
+import { getMetaApiSyncStatus } from './candleProvider.js';
 import bcrypt from 'bcrypt';
 import * as jwtPkg from 'jsonwebtoken';
+import fs from 'fs';
+import crypto from 'crypto';
 import rateLimit from 'express-rate-limit';
 import db from './db';
 // import { metaApiSyncStatus } from './candleProvider';
+import { OAuth2Client } from 'google-auth-library';
 import { encrypt, decrypt, isEncrypted } from './crypto';
-import { ALL_BOT_CONFIGS, BOT_REGISTRY } from './botManager';
+import { ALL_BOT_CONFIGS, BOT_REGISTRY, getProfileActiveBots, setProfileActiveBots, deleteProfileBotInstances } from './botManager';
 import { sendOtpEmail } from './email';
-import { verifyMetaApiAccount } from './metaApiHandler';
+import { deleteProfileStore } from './marketStore';
+import { deleteProfileTradeState } from './tradeManager';
+import { verifyMetaApiAccount, verifyMetaApiConnection, getSharedConnection, getProfileTradeHistory, clearSharedConnection } from './metaApiHandler.js';
 
 const jwtLib = jwtPkg as any;
 
@@ -18,18 +25,11 @@ const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {
   throw new Error('FATAL: JWT_SECRET environment variable is not set. Server cannot start.');
 }
-
-const VALID_MULTIPLIERS = [1, 2, 4, 8];
-
 export const authRouter = Router();
 
 // ==========================================
 // 6. METAAPI STATUS
 // ==========================================
-
-authRouter.get('/metaapi/status', (_req: Request, res: Response) => {
-  res.json({ success: true, status: 'IDLE' });
-});
 
 export interface AuthRequest extends Request {
   user?: any;
@@ -94,7 +94,7 @@ authRouter.post('/register', authLimiter, async (req, res) => {
       return res.status(400).json({ success: false, error: 'Invalid Meta API Token or Account ID. Connection rejected.' });
     }
 
-    const existingUser = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
+    const existingUser = await db.prepare('SELECT id FROM users WHERE email = ?').get(email);
     if (existingUser) {
       return res.status(400).json({ success: false, error: 'An account with this email already exists.' });
     }
@@ -102,14 +102,14 @@ authRouter.post('/register', authLimiter, async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, 12);
 
     // Register user directly (bypassing OTP)
-    const result = db.prepare(`
+    const result = await db.prepare(`
       INSERT INTO users (email, password_hash, metaapi_token, metaapi_account_id) 
       VALUES (?, ?, ?, ?)
     `).run(email, hashedPassword, encrypt(metaapiToken.trim()), encrypt(accountId.trim()));
 
     const userId = result.lastInsertRowid;
     
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO trading_profiles (user_id, profile_name, metaapi_account_id, automation_active)
       VALUES (?, ?, ?, ?)
     `).run(userId, 'Default Profile', encrypt(accountId.trim()), 1);
@@ -117,10 +117,7 @@ authRouter.post('/register', authLimiter, async (req, res) => {
     const jwtToken = (jwtLib.default || jwtLib).sign({ id: userId, email, role: 'user' }, JWT_SECRET, { expiresIn: '7d' });
     res.cookie('auth_token', jwtToken, COOKIE_OPTIONS);
 
-    try {
-      const { refreshGlobalProvider } = require('./candleProvider');
-      refreshGlobalProvider();
-    } catch(e) {}
+    
 
     res.json({ success: true, user: { id: userId, email, role: 'user', tier: 'Standard' } });
   } catch (err: any) {
@@ -138,7 +135,7 @@ authRouter.post('/register/confirm', authLimiter, async (req, res) => {
       return res.status(400).json({ success: false, error: 'Email and verification code are required.' });
     }
 
-    const otpRow = db.prepare(
+    const otpRow = await db.prepare(
       "SELECT * FROM otps WHERE email = ? AND otp_code = ? AND purpose = 'register'"
     ).get(email, otp) as any;
 
@@ -151,7 +148,7 @@ authRouter.post('/register/confirm', authLimiter, async (req, res) => {
     }
 
     // Double-check user doesn't already exist (race condition)
-    const existingUser = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
+    const existingUser = await db.prepare('SELECT id FROM users WHERE email = ?').get(email);
     if (existingUser) {
       return res.status(400).json({ success: false, error: 'An account with this email already exists.' });
     }
@@ -166,10 +163,10 @@ authRouter.post('/register/confirm', authLimiter, async (req, res) => {
     }
 
     const tokenToSave = parsedPayload.metaapiToken ? (isEncrypted(parsedPayload.metaapiToken) ? parsedPayload.metaapiToken : encrypt(parsedPayload.metaapiToken)) : null;
-    const result = db.prepare('INSERT INTO users (email, password_hash, metaapi_token) VALUES (?, ?, ?)').run(email, parsedPayload.passwordHash, tokenToSave);
+    const result = await db.prepare('INSERT INTO users (email, password_hash, metaapi_token) VALUES (?, ?, ?)').run(email, parsedPayload.passwordHash, tokenToSave);
 
     // Delete used OTP
-    db.prepare('DELETE FROM otps WHERE id = ?').run(otpRow.id);
+    await db.prepare('DELETE FROM otps WHERE id = ?').run(otpRow.id);
 
     const token = (jwtLib.default || jwtLib).sign(
       { id: result.lastInsertRowid, email },
@@ -196,13 +193,13 @@ authRouter.post('/login', authLimiter, async (req, res) => {
       return res.status(400).json({ success: false, error: 'Invalid Meta API Token or Account ID length.' });
     }
 
-    const { verifyMetaApiAccount } = require('./metaApiHandler');
+    
     const isValidToken = await verifyMetaApiAccount(metaapiToken.trim(), accountId.trim());
     if (!isValidToken) {
       return res.status(400).json({ success: false, error: 'Invalid Meta API Token or Account ID. Connection rejected.' });
     }
 
-    const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email) as any;
+    const user = await db.prepare('SELECT * FROM users WHERE email = ?').get(email) as any;
 
     const dummyHash = '$2b$12$abcdefghijklmnopqrstuuABCDEFGHIJKLMNOPQRSTUVWXYZ012345';
     const hashToCompare = user ? user.password_hash : dummyHash;
@@ -215,14 +212,14 @@ authRouter.post('/login', authLimiter, async (req, res) => {
     const encryptedToken = encrypt(metaapiToken.trim());
     
     // Update user's token directly and log in
-    db.prepare('UPDATE users SET metaapi_token = ? WHERE id = ?').run(encryptedToken, user.id);
+    await db.prepare('UPDATE users SET metaapi_token = ? WHERE id = ?').run(encryptedToken, user.id);
 
     // Sync account ID to default profile
-    const profile = db.prepare('SELECT id FROM trading_profiles WHERE user_id = ? LIMIT 1').get(user.id) as any;
+    const profile = await db.prepare('SELECT id FROM trading_profiles WHERE user_id = ? LIMIT 1').get(user.id) as any;
     if (profile) {
-      db.prepare('UPDATE trading_profiles SET metaapi_account_id = ?, automation_active = 1 WHERE id = ?').run(encrypt(accountId.trim()), profile.id);
+      await db.prepare('UPDATE trading_profiles SET metaapi_account_id = ?, automation_active = 1 WHERE id = ?').run(encrypt(accountId.trim()), profile.id);
     } else {
-      db.prepare(`
+      await db.prepare(`
         INSERT INTO trading_profiles (user_id, profile_name, metaapi_account_id, automation_active)
         VALUES (?, ?, ?, ?)
       `).run(user.id, 'Default Profile', encrypt(accountId.trim()), 1);
@@ -236,16 +233,78 @@ authRouter.post('/login', authLimiter, async (req, res) => {
 
     res.cookie('auth_token', token, COOKIE_OPTIONS);
     
-    try {
-      const { refreshGlobalProvider } = require('./candleProvider');
-      refreshGlobalProvider();
-    } catch(e) {}
+    
 
     const { password_hash: _omit, ...safeUser } = user;
     res.json({ success: true, requiresOtp: false, user: safeUser });
   } catch (err: any) {
     console.error('[Auth] Login error:', err.message);
     res.status(500).json({ success: false, error: 'Login failed. Please try again.' });
+  }
+});
+
+// ── POST /api/auth/google (Google OAuth Login) ────────────────────────────────
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID || 'dummy_client_id');
+
+authRouter.post('/google', async (req, res) => {
+  try {
+    const { credential, metaapiToken, accountId } = req.body;
+    if (!credential) return res.status(400).json({ success: false, error: 'Google credential missing.' });
+
+    // Verify Google Token
+    const ticket = await googleClient.verifyIdToken({
+      idToken: credential,
+      audience: process.env.GOOGLE_CLIENT_ID || 'dummy_client_id', 
+    });
+    const payload = ticket.getPayload();
+    if (!payload || !payload.email) {
+      return res.status(400).json({ success: false, error: 'Invalid Google token.' });
+    }
+
+    const email = payload.email.toLowerCase();
+
+    // Check if user exists
+    let user = await db.prepare('SELECT * FROM users WHERE email = ?').get(email) as any;
+
+    if (!user) {
+      // Auto-register via Google
+      const dummyHash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 12);
+      const encryptedToken = metaapiToken ? encrypt(metaapiToken.trim()) : null;
+      const result = await db.prepare('INSERT INTO users (email, password_hash, metaapi_token) VALUES (?, ?, ?)').run(email, dummyHash, encryptedToken);
+      
+      user = await db.prepare('SELECT * FROM users WHERE id = ?').get(result.lastInsertRowid) as any;
+    } else if (metaapiToken) {
+      // Update token if provided during Google Login
+      const encryptedToken = encrypt(metaapiToken.trim());
+      await db.prepare('UPDATE users SET metaapi_token = ? WHERE id = ?').run(encryptedToken, user.id);
+    }
+
+    // Profile handling
+    if (accountId) {
+      const profile = await db.prepare('SELECT id FROM trading_profiles WHERE user_id = ? LIMIT 1').get(user.id) as any;
+      if (profile) {
+         await db.prepare('UPDATE trading_profiles SET metaapi_account_id = ?, automation_active = 1 WHERE id = ?').run(encrypt(accountId.trim()), profile.id);
+      } else {
+         await db.prepare(`
+          INSERT INTO trading_profiles (user_id, profile_name, metaapi_account_id, automation_active)
+          VALUES (?, ?, ?, ?)
+         `).run(user.id, 'Default Profile', encrypt(accountId.trim()), 1);
+      }
+    }
+
+    // Sign session JWT
+    const token = (jwtLib.default || jwtLib).sign(
+      { id: user.id, email: user.email },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    res.cookie('auth_token', token, COOKIE_OPTIONS);
+    const { password_hash: _omit, ...safeUser } = user;
+    res.json({ success: true, user: safeUser });
+  } catch (e: any) {
+    console.error('[Auth] Google login error:', e.message);
+    res.status(500).json({ success: false, error: 'Google login failed. Are your Client IDs configured?' });
   }
 });
 
@@ -258,7 +317,7 @@ authRouter.post('/login/confirm', authLimiter, async (req, res) => {
       return res.status(400).json({ success: false, error: 'Email and verification code are required.' });
     }
 
-    const otpRow = db.prepare(
+    const otpRow = await db.prepare(
       "SELECT * FROM otps WHERE email = ? AND otp_code = ? AND purpose = 'login'"
     ).get(email, otp) as any;
 
@@ -270,7 +329,7 @@ authRouter.post('/login/confirm', authLimiter, async (req, res) => {
       return res.status(400).json({ success: false, error: 'Verification code has expired.' });
     }
 
-    const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email) as any;
+    const user = await db.prepare('SELECT * FROM users WHERE email = ?').get(email) as any;
     if (!user) {
       return res.status(404).json({ success: false, error: 'User not found.' });
     }
@@ -281,16 +340,13 @@ authRouter.post('/login/confirm', authLimiter, async (req, res) => {
       parsedPayload = JSON.parse(otpRow.payload);
       if (parsedPayload.metaapiToken) {
         const tokenToSave = isEncrypted(parsedPayload.metaapiToken) ? parsedPayload.metaapiToken : encrypt(parsedPayload.metaapiToken);
-        db.prepare('UPDATE users SET metaapi_token = ? WHERE id = ?').run(tokenToSave, user.id);
-        try {
-          const { refreshGlobalProvider } = require('./candleProvider');
-          refreshGlobalProvider();
-        } catch(e) {}
+        await db.prepare('UPDATE users SET metaapi_token = ? WHERE id = ?').run(tokenToSave, user.id);
+        
       }
     } catch(e) {}
 
     // Delete used OTP
-    db.prepare('DELETE FROM otps WHERE id = ?').run(otpRow.id);
+    await db.prepare('DELETE FROM otps WHERE id = ?').run(otpRow.id);
 
     const token = (jwtLib.default || jwtLib).sign(
       { id: user.id, email: user.email },
@@ -314,8 +370,8 @@ authRouter.post('/logout', (req, res) => {
 });
 
 // ── GET /me ───────────────────────────────────────────────────────────────────
-authRouter.get('/me', requireAuth, (req: AuthRequest, res) => {
-  const user = db.prepare(
+authRouter.get('/me', requireAuth, async (req: AuthRequest, res) => {
+  const user = await db.prepare(
     'SELECT id, email, metaapi_account_id, risk_multiplier, automation_active, metaapi_token FROM users WHERE id = ?'
   ).get(req.user.id) as any;
 
@@ -327,22 +383,39 @@ authRouter.get('/me', requireAuth, (req: AuthRequest, res) => {
   res.json({ success: true, user: { ...(user as any), hasMetaApiToken } });
 });
 
-authRouter.get('/metaapi/status', requireAuth, (req, res) => {
+authRouter.get('/metaapi/status', requireAuth, async (req: AuthRequest, res) => {
   try {
-    const { getMetaApiSyncStatus } = require('./candleProvider');
-    res.json({ success: true, status: getMetaApiSyncStatus() || 'offline' });
+    const user = await db.prepare('SELECT metaapi_token, metaapi_account_id FROM users WHERE id = ?').get(req.user.id) as any;
+    const profile = await db.prepare('SELECT metaapi_account_id FROM trading_profiles WHERE user_id = ? ORDER BY id ASC LIMIT 1').get(req.user.id) as any;
+    
+    const activeAccountId = profile?.metaapi_account_id || user?.metaapi_account_id;
+
+    if (user?.metaapi_token && activeAccountId) {
+      const { getMetaApiConnectionState, getSharedConnection } = await import('./metaApiHandler.js');
+      const token = isEncrypted(user.metaapi_token) ? decrypt(user.metaapi_token) : user.metaapi_token;
+      
+      let status = getMetaApiConnectionState(token, activeAccountId);
+      if (status === 'offline') {
+         // Kickstart background sync if the price poller hasn't started it yet (e.g., during Gap Time)
+         getSharedConnection(token, activeAccountId, true).catch(() => {});
+         status = 'syncing'; // Set status to syncing immediately for the UI
+      }
+      
+      res.json({ success: true, status });
+    } else {
+      res.json({ success: true, status: 'offline' });
+    }
   } catch (err) {
     res.json({ success: true, status: 'offline' });
   }
 });
 
-import { verifyMetaApiConnection, getProfileTradeHistory, clearSharedConnection } from './metaApiHandler.js';
-import { getProfileActiveBots, setProfileActiveBots } from './botManager';
+
 
 // ── GET /profiles ─────────────────────────────────────────────────────────────
-authRouter.get('/profiles', requireAuth, (req: AuthRequest, res) => {
+authRouter.get('/profiles', requireAuth, async (req: AuthRequest, res) => {
   try {
-    const profiles = db.prepare('SELECT id, profile_name, metaapi_account_id, risk_multiplier, automation_active, ai_sniper_active, diary_reset_time, created_at FROM trading_profiles WHERE user_id = ? ORDER BY created_at ASC').all(req.user.id);
+    const profiles = await db.prepare('SELECT id, profile_name, metaapi_account_id, risk_multiplier, bot_risks, automation_active, ai_sniper_active, diary_reset_time, created_at FROM trading_profiles WHERE user_id = ? ORDER BY created_at ASC').all(req.user.id);
     
     const enrichedProfiles = profiles.map((p: any) => ({
       ...p,
@@ -357,7 +430,7 @@ authRouter.get('/profiles', requireAuth, (req: AuthRequest, res) => {
 });
 
 // ── POST /profiles ────────────────────────────────────────────────────────────
-authRouter.post('/profiles', requireAuth, (req: AuthRequest, res) => {
+authRouter.post('/profiles', requireAuth, async (req: AuthRequest, res) => {
   try {
     const { profile_name, metaapi_account_id } = req.body;
     if (!profile_name || typeof profile_name !== 'string') {
@@ -369,14 +442,11 @@ authRouter.post('/profiles', requireAuth, (req: AuthRequest, res) => {
 
     const cleanAccountId = metaapi_account_id.trim().replace(/[^a-zA-Z0-9\-]/g, '');
 
-    const result = db.prepare(`
+    const result = await db.prepare(`
       INSERT INTO trading_profiles (user_id, profile_name, metaapi_account_id) VALUES (?, ?, ?)
     `).run(req.user.id, profile_name.trim(), encrypt(cleanAccountId));
 
-    try {
-      const { refreshGlobalProvider } = require('./candleProvider');
-      refreshGlobalProvider();
-    } catch(e) {}
+    
 
     res.json({ success: true, profileId: result.lastInsertRowid });
   } catch (err: any) {
@@ -385,12 +455,29 @@ authRouter.post('/profiles', requireAuth, (req: AuthRequest, res) => {
 });
 
 // ── DELETE /profiles/:id ──────────────────────────────────────────────────────
-authRouter.delete('/profiles/:id', requireAuth, (req: AuthRequest, res) => {
+authRouter.delete('/profiles/:id', requireAuth, async (req: AuthRequest, res) => {
   try {
     const profileId = Number(req.params.id);
-    db.prepare('DELETE FROM trading_profiles WHERE id = ? AND user_id = ?').run(profileId, req.user.id);
-    db.prepare('DELETE FROM bot_trade_states WHERE profile_id = ?').run(profileId);
-    db.prepare('DELETE FROM trade_diary WHERE profile_id = ?').run(profileId);
+    
+    const profile = await db.prepare('SELECT metaapi_account_id FROM trading_profiles WHERE id = ? AND user_id = ?').get(profileId, req.user.id) as any;
+    const user = await db.prepare('SELECT metaapi_token FROM users WHERE id = ?').get(req.user.id) as any;
+    
+    if (profile && user && profile.metaapi_account_id && user.metaapi_token) {
+      try {
+        const rawToken = isEncrypted(user.metaapi_token) ? decrypt(user.metaapi_token) : user.metaapi_token;
+        clearSharedConnection(rawToken, profile.metaapi_account_id);
+      } catch (e) {}
+    }
+
+    try {
+      deleteProfileStore(profileId);
+      deleteProfileTradeState(profileId);
+      deleteProfileBotInstances(profileId);
+    } catch (e) {}
+
+    await db.prepare('DELETE FROM trading_profiles WHERE id = ? AND user_id = ?').run(profileId, req.user.id);
+    await db.prepare('DELETE FROM bot_trade_states WHERE profile_id = ?').run(profileId);
+    await db.prepare('DELETE FROM trade_diary WHERE profile_id = ?').run(profileId);
     res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
@@ -401,21 +488,42 @@ authRouter.delete('/profiles/:id', requireAuth, (req: AuthRequest, res) => {
 authRouter.post('/profiles/:id/settings', requireAuth, async (req: AuthRequest, res) => {
   try {
     const profileId = Number(req.params.id);
-    const profile = db.prepare('SELECT id, metaapi_account_id FROM trading_profiles WHERE id = ? AND user_id = ?').get(profileId, req.user.id) as any;
+    const profile = await db.prepare('SELECT id, metaapi_account_id FROM trading_profiles WHERE id = ? AND user_id = ?').get(profileId, req.user.id) as any;
     
     if (!profile) return res.status(404).json({ success: false, error: 'Profile not found.' });
 
-    const user = db.prepare('SELECT metaapi_token FROM users WHERE id = ?').get(req.user.id) as any;
+    const user = await db.prepare('SELECT metaapi_token FROM users WHERE id = ?').get(req.user.id) as any;
     if (!user || !user.metaapi_token) {
       return res.status(400).json({ success: false, error: 'User Meta API Token missing. Please log in again.' });
     }
 
-    const { profile_name, metaapi_account_id, risk_multiplier, automation_active, ai_sniper_active } = req.body;
+    const { profile_name, metaapi_account_id, risk_multiplier, bot_risks, automation_active, ai_sniper_active } = req.body;
 
     const rm = Number(risk_multiplier);
-    const safeMultiplier = VALID_MULTIPLIERS.includes(rm) ? rm : 1;
+    // Allow any risk percentage between 0.1% and 100%
+    const safeMultiplier = (rm >= 0.1 && rm <= 100) ? rm : 1;
     const cleanAccountId = typeof metaapi_account_id === 'string' ? metaapi_account_id.trim().replace(/[^a-zA-Z0-9\-]/g, '') : null;
     const cleanName = typeof profile_name === 'string' && profile_name.trim() !== '' ? profile_name.trim() : 'Unnamed Profile';
+    
+    let parsedBotRisks: Record<string, any> = {};
+    if (typeof bot_risks === 'string') {
+      try {
+        parsedBotRisks = JSON.parse(bot_risks);
+      } catch (e) {
+        return res.status(400).json({ success: false, error: 'Invalid bot_risks format.' });
+      }
+    } else if (typeof bot_risks === 'object' && bot_risks !== null) {
+      parsedBotRisks = bot_risks;
+    }
+    
+    for (const key in parsedBotRisks) {
+      const val = Number(parsedBotRisks[key]);
+      if (isNaN(val) || val < 0.1 || val > 100) {
+        return res.status(400).json({ success: false, error: `Invalid risk value for bot ${key}. Must be between 0.1 and 100.` });
+      }
+      parsedBotRisks[key] = val;
+    }
+    const safeBotRisks = JSON.stringify(parsedBotRisks);
 
     const tokenToUse = isEncrypted(user.metaapi_token) ? decrypt(user.metaapi_token) : user.metaapi_token;
 
@@ -433,7 +541,8 @@ authRouter.post('/profiles/:id/settings', requireAuth, async (req: AuthRequest, 
 
     // Clean up old connection if account ID changed
     if (profile.metaapi_account_id) {
-      if (cleanAccountId !== profile.metaapi_account_id) {
+      const storedAccountId = profile.metaapi_account_id ? (isEncrypted(profile.metaapi_account_id) ? decrypt(profile.metaapi_account_id) : profile.metaapi_account_id) : null;
+      if (cleanAccountId && cleanAccountId !== storedAccountId) {
         try {
           clearSharedConnection(tokenToUse, profile.metaapi_account_id);
           console.log(`[Auth] Cleared old MetaAPI connection for profile ${profileId} due to account ID update.`);
@@ -443,16 +552,13 @@ authRouter.post('/profiles/:id/settings', requireAuth, async (req: AuthRequest, 
       }
     }
 
-    db.prepare(`
+    await db.prepare(`
       UPDATE trading_profiles
-      SET profile_name = ?, metaapi_account_id = ?, risk_multiplier = ?, automation_active = ?, ai_sniper_active = ?
+      SET profile_name = ?, metaapi_account_id = ?, risk_multiplier = ?, bot_risks = ?, automation_active = ?, ai_sniper_active = ?
       WHERE id = ? AND user_id = ?
-    `).run(cleanName, cleanAccountId || null, safeMultiplier, automation_active ? 1 : 0, ai_sniper_active ? 1 : 0, profileId, req.user.id);
+    `).run(cleanName, cleanAccountId ? encrypt(cleanAccountId) : null, safeMultiplier, safeBotRisks, automation_active ? 1 : 0, ai_sniper_active ? 1 : 0, profileId, req.user.id);
 
-    try {
-      const { refreshGlobalProvider } = require('./candleProvider');
-      refreshGlobalProvider();
-    } catch(e) {}
+    
 
     res.json({ success: true, message: 'Settings saved and connection verified.' });
   } catch (err: any) {
@@ -462,14 +568,14 @@ authRouter.post('/profiles/:id/settings', requireAuth, async (req: AuthRequest, 
 });
 
 // ── GET /profiles/:id/bots ────────────────────────────────────────────────────
-authRouter.get('/profiles/:id/bots', requireAuth, (req: AuthRequest, res: Response) => {
+authRouter.get('/profiles/:id/bots', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const profileId = Number(req.params.id);
     // Verify ownership
-    const profile = db.prepare('SELECT id FROM trading_profiles WHERE id = ? AND user_id = ?').get(profileId, req.user.id);
+    const profile = await db.prepare('SELECT id FROM trading_profiles WHERE id = ? AND user_id = ?').get(profileId, req.user.id);
     if (!profile) return res.status(404).json({ success: false, error: 'Profile not found.' });
 
-    const activeBotIds: string[] = getProfileActiveBots(profileId);
+    const activeBotIds: string[] = await getProfileActiveBots(profileId);
     console.log('[Auth] Fetch bots: ALL_BOT_CONFIGS length =', ALL_BOT_CONFIGS?.length);
     const bots = (ALL_BOT_CONFIGS || []).map((cfg: any) => ({
       ...cfg,
@@ -482,10 +588,10 @@ authRouter.get('/profiles/:id/bots', requireAuth, (req: AuthRequest, res: Respon
 });
 
 // ── POST /profiles/:id/bots/toggle ────────────────────────────────────────────
-authRouter.post('/profiles/:id/bots/toggle', requireAuth, (req: AuthRequest, res: Response) => {
+authRouter.post('/profiles/:id/bots/toggle', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const profileId = Number(req.params.id);
-    const profile = db.prepare('SELECT id FROM trading_profiles WHERE id = ? AND user_id = ?').get(profileId, req.user.id);
+    const profile = await db.prepare('SELECT id FROM trading_profiles WHERE id = ? AND user_id = ?').get(profileId, req.user.id);
     if (!profile) return res.status(404).json({ success: false, error: 'Profile not found.' });
 
     const { botId, active } = req.body;
@@ -496,12 +602,12 @@ authRouter.post('/profiles/:id/bots/toggle', requireAuth, (req: AuthRequest, res
       return res.status(400).json({ success: false, error: `Unknown bot: ${botId}` });
     }
 
-    const current: string[] = getProfileActiveBots(profileId);
+    const current: string[] = await getProfileActiveBots(profileId);
     const updated = active
       ? (current.includes(botId) ? current : [...current, botId])
       : current.filter((id: string) => id !== botId);
     
-    setProfileActiveBots(profileId, updated);
+    await setProfileActiveBots(profileId, updated);
     res.json({ success: true, activeBots: updated });
   } catch (e: any) {
     res.status(500).json({ success: false, error: e.message });
@@ -512,7 +618,7 @@ authRouter.post('/profiles/:id/bots/toggle', requireAuth, (req: AuthRequest, res
 authRouter.get('/profiles/:id/diary', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const profileId = Number(req.params.id);
-    const profileRow = db.prepare('SELECT diary_reset_time FROM trading_profiles WHERE id = ? AND user_id = ?').get(profileId, req.user.id) as any;
+    const profileRow = await db.prepare('SELECT diary_reset_time FROM trading_profiles WHERE id = ? AND user_id = ?').get(profileId, req.user.id) as any;
     if (!profileRow) return res.status(404).json({ success: false, error: 'Profile not found.' });
 
     const resetTime = profileRow.diary_reset_time || undefined;
@@ -523,7 +629,7 @@ authRouter.get('/profiles/:id/diary', requireAuth, async (req: AuthRequest, res:
       return;
     }
 
-    const trades = db.prepare('SELECT * FROM trade_diary WHERE profile_id = ? ORDER BY close_time DESC').all(profileId);
+    const trades = await db.prepare('SELECT * FROM trade_diary WHERE profile_id = ? ORDER BY close_time DESC').all(profileId);
     const filteredTrades = resetTime ? trades.filter((t: any) => new Date(t.close_time).getTime() >= new Date(resetTime).getTime()) : trades;
     
     res.json({ success: true, trades: filteredTrades });
@@ -533,14 +639,14 @@ authRouter.get('/profiles/:id/diary', requireAuth, async (req: AuthRequest, res:
 });
 
 // ── POST /profiles/:id/diary/reset ────────────────────────────────────────────
-authRouter.post('/profiles/:id/diary/reset', requireAuth, (req: AuthRequest, res: Response) => {
+authRouter.post('/profiles/:id/diary/reset', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const profileId = Number(req.params.id);
-    const profile = db.prepare('SELECT id FROM trading_profiles WHERE id = ? AND user_id = ?').get(profileId, req.user.id);
+    const profile = await db.prepare('SELECT id FROM trading_profiles WHERE id = ? AND user_id = ?').get(profileId, req.user.id);
     if (!profile) return res.status(404).json({ success: false, error: 'Profile not found.' });
 
     const now = new Date().toISOString();
-    db.prepare('UPDATE trading_profiles SET diary_reset_time = ? WHERE id = ?').run(now, profileId);
+    await db.prepare('UPDATE trading_profiles SET diary_reset_time = ? WHERE id = ?').run(now, profileId);
     
     // Invalidate analytics cache on reset
     analyticsHistoryCache.delete(profileId);
@@ -557,9 +663,9 @@ const analyticsHistoryCache = new Map<number, { timestamp: number, tradesTaken: 
 authRouter.get('/profiles/:id/metaapi/analytics', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const profileId = Number(req.params.id);
-    const profile = db.prepare('SELECT metaapi_account_id, automation_active, diary_reset_time FROM trading_profiles WHERE id = ? AND user_id = ?').get(profileId, req.user.id) as any;
+    const profile = await db.prepare('SELECT metaapi_account_id, automation_active, diary_reset_time FROM trading_profiles WHERE id = ? AND user_id = ?').get(profileId, req.user.id) as any;
     
-    const user = db.prepare('SELECT metaapi_token FROM users WHERE id = ?').get(req.user.id) as any;
+    const user = await db.prepare('SELECT metaapi_token FROM users WHERE id = ?').get(req.user.id) as any;
 
     if (!profile || !profile.metaapi_account_id || !user || !user.metaapi_token) {
       return res.json({ success: true, status: 'offline' });
@@ -575,10 +681,10 @@ authRouter.get('/profiles/:id/metaapi/analytics', requireAuth, async (req: AuthR
       rawAccountId = isEncrypted(profile.metaapi_account_id) ? decrypt(profile.metaapi_account_id) : profile.metaapi_account_id;
     } catch(e) {}
 
-    const { getConnection } = require('./botManager');
+    
     let connection: any;
     try {
-      connection = await getConnection(rawToken, rawAccountId);
+      connection = await getSharedConnection(rawToken, rawAccountId);
     } catch (e: any) {
       if (e.message.includes('Fast fail')) {
         return res.json({ success: true, status: 'syncing' });
@@ -600,7 +706,7 @@ authRouter.get('/profiles/:id/metaapi/analytics', requireAuth, async (req: AuthR
     const SIX_HOURS = 6 * 60 * 60 * 1000;
     
     if (!historyStats || Date.now() - historyStats.timestamp > SIX_HOURS) {
-      const { getProfileTradeHistory } = require('./metaApiHandler');
+      
       // Pull last 30 days of deals, strictly filtered by diary_reset_time
       const trades = await getProfileTradeHistory(profileId, 30, profile.diary_reset_time || undefined);
       
@@ -640,6 +746,8 @@ authRouter.get('/profiles/:id/metaapi/analytics', requireAuth, async (req: AuthR
         volume: p.volume,
         openPrice: p.openPrice,
         currentPrice: p.currentPrice,
+        stopLoss: p.stopLoss || null,
+        takeProfit: p.takeProfit || null,
         profit: p.profit,
         swap: p.swap
       })),
@@ -651,6 +759,7 @@ authRouter.get('/profiles/:id/metaapi/analytics', requireAuth, async (req: AuthR
     });
 
   } catch (e: any) {
+    console.error(`[Auth] Analytics fetch error for Profile ${req.params.id}:`, e.message);
     // If anything fails, it's offline (red badge)
     res.json({ success: true, status: 'offline', error: e.message });
   }

@@ -1,7 +1,6 @@
 import { MarketData, TrapSignal } from '../src/types';
 import { executeTradeForProfile } from './metaApiHandler';
 import { getProviderForProfile, toBrokerSymbol, CandleProvider } from './candleProvider';
-import { OPTIMAL_CONFIGS } from './bots/SniperSystemAI';
 
 // ── Shared pip size registry (single source of truth) ────────────────────────
 export const ASSET_MAP: Record<string, { symbol: string; name: string; pipSize: number }> = {
@@ -90,15 +89,23 @@ export class ProfileStore {
   sessionStartTimes: Record<string, number> = {};
   yahooBatchIndex = 0;
 
-  private lastM1FetchTime: Record<string, number> = {};
-  private cachedM1Candles: Record<string, any[]> = {};
+  // Unified Engine Simulation Support
+  isSimulation: boolean = false;
+  mockTrades: any[] = [];
+  simulationConfig = {
+      tpMultiplier: 5.0,
+      slBuffer: 2.0
+  };
+
+  private lastM15FetchTime: Record<string, number> = {};
+  public cachedM15Candles: Record<string, any[]> = {};
 
   constructor(profileId: number) {
     this.profileId = profileId;
   }
 
   async init() {
-    const provider = getProviderForProfile(this.profileId);
+    const provider = await getProviderForProfile(this.profileId);
     this.activeDataSource = provider.source;
     console.log(`[ProfileStore ${this.profileId}] Initialising with data source: ${this.activeDataSource.toUpperCase()}`);
 
@@ -215,6 +222,9 @@ export class ProfileStore {
             asianLow: yesterday.low,
             londonHigh: yesterday.high,
             londonLow: yesterday.low,
+            londonOpen: yesterday.open,
+            londonClose: yesterday.close,
+            londonNarrative: 'NONE',
             pipSize: config.pipSize,
             change: 0,
             changePercent: 0,
@@ -252,9 +262,11 @@ export class ProfileStore {
   }
 
   async updatePrices(shouldSyncPrices = true) {
+    if (this.isSimulation) return; 
+
     const now = new Date();
     const currentGate = getTimingGate();
-    const provider = getProviderForProfile(this.profileId);
+    const provider = await getProviderForProfile(this.profileId);
     
     this.activeDataSource = provider.source;
 
@@ -301,6 +313,28 @@ export class ProfileStore {
             ? (market.change / market.prevClose) * 100
             : 0;
 
+          // Compute M15 swings (throttle fetch to every 5 mins to ensure fresh but not rate-limited)
+          const nowMs = now.getTime();
+          const lastFetch = this.lastM15FetchTime[symbol] || 0;
+          if (nowMs - lastFetch > 5 * 60 * 1000 || !this.cachedM15Candles[symbol]) {
+             try {
+                const brokerSymbolForM15 = toBrokerSymbol(symbol);
+                const m15 = await provider.get15MinuteCandles(symbol, brokerSymbolForM15, 50);
+                this.cachedM15Candles[symbol] = m15;
+                this.lastM15FetchTime[symbol] = nowMs;
+                
+                let last15MSwingLow = -Infinity, last15MSwingHigh = Infinity;
+                if (m15 && m15.length >= 3) {
+                   for (let i = 1; i < m15.length - 1; i++) {
+                      if (m15[i].low < m15[i-1].low && m15[i].low < m15[i+1].low) last15MSwingLow = m15[i].low;
+                      if (m15[i].high > m15[i-1].high && m15[i].high > m15[i+1].high) last15MSwingHigh = m15[i].high;
+                   }
+                }
+                market.last15MSwingHigh = last15MSwingHigh !== Infinity ? last15MSwingHigh : undefined;
+                market.last15MSwingLow = last15MSwingLow !== -Infinity ? last15MSwingLow : undefined;
+             } catch(e) { /* ignore */ }
+          }
+
           let prevNY = -1;
           if (market.lastUpdated) {
             const [hPrev, mPrev] = GLOBAL_FORMATTER_HM.format(new Date(market.lastUpdated)).split(':');
@@ -309,7 +343,22 @@ export class ProfileStore {
 
           if (prevNY !== -1) {
             if (prevNY < 1200 && currNY >= 1200) { market.asianHigh = currentPrice; market.asianLow = currentPrice; }
-            if (prevNY < 120 && currNY >= 120) { market.londonHigh = currentPrice; market.londonLow = currentPrice; }
+            if (prevNY < 120 && currNY >= 120) { 
+               market.londonHigh = currentPrice; 
+               market.londonLow = currentPrice; 
+               market.londonOpen = currentPrice;
+               market.londonNarrative = 'NONE';
+            }
+            if (prevNY < 180 && currNY >= 180) {
+               market.londonClose = currentPrice;
+               if (market.londonClose > market.londonOpen) {
+                  market.londonNarrative = 'PUMP';
+               } else if (market.londonClose < market.londonOpen) {
+                  market.londonNarrative = 'DUMP';
+               } else {
+                  market.londonNarrative = 'NONE';
+               }
+            }
           }
 
           if (currNY >= 1200 || currNY < 120) {
@@ -356,200 +405,94 @@ export class ProfileStore {
   }
 
   async checkForTrapTrigger(symbol: string, market: MarketData, quote: { bid: number; ask: number }) {
-    const timing = getTimingGate();
-    if (timing.isBlackout || timing.gate === 'Gap Time') return;
-
-    const bid = quote.bid || market.currentPrice;
-    const ask = quote.ask || market.currentPrice;
-    const spread = Math.abs(ask - bid) / market.pipSize;
-    
-    if (spread > 3.0) return; 
-
-    const now = new Date();
-    const nyHoursStr = GLOBAL_FORMATTER_HM.format(now).split(':')[0];
-    const nyMinutesStr = GLOBAL_FORMATTER_HM.format(now).split(':')[1];
-    const nyHours = parseInt(nyHoursStr, 10);
-    const nyMinutes = parseInt(nyMinutesStr, 10);
-    
-    if (nyMinutes % 15 > 2) return;
-
-    const isMorningWindow = nyHours >= 7 && nyHours < 11;
-    const isAfternoonWindow = nyHours >= 13 && nyHours < 15;
-    if (!isMorningWindow && !isAfternoonWindow) return;
-
-    const ADR_THRESHOLD = 80;
-    const BOX_MAX = 30;
-    const TRAP_DEPTH_MIN = 10;
-    
-    const adr = market.adr14 || 0;
-    if (adr < ADR_THRESHOLD) return;
-
-    const asianRangePips = (market.asianHigh - market.asianLow) / market.pipSize;
-    if (asianRangePips > BOX_MAX) return;
-
-    let m1Candles;
-    try {
-      const nowMs = now.getTime();
-      const cached = this.cachedM1Candles[symbol];
-      const lastFetch = this.lastM1FetchTime[symbol] || 0;
-      
-      // Cache valid for 30 seconds
-      if (cached && (nowMs - lastFetch) < 30_000) {
-         m1Candles = cached;
-      } else {
-         const provider = getProviderForProfile(this.profileId);
-         m1Candles = await provider.getMinuteCandles(symbol, toBrokerSymbol(symbol), 60);
-         this.cachedM1Candles[symbol] = m1Candles;
-         this.lastM1FetchTime[symbol] = nowMs;
-      }
-    } catch {
+      // V5: Trap Generation Logic has been moved to RefinedSniperBot.ts
+      // This file purely acts as a data feed store.
       return;
-    }
-    if (!m1Candles || m1Candles.length < 5) return;
+  }
 
-    let direction: 'BUY'|'SELL' | null = null;
-    let patternDetected = '';
-    let stopLossDistPips = 0;
-    let levelType: TrapSignal['levelType'] = 'HOS';
-    let levelPrice = market.currentPrice;
-
-    // Run the M1 State Machine over the fetched candles
-    const config = OPTIMAL_CONFIGS[toBrokerSymbol(symbol)] || { m1Pullback: 8, m1SlBuffer: 5 };
-    const pullbackTarget = config.m1Pullback || 8;
-    const slBufferPips = config.m1SlBuffer || 5;
-
-    let trapState = 0; 
-    let h1 = -Infinity, l1 = Infinity;
-    let h2 = -Infinity, l2 = Infinity;
-    let trapDirection: 'BUY'|'SELL'|null = null;
-
-    let triggerCandle = null;
-
-    for (const c of m1Candles) {
-       const pipsAboveAsian = (c.high - market.asianHigh) / market.pipSize;
-       const pipsBelowAsian = (market.asianLow - c.low) / market.pipSize;
-
-       if (trapState === 0) {
-          if (pipsAboveAsian >= TRAP_DEPTH_MIN) { trapState = 1; trapDirection = 'SELL'; h1 = c.high; l1 = c.low; }
-          else if (pipsBelowAsian >= TRAP_DEPTH_MIN) { trapState = 1; trapDirection = 'BUY'; l1 = c.low; h1 = c.high; }
-          continue;
-       }
-
-       if (trapDirection === 'SELL') {
-          if (trapState === 1) {
-             if (c.high > h1) { h1 = c.high; l1 = c.low; } 
-             else if ((h1 - c.low) / market.pipSize >= pullbackTarget) { trapState = 2; h2 = -Infinity; } 
-          } else if (trapState === 2) {
-             if (c.high > h1) { trapState = 1; h1 = c.high; l1 = c.low; } 
-             else if (c.high > h2) { h2 = c.high; } 
-             
-             const bodySize = Math.abs(c.close - c.open);
-             const range = c.high - c.low;
-             if (h2 !== -Infinity && (h1 - h2) / market.pipSize <= Math.max(5.0, pullbackTarget*0.8) && c.close < c.open && range > 0 && bodySize/range > 0.6) {
-                const slPrice = Math.max(h1, h2) + (slBufferPips * market.pipSize);
-                const slPips = Math.abs(c.close - slPrice) / market.pipSize;
-                if (slPips >= 3 && slPips <= 40) {
-                   direction = 'SELL';
-                   patternDetected = 'M1 Double Top Holy Grail';
-                   stopLossDistPips = slPips;
-                   levelType = 'HOD';
-                   levelPrice = market.asianHigh;
-                   triggerCandle = c;
-                   trapState = 0; // Triggered
-                }
-             }
-          }
-       } else if (trapDirection === 'BUY') {
-          if (trapState === 1) {
-             if (c.low < l1) { l1 = c.low; h1 = c.high; } 
-             else if ((c.high - l1) / market.pipSize >= pullbackTarget) { trapState = 2; l2 = Infinity; } 
-          } else if (trapState === 2) {
-             if (c.low < l1) { trapState = 1; l1 = c.low; h1 = c.high; } 
-             else if (c.low < l2) { l2 = c.low; } 
-             
-             const bodySize = Math.abs(c.close - c.open);
-             const range = c.high - c.low;
-             if (l2 !== Infinity && (l2 - l1) / market.pipSize <= Math.max(5.0, pullbackTarget*0.8) && c.close > c.open && range > 0 && bodySize/range > 0.6) {
-                const slPrice = Math.min(l1, l2) - (slBufferPips * market.pipSize);
-                const slPips = Math.abs(c.close - slPrice) / market.pipSize;
-                if (slPips >= 3 && slPips <= 40) {
-                   direction = 'BUY';
-                   patternDetected = 'M1 Double Bottom Holy Grail';
-                   stopLossDistPips = slPips;
-                   levelType = 'LOD';
-                   levelPrice = market.asianLow;
-                   triggerCandle = c;
-                   trapState = 0; // Triggered
-                }
-             }
-          }
-       }
-    }
-
-    if (!direction || !triggerCandle) return;
-    
-    // Ensure the trigger candle is the LAST closed candle or very recent
-    const lastCandle = m1Candles[m1Candles.length - 1];
-    if (triggerCandle.date !== lastCandle.date) {
-        // If the signal was from 5 minutes ago and we haven't executed, it's dead
-        const signalTime = new Date(triggerCandle.date).getTime();
-        if (now.getTime() - signalTime > 120_000) return;
-    }
-
-    console.log(`[ProfileStore ${this.profileId}] TRAP TRIGGER ${symbol}: ${patternDetected} (dir: ${direction}, lvl: ${levelType}, price: ${levelPrice})`);
-
-    const existingIndex = this.alerts.findIndex(
-      a => a.symbol === symbol && a.pattern === patternDetected &&
-           now.getTime() - new Date(a.timestamp).getTime() < 3_600_000
-    );
-    if (existingIndex !== -1) return;
-
-    const takeProfitDistPips = stopLossDistPips * 5;
-
-    const newAlert: TrapSignal = {
-      id: `${symbol}-${Date.now()}`,
-      symbol,
-      displayName: market.displayName,
-      pattern: patternDetected,
-      direction,
-      triggerPrice: ask,
-      levelType,
-      keyLevel: levelPrice,
-      grade: 5,
-      timingGate: timing.gate,
-      timestamp: now.toISOString(),
-      details: `${patternDetected} ${direction} trap at ${levelType}. SL: ${stopLossDistPips.toFixed(1)} pips.`,
-      suggestedStopLoss: stopLossDistPips,
-      suggestedTakeProfit: takeProfitDistPips,
-      isThreeDaySetup: false,
-      isThreeSessionSetup: false,
-      isHolyGrailConfluence: true, 
-      status: 'Trade Now',
-    };
-
-    const signalKey = `${symbol}-${patternDetected}`;
-    if (this.executingSignals.has(signalKey)) return;
-    this.executingSignals.add(signalKey);
-
-    try {
-      // EXECUTE TRADE FOR THIS PROFILE ONLY
-      await executeTradeForProfile(this.profileId, newAlert, stopLossDistPips, takeProfitDistPips, 5.0);
-      console.log(`[ProfileStore ${this.profileId}] Bot executed: ${symbol} ${direction}.`);
-
-      newAlert.status = 'Trade Now';
-      this.alerts.unshift(newAlert);
-      if (this.alerts.length > 50) this.alerts.length = 50;
+  // Inject historical ticks directly into the bot logic
+  async processMockTick(symbol: string, currentPrice: number, bid: number, ask: number) {
+      if (!this.markets[symbol]) return;
+      const market = this.markets[symbol];
+      const now = new Date();
+      const currentGate = getTimingGate();
       
-    } catch (err) {
-      console.error(`[ProfileStore ${this.profileId}] Bot execution error for ${symbol}:`, err);
-    } finally {
-      this.executingSignals.delete(signalKey);
-    }
+      this.activeDataSource = 'simulation';
+      
+      if (currentGate.gate !== this.activeSessionName) {
+        this.activeSessionName = currentGate.gate;
+        if (this.activeSessionName !== 'Gap Time') {
+          this.sessionStartTimes[this.activeSessionName] = now.getTime();
+          market.hos = market.currentPrice;
+          market.los = market.currentPrice;
+        }
+      }
+
+      market.currentPrice = currentPrice;
+      market.high = Math.max(market.high, currentPrice);
+      market.low  = Math.min(market.low,  currentPrice);
+      market.hod  = market.high;
+      market.lod  = market.low;
+      market.change = currentPrice - market.prevClose;
+      market.changePercent = market.prevClose !== 0 ? (market.change / market.prevClose) * 100 : 0;
+
+      const currNY = (parseInt(GLOBAL_FORMATTER_HM.format(now).split(':')[0], 10) === 24 ? 0 : parseInt(GLOBAL_FORMATTER_HM.format(now).split(':')[0], 10)) * 60 + parseInt(GLOBAL_FORMATTER_HM.format(now).split(':')[1], 10);
+      
+      let prevNY = -1;
+      if (market.lastUpdated) {
+        const [hPrev, mPrev] = GLOBAL_FORMATTER_HM.format(new Date(market.lastUpdated)).split(':');
+        prevNY = (parseInt(hPrev, 10) === 24 ? 0 : parseInt(hPrev, 10)) * 60 + parseInt(mPrev, 10);
+      }
+
+      if (prevNY !== -1) {
+        if (prevNY < 1200 && currNY >= 1200) { market.asianHigh = currentPrice; market.asianLow = currentPrice; }
+        if (prevNY < 120 && currNY >= 120) { 
+           market.londonHigh = currentPrice; 
+           market.londonLow = currentPrice; 
+           market.londonOpen = currentPrice;
+           market.londonNarrative = 'NONE';
+        }
+        if (prevNY < 180 && currNY >= 180) {
+           market.londonClose = currentPrice;
+           if (market.londonClose > market.londonOpen) {
+              market.londonNarrative = 'PUMP';
+           } else if (market.londonClose < market.londonOpen) {
+              market.londonNarrative = 'DUMP';
+           } else {
+              market.londonNarrative = 'NONE';
+           }
+        }
+      }
+
+      if (currNY >= 1200 || currNY < 120) {
+        market.asianHigh = Math.max(market.asianHigh, currentPrice);
+        market.asianLow = Math.min(market.asianLow, currentPrice);
+      } else if (currNY >= 120 && currNY < 480) {
+        market.londonHigh = Math.max(market.londonHigh, currentPrice);
+        market.londonLow = Math.min(market.londonLow, currentPrice);
+      }
+
+      market.lastUpdated = now.toISOString();
+
+      if (this.activeSessionName !== 'Gap Time') {
+        const sessionStart = this.sessionStartTimes[this.activeSessionName];
+        if (sessionStart && now.getTime() - sessionStart < 3_600_000) {
+          market.hos = Math.max(market.hos, currentPrice);
+          market.los = Math.min(market.los, currentPrice);
+        }
+      }
+
+      this.liveSpreads[symbol] = { bid, ask };
+      await this.checkForTrapTrigger(symbol, market, { bid, ask });
   }
 }
 
 // Global registry of active ProfileStores
 export const profileStores = new Map<number, ProfileStore>();
+
+export function deleteProfileStore(profileId: number) {
+  profileStores.delete(profileId);
+}
 
 export async function getOrCreateProfileStore(profileId: number): Promise<ProfileStore> {
   if (!profileStores.has(profileId)) {
@@ -588,4 +531,12 @@ export function getProfileAlertById(profileId: number, alertId: string) {
 export function getProfileActiveDataSource(profileId: number) {
   const store = profileStores.get(profileId);
   return store ? store.activeDataSource : 'yahoo';
+}
+
+export function getProfileM15Candles(profileId: number, symbol: string) {
+  const store = profileStores.get(profileId);
+  if (!store) return [];
+  // Find the exact key (e.g. 'EURUSD=X')
+  const exactKey = Object.keys(store.markets).find(k => store.markets[k].symbol === symbol || k === symbol);
+  return exactKey ? (store.cachedM15Candles[exactKey] || []) : [];
 }

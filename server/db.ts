@@ -1,159 +1,226 @@
-import Database from 'better-sqlite3';
-import path from 'path';
-import fs from 'fs';
+import pg from 'pg';
+const { Pool } = pg;
+import dotenv from 'dotenv';
+dotenv.config();
 
-// Ensure the data directory exists
-const dataDir = path.join(process.cwd(), 'data');
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
+if (!process.env.DATABASE_URL) {
+  console.error("CRITICAL: DATABASE_URL is not defined in .env");
+  process.exit(1);
 }
 
-const db = new Database(path.join(dataDir, 'database.sqlite'));
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.DATABASE_URL.includes('supabase.com') || process.env.DATABASE_URL.includes('neon.tech') 
+       ? { rejectUnauthorized: false } 
+       : false
+});
 
-// Enable Write-Ahead Logging for better concurrency
-db.pragma('journal_mode = WAL');
+class DbStatement {
+  constructor(private sql: string, private pool: pg.Pool) {}
+
+  async get(...params: any[]) {
+    const res = await this.pool.query(this.sql, params);
+    return res.rows[0];
+  }
+
+  async all(...params: any[]) {
+    const res = await this.pool.query(this.sql, params);
+    return res.rows;
+  }
+
+  async run(...params: any[]) {
+    let queryStr = this.sql;
+    const isInsert = queryStr.trim().toUpperCase().startsWith('INSERT');
+    if (isInsert && !queryStr.toUpperCase().includes('RETURNING')) {
+      // Very naive append for basic statements to preserve sqlite compatibility
+      queryStr += ' RETURNING id';
+    }
+    
+    // SQLite uses ON CONFLICT DO UPDATE SET. Postgres uses ON CONFLICT (cols) DO UPDATE SET.
+    // If we have an ON CONFLICT without DO UPDATE or DO NOTHING, it might crash, but our SQL explicitly specifies DO UPDATE.
+    
+    try {
+      const res = await this.pool.query(queryStr, params);
+      return { 
+        changes: res.rowCount, 
+        lastInsertRowid: isInsert && res.rows.length > 0 ? res.rows[0].id : undefined 
+      };
+    } catch (err: any) {
+      console.error(`[DB Error] Query: ${queryStr}`, err.message);
+      throw err;
+    }
+  }
+}
+
+const db = {
+  prepare: (sql: string) => {
+    // Convert ? to $1, $2, $3...
+    let i = 1;
+    const pgSql = sql.replace(/\?/g, () => `$${i++}`);
+    return new DbStatement(pgSql, pool);
+  },
+  exec: async (sql: string) => {
+    return pool.query(sql);
+  }
+};
 
 // Initialize schema
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    email TEXT UNIQUE NOT NULL,
-    password_hash TEXT NOT NULL,
-    metaapi_token TEXT,
-    metaapi_account_id TEXT,
-    gemini_api_key TEXT DEFAULT NULL,
-    risk_multiplier INTEGER DEFAULT 5,
-    automation_active INTEGER DEFAULT 0,
-    ai_sniper_active INTEGER DEFAULT 0,
-    diary_reset_time TEXT DEFAULT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
+export async function initDb() {
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id SERIAL PRIMARY KEY,
+      email TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL,
+      metaapi_token TEXT,
+      metaapi_account_id TEXT,
+      openrouter_api_key TEXT DEFAULT NULL,
+      risk_multiplier INTEGER DEFAULT 5,
+      automation_active INTEGER DEFAULT 0,
+      ai_sniper_active INTEGER DEFAULT 0,
+      diary_reset_time TEXT DEFAULT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
 
-  CREATE TABLE IF NOT EXISTS otps (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    email TEXT NOT NULL,
-    otp_code TEXT NOT NULL,
-    purpose TEXT NOT NULL,
-    payload TEXT DEFAULT NULL,
-    expires_at DATETIME NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
+    CREATE TABLE IF NOT EXISTS otps (
+      id SERIAL PRIMARY KEY,
+      email TEXT NOT NULL,
+      otp_code TEXT NOT NULL,
+      purpose TEXT NOT NULL,
+      payload TEXT DEFAULT NULL,
+      expires_at TIMESTAMP NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
 
-  CREATE TABLE IF NOT EXISTS trading_profiles (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
-    profile_name TEXT NOT NULL,
-    metaapi_token TEXT,
-    metaapi_account_id TEXT,
-    risk_multiplier INTEGER DEFAULT 5,
-    automation_active INTEGER DEFAULT 0,
-    ai_sniper_active INTEGER DEFAULT 0,
-    active_bots TEXT DEFAULT '[]',
-    diary_reset_time TEXT DEFAULT NULL,
-    session_losses INTEGER DEFAULT 0,
-    last_session TEXT DEFAULT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
-  );
+    CREATE TABLE IF NOT EXISTS trading_profiles (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      profile_name TEXT NOT NULL,
+      metaapi_token TEXT,
+      metaapi_account_id TEXT,
+      risk_multiplier INTEGER DEFAULT 5,
+      automation_active INTEGER DEFAULT 0,
+      ai_sniper_active INTEGER DEFAULT 0,
+      active_bots TEXT DEFAULT '[]',
+      peak_balance REAL DEFAULT 0,
+      safety_settings TEXT DEFAULT '{}',
+      diary_reset_time TEXT DEFAULT NULL,
+      session_losses INTEGER DEFAULT 0,
+      last_session TEXT DEFAULT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
 
-  CREATE TABLE IF NOT EXISTS pending_signals (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    profile_id INTEGER NOT NULL,
-    user_id INTEGER NOT NULL,
-    bot_id TEXT NOT NULL,
-    broker_symbol TEXT NOT NULL,
-    direction TEXT NOT NULL,
-    suggested_sl_pips REAL NOT NULL,
-    suggested_tp_pips REAL,
-    reason TEXT,
-    created_at INTEGER NOT NULL,
-    expires_at INTEGER NOT NULL,
-    status TEXT DEFAULT 'PENDING',
-    FOREIGN KEY(profile_id) REFERENCES trading_profiles(id) ON DELETE CASCADE
-  );
+    CREATE TABLE IF NOT EXISTS profile_symbol_lockouts (
+      id SERIAL PRIMARY KEY,
+      profile_id INTEGER NOT NULL REFERENCES trading_profiles(id) ON DELETE CASCADE,
+      symbol TEXT NOT NULL,
+      session_losses INTEGER DEFAULT 0,
+      last_session TEXT DEFAULT NULL,
+      UNIQUE(profile_id, symbol)
+    );
 
-  CREATE TABLE IF NOT EXISTS bot_ema_state (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    bot_id TEXT NOT NULL,
-    profile_id INTEGER NOT NULL,
-    ema_value REAL NOT NULL,
-    updated_at INTEGER NOT NULL,
-    UNIQUE(bot_id, profile_id)
-  );
-`);
+    CREATE TABLE IF NOT EXISTS pending_signals (
+      id SERIAL PRIMARY KEY,
+      profile_id INTEGER NOT NULL REFERENCES trading_profiles(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL,
+      bot_id TEXT NOT NULL,
+      broker_symbol TEXT NOT NULL,
+      direction TEXT NOT NULL,
+      suggested_sl_pips REAL NOT NULL,
+      suggested_tp_pips REAL,
+      reason TEXT,
+      created_at BIGINT NOT NULL,
+      expires_at BIGINT NOT NULL,
+      status TEXT DEFAULT 'PENDING'
+    );
 
-// Apply migration for existing users safely
-try {
-  db.exec('ALTER TABLE users ADD COLUMN ai_sniper_active INTEGER DEFAULT 0');
-} catch (e: any) {}
+    CREATE TABLE IF NOT EXISTS bot_ema_state (
+      id SERIAL PRIMARY KEY,
+      bot_id TEXT NOT NULL,
+      profile_id INTEGER NOT NULL,
+      ema_value REAL NOT NULL,
+      updated_at BIGINT NOT NULL,
+      UNIQUE(bot_id, profile_id)
+    );
+    
+    CREATE TABLE IF NOT EXISTS bot_trade_states (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      profile_id INTEGER,
+      bot_id TEXT NOT NULL,
+      broker_symbol TEXT NOT NULL,
+      direction TEXT NOT NULL,
+      entry_price REAL NOT NULL,
+      sl_price REAL NOT NULL,
+      tp_price REAL NOT NULL,
+      lots REAL NOT NULL,
+      open_time BIGINT NOT NULL,
+      meta_order_id TEXT,
+      t1_hit INTEGER DEFAULT 0,
+      highest_price REAL NOT NULL,
+      lowest_price REAL NOT NULL,
+      status TEXT DEFAULT 'OPEN',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      close_time BIGINT,
+      pnl REAL
+    );
 
-try {
-  db.exec('ALTER TABLE users ADD COLUMN gemini_api_key TEXT DEFAULT NULL');
-} catch (e: any) {}
+    CREATE TABLE IF NOT EXISTS trade_diary (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      profile_id INTEGER,
+      bot_id TEXT NOT NULL,
+      broker_symbol TEXT NOT NULL,
+      direction TEXT NOT NULL,
+      entry_price REAL NOT NULL,
+      exit_price REAL NOT NULL,
+      lots REAL NOT NULL,
+      pips REAL NOT NULL,
+      profit REAL NOT NULL,
+      status TEXT NOT NULL,
+      open_time BIGINT NOT NULL,
+      close_time BIGINT NOT NULL
+    );
+  `);
+}
+// Exported initDb is awaited in server.ts
 
-try {
-  db.exec('ALTER TABLE users ADD COLUMN diary_reset_time TEXT DEFAULT NULL');
-} catch (e: any) {}
-
-try {
-  db.exec('ALTER TABLE trading_profiles ADD COLUMN session_losses INTEGER DEFAULT 0');
-} catch (e: any) {}
-try {
-  db.exec('ALTER TABLE trading_profiles ADD COLUMN last_session TEXT DEFAULT NULL');
-} catch (e: any) {}
-
-try {
-  const tableInfo = db.pragma("table_info(bot_ema_state)") as any[];
-  if (!tableInfo.some(c => c.name === 'profile_id')) {
-    db.exec(`
-      CREATE TABLE bot_ema_state_new (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        bot_id TEXT NOT NULL,
-        profile_id INTEGER NOT NULL DEFAULT 0,
-        ema_value REAL NOT NULL,
-        updated_at INTEGER NOT NULL,
-        UNIQUE(bot_id, profile_id)
-      );
-      INSERT OR IGNORE INTO bot_ema_state_new (bot_id, ema_value, updated_at) SELECT bot_id, ema_value, updated_at FROM bot_ema_state;
-      DROP TABLE bot_ema_state;
-      ALTER TABLE bot_ema_state_new RENAME TO bot_ema_state;
-    `);
-  }
-} catch (e: any) {}
-
-export function saveEmaState(botId: string, profileId: number, emaValue: number) {
-  db.prepare(`
+export async function saveEmaState(botId: string, profileId: number, emaValue: number) {
+  await db.prepare(`
     INSERT INTO bot_ema_state (bot_id, profile_id, ema_value, updated_at)
     VALUES (?, ?, ?, ?)
     ON CONFLICT(bot_id, profile_id) DO UPDATE SET ema_value = excluded.ema_value, updated_at = excluded.updated_at
   `).run(botId, profileId, emaValue, Date.now());
 }
 
-export function loadEmaState(botId: string, profileId: number): number | null {
-  const row = db.prepare('SELECT ema_value FROM bot_ema_state WHERE bot_id = ? AND profile_id = ?').get(botId, profileId) as any;
+export async function loadEmaState(botId: string, profileId: number): Promise<number | null> {
+  const row = await db.prepare('SELECT ema_value FROM bot_ema_state WHERE bot_id = ? AND profile_id = ?').get(botId, profileId) as any;
   return row ? row.ema_value : null;
 }
 
 // ── Trade Management Helpers ─────────────────────────────────────────────────
-export function getSessionLosses(profileId: number, currentSession: string): number {
-  const profile = db.prepare('SELECT session_losses, last_session FROM trading_profiles WHERE id = ?').get(profileId) as any;
-  if (!profile) return 0;
+export async function getSessionLosses(profileId: number, symbol: string, currentSession: string): Promise<number> {
+  const row = await db.prepare('SELECT session_losses, last_session FROM profile_symbol_lockouts WHERE profile_id = ? AND symbol = ?').get(profileId, symbol) as any;
+  if (!row) return 0;
   
-  if (profile.last_session !== currentSession) {
-    db.prepare('UPDATE trading_profiles SET session_losses = 0, last_session = ? WHERE id = ?').run(currentSession, profileId);
+  if (row.last_session !== currentSession) {
+    await db.prepare('UPDATE profile_symbol_lockouts SET session_losses = 0, last_session = ? WHERE profile_id = ? AND symbol = ?').run(currentSession, profileId, symbol);
     return 0;
   }
-  return profile.session_losses || 0;
+  return row.session_losses || 0;
 }
 
-export function incrementSessionLoss(profileId: number, currentSession: string) {
-  const profile = db.prepare('SELECT session_losses, last_session FROM trading_profiles WHERE id = ?').get(profileId) as any;
-  if (!profile) return;
-
-  if (profile.last_session !== currentSession) {
-    db.prepare('UPDATE trading_profiles SET session_losses = 1, last_session = ? WHERE id = ?').run(currentSession, profileId);
+export async function incrementSessionLoss(profileId: number, symbol: string, currentSession: string) {
+  const row = await db.prepare('SELECT session_losses, last_session FROM profile_symbol_lockouts WHERE profile_id = ? AND symbol = ?').get(profileId, symbol) as any;
+  
+  if (!row) {
+    await db.prepare('INSERT INTO profile_symbol_lockouts (profile_id, symbol, session_losses, last_session) VALUES (?, ?, 1, ?)')
+      .run(profileId, symbol, currentSession);
+  } else if (row.last_session !== currentSession) {
+    await db.prepare('UPDATE profile_symbol_lockouts SET session_losses = 1, last_session = ? WHERE profile_id = ? AND symbol = ?')
+      .run(currentSession, profileId, symbol);
   } else {
-    db.prepare('UPDATE trading_profiles SET session_losses = session_losses + 1 WHERE id = ?').run(profileId);
+    await db.prepare('UPDATE profile_symbol_lockouts SET session_losses = session_losses + 1 WHERE profile_id = ? AND symbol = ?')
+      .run(profileId, symbol);
   }
 }
 

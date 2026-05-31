@@ -24,6 +24,9 @@ export interface MarketData {
   asianLow: number;
   londonHigh: number;
   londonLow: number;
+  londonOpen: number;
+  londonClose: number;
+  londonNarrative: 'PUMP' | 'DUMP' | 'NONE';
   last15MSwingHigh?: number;
   last15MSwingLow?: number;
   adr14?: number;

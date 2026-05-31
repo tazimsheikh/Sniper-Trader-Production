@@ -11,12 +11,17 @@ export default function GlobalSettings({ onClose, onLogout }: GlobalSettingsProp
   const [keys, setKeys] = useState({
     metaapiToken: '',
     metaapiAccountId: '',
-    geminiApiKey: ''
+    openrouterApiKey: ''
   });
+
+  const [profiles, setProfiles] = useState<any[]>([]);
+  const [selectedProfileId, setSelectedProfileId] = useState<number | null>(null);
+  
+  const [selectedTimezone, setSelectedTimezone] = useState(() => localStorage.getItem('sniper_tz') || 'IST');
   
   const [status, setStatus] = useState({
     metaapi: 'offline',
-    gemini: 'offline'
+    openrouter: 'offline'
   });
 
   const [isLoading, setIsLoading] = useState(true);
@@ -39,12 +44,20 @@ export default function GlobalSettings({ onClose, onLogout }: GlobalSettingsProp
       if (data.success) {
         setKeys(data.keys);
       }
+      
+      const pRes = await fetch('/api/auth/profiles', { credentials: 'same-origin' });
+      const pData = await pRes.json();
+      if (pData.success && pData.profiles.length > 0) {
+        setProfiles(pData.profiles);
+        setSelectedProfileId(pData.profiles[0].id);
+      }
     } catch (e) {
-      console.error('Failed to fetch keys', e);
+      console.error('Failed to fetch keys/profiles', e);
     } finally {
       setIsLoading(false);
     }
   };
+
 
   const testConnections = async () => {
     setIsTesting(true);
@@ -72,12 +85,13 @@ export default function GlobalSettings({ onClose, onLogout }: GlobalSettingsProp
         credentials: 'same-origin'
       });
       const data = await res.json();
+      
       if (data.success) {
         setSaveMessage('Settings saved successfully!');
         testConnections();
         setTimeout(() => setSaveMessage(''), 3000);
       } else {
-        setSaveMessage('Error: ' + data.error);
+        setSaveMessage('Error saving settings.');
       }
     } catch (e: any) {
       setSaveMessage('Failed to save settings.');
@@ -161,14 +175,33 @@ export default function GlobalSettings({ onClose, onLogout }: GlobalSettingsProp
                 </div>
                 
                 <div>
-                  <label className="block text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-1.5 ml-1">Gemini API Key (AI Tutor)</label>
+                  <label className="block text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-1.5 ml-1">OpenRouter API Key (AI Tutor)</label>
                   <input
                     type="password"
-                    value={keys.geminiApiKey}
-                    onChange={e => setKeys({...keys, geminiApiKey: e.target.value})}
+                    value={keys.openrouterApiKey}
+                    onChange={e => setKeys({...keys, openrouterApiKey: e.target.value})}
                     className="w-full bg-slate-950/50 border border-slate-700 text-white rounded-xl px-3 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-all font-mono text-xs placeholder:text-slate-600"
-                    placeholder="Enter Gemini API Key..."
+                    placeholder="Enter OpenRouter API Key..."
                   />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-1.5 ml-1">Dashboard Timezone</label>
+                  <select
+                    value={selectedTimezone}
+                    onChange={(e) => {
+                      setSelectedTimezone(e.target.value);
+                      localStorage.setItem('sniper_tz', e.target.value);
+                    }}
+                    className="w-full bg-slate-950/50 border border-slate-700 text-white rounded-xl px-3 py-2 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-all font-mono text-xs cursor-pointer"
+                  >
+                    <option value="UTC">UTC (GMT+0)</option>
+                    <option value="IST">IST (GMT+5:30)</option>
+                    <option value="EST">EST (GMT-5)</option>
+                    <option value="GMT">BST (GMT+1)</option>
+                    <option value="JST">JST (GMT+9)</option>
+                    <option value="AEDT">AEDT (GMT+11)</option>
+                  </select>
                 </div>
 
 
@@ -190,36 +223,37 @@ export default function GlobalSettings({ onClose, onLogout }: GlobalSettingsProp
                 </div>
               </div>
 
-              {/* Status Column */}
+              {/* Status & Danger Column */}
               <div className="space-y-4">
-                <h4 className="text-sm font-bold text-slate-300 flex items-center gap-2"><Activity size={14} /> Connection Status</h4>
-                
-                <div className="bg-slate-950/50 border border-slate-800 rounded-xl p-4 space-y-4">
-                  <div className="flex justify-between items-center border-b border-slate-800 pb-3">
-                    <div className="flex items-center gap-2">
-                      <Zap size={14} className="text-slate-400" />
-                      <span className="text-xs font-mono text-slate-300">Meta API</span>
+                <div className="pt-4 border-t border-slate-800/50">
+                  <h4 className="text-sm font-bold text-slate-300 flex items-center gap-2 mb-4"><Activity size={14} /> Connection Status</h4>
+                  <div className="bg-slate-950/50 border border-slate-800 rounded-xl p-4 space-y-4">
+                    <div className="flex justify-between items-center border-b border-slate-800 pb-3">
+                      <div className="flex items-center gap-2">
+                        <Zap size={14} className="text-slate-400" />
+                        <span className="text-xs font-mono text-slate-300">Meta API</span>
+                      </div>
+                      <StatusBadge state={status.metaapi} />
                     </div>
-                    <StatusBadge state={status.metaapi} />
-                  </div>
-                  
-                  <div className="flex justify-between items-center">
-                    <div className="flex items-center gap-2">
-                      <Shield size={14} className="text-slate-400" />
-                      <span className="text-xs font-mono text-slate-300">Gemini AI</span>
+                    
+                    <div className="flex justify-between items-center">
+                      <div className="flex items-center gap-2">
+                        <Shield size={14} className="text-slate-400" />
+                        <span className="text-xs font-mono text-slate-300">OpenRouter AI</span>
+                      </div>
+                      <StatusBadge state={status.openrouter} />
                     </div>
-                    <StatusBadge state={status.gemini} />
                   </div>
-                </div>
 
-                <button
-                  onClick={testConnections}
-                  disabled={isTesting}
-                  className="w-full bg-slate-800 hover:bg-slate-700 disabled:opacity-50 border border-slate-700 text-white font-bold py-2 rounded-xl transition-colors font-display tracking-wide text-xs flex items-center justify-center gap-2 mt-4"
-                >
-                  <RefreshCw className={isTesting ? "animate-spin" : ""} size={14} />
-                  {isTesting ? 'Pinging APIs...' : 'Test Connections'}
-                </button>
+                  <button
+                    onClick={testConnections}
+                    disabled={isTesting}
+                    className="w-full bg-slate-800 hover:bg-slate-700 disabled:opacity-50 border border-slate-700 text-white font-bold py-2 rounded-xl transition-colors font-display tracking-wide text-xs flex items-center justify-center gap-2 mt-4"
+                  >
+                    <RefreshCw className={isTesting ? "animate-spin" : ""} size={14} />
+                    {isTesting ? 'Pinging APIs...' : 'Test Connections'}
+                  </button>
+                </div>
 
                 <div className="pt-8 border-t border-slate-800/50 mt-8">
                   <h4 className="text-xs font-bold text-rose-400 flex items-center gap-2 mb-3"><Trash2 size={12} /> Danger Zone</h4>

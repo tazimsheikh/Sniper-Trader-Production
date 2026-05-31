@@ -1,5 +1,15 @@
 import 'dotenv/config'; // FIX: Load env vars before anything else — works in production too
 import express from 'express';
+
+// Global error handlers to prevent "Silent Death" crashes
+process.on('uncaughtException', (err) => {
+  console.error('[FATAL] Uncaught Exception:', err);
+  // Optional: Send alert to monitoring system
+});
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[FATAL] Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
 import cookieParser from 'cookie-parser';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
@@ -11,9 +21,17 @@ import { ensureBotSchema, botManagerTick, metaApiExecutionHealth, metaApiLastCon
 import { validateAllBots } from './server/botValidator';
 import { getCalendarData, getSyntheticCalendarFallback } from './server/newsStore';
 import { monitorOpenTrades } from './server/tradeManager';
+import http from 'http';
+import { initSocket } from './server/socket.js';
+
+export const app = express();
+export const httpServer = http.createServer(app);
+export const io = initSocket(httpServer);
 
 async function startServer() {
-  const app = express();
+  const { initDb } = await import('./server/db');
+  await initDb();
+  await ensureBotSchema();
   const PORT = process.env.PORT || 3000;
 
   // ── Middleware ──────────────────────────────────────────────────────────────
@@ -42,7 +60,7 @@ async function startServer() {
       const isActiveSession = gate !== 'Gap Time';
 
       const db = (await import('./server/db')).default;
-      const profiles = db.prepare('SELECT id FROM trading_profiles WHERE automation_active = 1').all() as any[];
+      const profiles = await db.prepare('SELECT id FROM trading_profiles').all() as any[];
 
       for (const profile of profiles) {
         let isNearKeyLevel = false;
@@ -89,18 +107,22 @@ async function startServer() {
     isBotTicking = true;
     try {
       const db = (await import('./server/db')).default;
-      const profiles = db.prepare('SELECT id FROM trading_profiles WHERE automation_active = 1').all() as any[];
+      const profiles = await db.prepare('SELECT id FROM trading_profiles WHERE automation_active = 1').all() as any[];
       const { getProfileMarkets, getProfileMarketSpreads } = await import('./server/marketStore');
       
       for (const profile of profiles) {
-        const spreads = getProfileMarketSpreads(profile.id);
-        const marketsSnapshot = Object.fromEntries(
-          getProfileMarkets(profile.id).map(m => {
-            const spread = spreads[m.symbol] || { bid: m.currentPrice, ask: m.currentPrice };
-            return [m.symbol, { ...m, bid: spread.bid, ask: spread.ask }];
-          })
-        );
-        await botManagerTick(profile.id, () => marketsSnapshot);
+        try {
+          const spreads = getProfileMarketSpreads(profile.id);
+          const marketsSnapshot = Object.fromEntries(
+            getProfileMarkets(profile.id).map(m => {
+              const spread = spreads[m.symbol] || { bid: m.currentPrice, ask: m.currentPrice };
+              return [m.symbol, { ...m, bid: spread.bid, ask: spread.ask }];
+            })
+          );
+          await botManagerTick(profile.id, () => marketsSnapshot);
+        } catch (e: any) {
+          console.error(`[BotManager] Tick error for Profile ${profile.id}:`, e.message);
+        }
       }
     } catch (e: any) {
       console.error('[BotManager] Tick error:', e.message);
@@ -124,81 +146,121 @@ async function startServer() {
     }
   }, 10_000); // Check open trades every 10 seconds
 
-  // ── In-memory practice ledger (non-auth users / education mode) ─────────────
-  const userProgress = {
-    balance: 10000,
-    reviewedSignalsCount: 5,
-    quizScore: 92,
-    quizTaken: 3,
-    trades: [
-      {
-        id: 't1', symbol: 'GC=F', displayName: 'XAUUSD Gold',
-        direction: 'BUY', entry: 4502.10, exit: 4517.10, profit: 1500, pips: 150,
-        setupType: 'First Green Day Reversal',
-        timestamp: new Date(Date.now() - 3600000 * 2).toISOString(), status: 'CLOSED',
-      },
-      {
-        id: 't2', symbol: 'NQ=F', displayName: 'NAS100 Futures',
-        direction: 'SELL', entry: 29585.00, exit: 29555.00, profit: 3000, pips: 300,
-        setupType: 'First Red Day Reversal',
-        timestamp: new Date(Date.now() - 3600000 * 6).toISOString(), status: 'CLOSED',
-      },
-    ],
-  };
+  // ── News Calendar Background Polling ──────────────────────────────────────────
+  // Fetch economic calendar periodically so the News Blocker is always primed
+  // even if the frontend UI is not actively open.
+  getCalendarData(true).catch(e => console.warn('[Server] Initial calendar fetch failed:', e.message));
+  setInterval(() => {
+    getCalendarData(true).catch(e => console.warn('[Server] Background calendar fetch failed:', e.message));
+  }, 6 * 60 * 60 * 1000); // Every 6 hours
+
+  // ── (Removed legacy in-memory practice ledger) ─────────────
 
   // ── API Endpoints ────────────────────────────────────────────────────────────
   
   // Helper to extract active profileId for the requesting user
-  async function getProfileIdFromReq(req: any): Promise<number> {
+  async function getProfileIdFromReq(req: any): Promise<number | null> {
     const userIdCookie = req.cookies?.auth_token;
-    if (!userIdCookie) return 999; // Default/Simulation profile
+    if (!userIdCookie) return null;
     try {
       const jwtLib = await import('jsonwebtoken');
       const decoded: any = (jwtLib.default || jwtLib).verify(userIdCookie, process.env.JWT_SECRET!);
       const db = (await import('./server/db')).default;
-      const profile = db.prepare('SELECT id FROM trading_profiles WHERE user_id = ? AND automation_active = 1 LIMIT 1').get(decoded.id) as any;
-      return profile ? profile.id : 999;
+      const profile = await db.prepare('SELECT id FROM trading_profiles WHERE user_id = ? AND automation_active = 1 LIMIT 1').get(decoded.id) as any;
+      return profile ? profile.id : null;
     } catch (e) {
-      return 999;
+      return null;
     }
   }
 
   app.get('/api/market', async (req, res) => {
-    const { getProfileMarkets } = await import('./server/marketStore');
-    const profileId = await getProfileIdFromReq(req);
-    res.json({ success: true, data: getProfileMarkets(profileId) });
+    try {
+      const { getProfileMarkets } = await import('./server/marketStore');
+      const profileId = await getProfileIdFromReq(req);
+      if (!profileId) return res.status(401).json({ success: false, error: 'Authentication required' });
+      res.json({ success: true, data: getProfileMarkets(profileId) });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: 'Internal server error: ' + e.message });
+    }
+  });
+
+  app.get('/api/market/chart/:symbol', async (req, res) => {
+    try {
+      const { getProfileM15Candles } = await import('./server/marketStore');
+      const profileId = await getProfileIdFromReq(req);
+      if (!profileId) return res.status(401).json({ success: false, error: 'Authentication required' });
+      
+      const symbol = req.params.symbol;
+      let candles = getProfileM15Candles(profileId, symbol);
+      
+      // If cache is empty, fetch on-demand!
+      if (!candles || candles.length === 0) {
+        const { getProviderForProfile, toBrokerSymbol } = await import('./server/candleProvider');
+        const provider = await getProviderForProfile(profileId);
+        candles = await provider.get15MinuteCandles(symbol, toBrokerSymbol(symbol), 200);
+      }
+      
+      // Map to lightweight-charts format: { time, open, high, low, close }
+      const formatted = candles.map(c => ({
+        time: Math.floor(new Date(c.date || c.time).getTime() / 1000), // UNIX timestamp in seconds
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close
+      }));
+      
+      res.json({ success: true, data: formatted });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: 'Internal server error: ' + e.message });
+    }
   });
 
   app.get('/api/alerts', async (req, res) => {
-    const { getProfileAlerts } = await import('./server/marketStore');
-    const profileId = await getProfileIdFromReq(req);
-    res.json({ success: true, data: getProfileAlerts(profileId) });
+    try {
+      const { getProfileAlerts } = await import('./server/marketStore');
+      const profileId = await getProfileIdFromReq(req);
+      if (!profileId) return res.status(401).json({ success: false, error: 'Authentication required' });
+      res.json({ success: true, data: getProfileAlerts(profileId) });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: 'Internal server error: ' + e.message });
+    }
   });
 
   // ── Bot Engine Health Status ──────────────────────────────────────────────
   app.get('/api/bot-health', async (req, res) => {
-    const profileId = await getProfileIdFromReq(req);
-    // TODO: Ideally bot manager tracks health per-profile. 
-    // Using global for now since connection errors would be isolated inside `botManagerTick`.
-    const blocked = isMetaApiTradeBlocked();
-    res.json({ 
-      success: true, 
-      health: metaApiExecutionHealth, 
-      lastConnected: metaApiLastConnected,
-      pendingSignals: 0,
-      missedSignals: 0,
-      tradingBlocked: blocked,
-      offlineSince: blocked ? (metaApiLastConnected || null) : null,
-      isConnecting: isMetaApiConnecting(),
-      profileId
-    });
+    try {
+      const profileId = await getProfileIdFromReq(req);
+      if (!profileId) return res.status(401).json({ success: false, error: 'Authentication required' });
+      // TODO: Ideally bot manager tracks health per-profile. 
+      // Using global for now since connection errors would be isolated inside `botManagerTick`.
+      const blocked = isMetaApiTradeBlocked(profileId);
+      const lastConnected = metaApiLastConnected.get(profileId) || 0;
+      res.json({ 
+        success: true, 
+        health: metaApiExecutionHealth.get(profileId) || 'offline', 
+        lastConnected: lastConnected,
+        pendingSignals: 0,
+        missedSignals: 0,
+        tradingBlocked: blocked,
+        offlineSince: blocked ? (lastConnected || null) : null,
+        isConnecting: isMetaApiConnecting(),
+        profileId
+      });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: 'Internal server error: ' + e.message });
+    }
   });
 
   // ── Data-source status (Yahoo vs MetaAPI) ────────────────────────────────
   app.get('/api/data-source', async (req, res) => {
-    const { getProfileActiveDataSource } = await import('./server/marketStore');
-    const profileId = await getProfileIdFromReq(req);
-    res.json({ success: true, source: getProfileActiveDataSource(profileId) });
+    try {
+      const { getProfileActiveDataSource } = await import('./server/marketStore');
+      const profileId = await getProfileIdFromReq(req);
+      if (!profileId) return res.status(401).json({ success: false, error: 'Authentication required' });
+      res.json({ success: true, source: getProfileActiveDataSource(profileId) });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: 'Internal server error: ' + e.message });
+    }
   });
 
   app.get('/api/economic-calendar', async (req, res) => {
@@ -218,6 +280,7 @@ async function startServer() {
   app.post('/api/refresh-data-source', async (req, res) => {
     try {
       const profileId = await getProfileIdFromReq(req);
+      if (!profileId) return res.status(401).json({ success: false, error: 'Authentication required' });
       const { getOrCreateProfileStore } = await import('./server/marketStore');
       const store = await getOrCreateProfileStore(profileId);
       // Wait for the next tick to rebuild it naturally, or force a reset:
@@ -251,10 +314,12 @@ async function startServer() {
         const jwtLib = await import('jsonwebtoken');
         try {
           const decoded: any = (jwtLib.default || jwtLib).verify(userIdCookie, process.env.JWT_SECRET!);
-          const profile = db.prepare('SELECT id FROM trading_profiles WHERE user_id = ? LIMIT 1').get(decoded.id) as any;
+          const profile = await db.prepare('SELECT id FROM trading_profiles WHERE user_id = ? LIMIT 1').get(decoded.id) as any;
           if (profile) {
-            db.prepare('UPDATE trading_profiles SET metaapi_token = ?, metaapi_account_id = ? WHERE id = ?')
-              .run(encrypt(token), account._id, profile.id);
+            await db.prepare('UPDATE users SET metaapi_token = ? WHERE id = ?')
+              .run(encrypt(token), decoded.id);
+            await db.prepare('UPDATE trading_profiles SET metaapi_account_id = ? WHERE id = ? AND user_id = ?')
+              .run(encrypt(account._id), profile.id, decoded.id);
             const { getOrCreateProfileStore } = await import('./server/marketStore');
             const store = await getOrCreateProfileStore(profile.id);
             await store.updatePrices(true);
@@ -270,58 +335,66 @@ async function startServer() {
     }
   });
 
-  app.post('/api/alerts/trigger', async (req, res) => {
-    const { symbol, pattern } = req.body;
-    if (!symbol || !pattern) {
-      return res.status(400).json({ success: false, error: 'Missing symbol or pattern type' });
-    }
-
-    const verification = await verifySignalWithAI(symbol, pattern);
-    if (!verification.approved) {
-      return res.status(400).json({ success: false, error: 'Signal rejected by AI validation: ' + verification.reasoning });
-    }
-
-    const alert = manuallyTriggerTrap(symbol, pattern);
-    res.json({ success: true, data: alert });
-  });
-
-  app.get('/api/progress', (_req, res) => {
-    res.json({ success: true, data: userProgress });
-  });
-
-  app.post('/api/progress/add-trade', (req, res) => {
-    const { symbol, displayName, direction, entry, exit, profit, pips, setupType } = req.body;
-    const newTrade = {
-      id: `t-${Date.now()}`, symbol, displayName: displayName || symbol,
-      direction, entry: Number(entry), exit: Number(exit),
-      profit: Number(profit), pips: Number(pips), setupType,
-      timestamp: new Date().toISOString(), status: 'CLOSED',
-    };
-    userProgress.trades.unshift(newTrade);
-    userProgress.balance += Number(profit);
-    userProgress.reviewedSignalsCount += 1;
-    res.json({ success: true, data: userProgress });
-  });
-
-  app.post('/api/progress/quiz', (req, res) => {
-    const { score } = req.body;
-    if (typeof score !== 'number') {
-      return res.status(400).json({ success: false, error: 'Quiz score must be a number' });
-    }
-    userProgress.quizTaken += 1;
-    userProgress.quizScore = Math.round(
-      (userProgress.quizScore * (userProgress.quizTaken - 1) + score) / userProgress.quizTaken
-    );
-    res.json({ success: true, data: userProgress });
-  });
-
-  app.post('/api/tutor', async (req, res) => {
-    const { prompt, history, relatedSignalId } = req.body;
+  // ── Live Bot Status Endpoint ──────────────────────────────────────────────────
+  app.get('/api/bots/live-status', async (req, res) => {
     try {
-      const { getProfileAlertById } = await import('./server/marketStore');
       const profileId = await getProfileIdFromReq(req);
-      const activeSignal = relatedSignalId ? getProfileAlertById(profileId, relatedSignalId) : undefined;
-      const response = await askTutorAgent(prompt || '', history || [], activeSignal);
+      if (!profileId) return res.status(401).json({ success: false, error: 'Authentication required' });
+      const { getProfileActiveBots } = await import('./server/botManager');
+      const activeBots = await getProfileActiveBots(profileId);
+      
+      const db = (await import('./server/db')).default;
+      // Get all open trades for this profile to map to bots
+      const openTrades = await db.prepare(`SELECT bot_id, broker_symbol, direction, entry_price FROM bot_trade_states WHERE profile_id = ? AND status = 'OPEN'`).all(profileId) as any[];
+
+      const botStatusData = activeBots.map(botId => {
+        // Find if this bot has an open trade
+        const trade = openTrades.find(t => t.bot_id === botId);
+        if (trade) {
+          return {
+            id: botId,
+            symbol: trade.broker_symbol,
+            status: 'in_trade',
+            details: `${trade.direction} from ${trade.entry_price}`
+          };
+        } else {
+          return {
+            id: botId,
+            symbol: 'ANY', // Scanning all assigned symbols
+            status: 'watching',
+            details: 'Scanning for setups'
+          };
+        }
+      });
+      
+      res.json({ success: true, data: botStatusData });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // ── Context-Aware AI Tutor Endpoint ───────────────────────────────────────────
+  app.post('/api/tutor', async (req, res) => {
+    const { prompt, history } = req.body;
+    try {
+      const profileId = await getProfileIdFromReq(req);
+      if (!profileId) return res.status(401).json({ success: false, error: 'Authentication required' });
+      const { getProfileActiveBots } = await import('./server/botManager');
+      const activeBots = await getProfileActiveBots(profileId);
+      
+      const db = (await import('./server/db')).default;
+      const openTrades = await db.prepare(`SELECT bot_id, broker_symbol, direction, entry_price FROM bot_trade_states WHERE profile_id = ? AND status = 'OPEN'`).all(profileId) as any[];
+
+      const botStatusData = activeBots.map(botId => {
+        const trade = openTrades.find(t => t.bot_id === botId);
+        if (trade) {
+          return { id: botId, symbol: trade.broker_symbol, status: 'in_trade', details: `${trade.direction} from ${trade.entry_price}` };
+        } else {
+          return { id: botId, symbol: 'scanning', status: 'watching', details: 'Scanning for setups' };
+        }
+      });
+
+      const response = await askTutorAgent(prompt || '', history || [], { bots: botStatusData });
       res.json({ success: true, response });
     } catch (err: any) {
       console.error('[Server] Tutor route failure:', err);
@@ -343,7 +416,7 @@ async function startServer() {
   }
 
   // ── Start listening ──────────────────────────────────────────────────────────
-  app.listen(Number(PORT), '0.0.0.0', () => {
+  httpServer.listen(Number(PORT), '0.0.0.0', () => {
     console.log(`\n========================================================`);
     console.log(`🚀 Sniper Trading Analyst is running!`);
     console.log(`👉 Local Address:  http://localhost:${PORT}`);

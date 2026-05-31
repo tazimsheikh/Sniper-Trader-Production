@@ -1,24 +1,15 @@
-import { GoogleGenAI } from '@google/genai';
-
-let _ai: any = null;
-function getAI() {
-  if (!_ai) {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      console.warn('[NewsAgent] GEMINI_API_KEY is missing. Calendar will not update.');
-      return null;
-    }
-    _ai = new GoogleGenAI({
-      apiKey: apiKey,
-      httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
-    });
+function getApiKey() {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) {
+    console.warn('[NewsAgent] OPENROUTER_API_KEY is missing. Calendar will not update.');
+    return null;
   }
-  return _ai;
+  return apiKey;
 }
 
 export async function fetchLiveEconomicCalendar(): Promise<any[]> {
-  const ai = getAI();
-  if (!ai) return [];
+  const apiKey = getApiKey();
+  if (!apiKey) return [];
 
   const today = new Date().toISOString().split('T')[0];
   const prompt = `Search the web for this week's high-impact and medium-impact macroeconomic events (starting from ${today}) from major economic calendars (like Forex Factory or Investing.com) for USD, EUR, GBP, JPY, AUD, CAD, CHF, NZD.
@@ -41,21 +32,38 @@ Rules:
 4. Do not include extra text, return ONLY the JSON array.`;
 
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      tools: [{ googleSearch: {} }],
-      config: { responseMimeType: 'application/json' }
+    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: "perplexity/llama-3.1-sonar-large-128k-online",
+        messages: [{ role: "user", content: prompt }]
+      })
     });
 
-    if (response.text) {
-      const data = JSON.parse(response.text);
-      if (Array.isArray(data)) {
-        return data;
-      }
+    if (!res.ok) {
+      throw new Error(`OpenRouter API error: ${res.status} ${res.statusText}`);
+    }
+
+    const data = await res.json();
+    let text = data.choices[0].message.content || "";
+    
+    // Clean up potential markdown formatting from Perplexity
+    if (text.includes('\`\`\`json')) {
+      text = text.split('\`\`\`json')[1].split('\`\`\`')[0];
+    } else if (text.includes('\`\`\`')) {
+      text = text.split('\`\`\`')[1].split('\`\`\`')[0];
+    }
+
+    const parsedData = JSON.parse(text.trim());
+    if (Array.isArray(parsedData)) {
+      return parsedData;
     }
   } catch (err: any) {
-    console.error('[NewsAgent] Failed to fetch economic calendar from Gemini:', err.message);
+    console.error('[NewsAgent] Failed to fetch economic calendar from OpenRouter:', err.message);
   }
   
   return [];

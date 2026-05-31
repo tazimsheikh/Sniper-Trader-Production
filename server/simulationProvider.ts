@@ -213,6 +213,55 @@ export const SimulationProvider: CandleProvider = {
     return result;
   },
 
+  async get5MinuteCandles(_yahoo: string, broker: string, count: number): Promise<OHLCVCandle[]> {
+    const currentIdx = getCandleIndexAtTime(broker, simulatedTimeMs);
+    if (currentIdx === -1) return [];
+
+    const data = historicalData[broker];
+    if (!data) return [];
+
+    const result: OHLCVCandle[] = [];
+    
+    let i = currentIdx;
+    let current5M: OHLCVCandle | null = null;
+    let current5MStartMs = 0;
+
+    while (i >= 0 && result.length < count) {
+      const ms = data.timestamps[i];
+      const d = new Date(ms);
+      
+      d.setSeconds(0, 0);
+      d.setMinutes(Math.floor(d.getMinutes() / 5) * 5);
+      const boundaryMs = d.getTime();
+
+      if (!current5M || current5MStartMs !== boundaryMs) {
+        if (current5M) {
+          result.push(current5M);
+          if (result.length >= count) break;
+        }
+        current5MStartMs = boundaryMs;
+        current5M = {
+          date: new Date(boundaryMs).toISOString(),
+          open: data.opens[i],
+          high: data.highs[i],
+          low: data.lows[i],
+          close: data.closes[i]
+        };
+      } else {
+        current5M.high = Math.max(current5M.high, data.highs[i]);
+        current5M.low = Math.min(current5M.low, data.lows[i]);
+        current5M.open = data.opens[i];
+      }
+      i--;
+    }
+    
+    if (current5M && result.length < count) {
+      result.push(current5M);
+    }
+
+    return result.reverse();
+  },
+
   async get15MinuteCandles(_yahoo: string, broker: string, count: number): Promise<OHLCVCandle[]> {
     const currentIdx = getCandleIndexAtTime(broker, simulatedTimeMs);
     if (currentIdx === -1) return [];

@@ -89,6 +89,7 @@ function runSim(m1Data: Candle[], config: Config, pipSize: number, pipValue: num
   for (let cIdx = 0; cIdx < m1Data.length; cIdx++) {
     const c = m1Data[cIdx];
     m1Window.push(c);
+    if (m1Window.length > 50) m1Window.shift();
     const d = new Date(c.time);
     const dPart = c.dateStr.split('T')[0];
     const utcH = d.getUTCHours();
@@ -98,6 +99,7 @@ function runSim(m1Data: Candle[], config: Config, pipSize: number, pipValue: num
     if (dPart !== currentDayStr) {
       if (currentDayStr !== '' && m1Window.length > 1) {
         dailyCandles.push({ time: new Date(`${currentDayStr}T00:00:00Z`).getTime(), dateStr: currentDayStr, open: dayOpen, high: dayHigh, low: dayLow, close: m1Window[m1Window.length-2].close });
+        if (dailyCandles.length > 50) dailyCandles.shift();
       }
       currentDayStr = dPart; dayOpen = c.open; dayHigh = c.high; dayLow = c.low;
     } else { dayHigh = Math.max(dayHigh, c.high); dayLow = Math.min(dayLow, c.low); }
@@ -108,6 +110,7 @@ function runSim(m1Data: Candle[], config: Config, pipSize: number, pipValue: num
     if (m15Str !== currentM15Str) {
       if (currentM15Str !== '' && m1Window.length > 1) {
         m15Candles.push({ time: m1Window[m1Window.length-2].time, dateStr: currentM15Str, open: m15Open, high: m15High, low: m15Low, close: m1Window[m1Window.length-2].close });
+        if (m15Candles.length > 200) m15Candles.shift();
       }
       currentM15Str = m15Str; m15Open = c.open; m15High = c.high; m15Low = c.low;
     } else { m15High = Math.max(m15High, c.high); m15Low = Math.min(m15Low, c.low); }

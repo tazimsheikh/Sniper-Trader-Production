@@ -48,6 +48,9 @@ export interface CandleProvider {
   /** Fetch the last `minutes` 1-minute candles (used for trap detection) */
   getMinuteCandles(yahooSymbol: string, brokerSymbol: string, minutes: number): Promise<OHLCVCandle[]>;
 
+  /** Fetch the last `count` 5-minute candles (used for engine EMAs and Coil Box) */
+  get5MinuteCandles(yahooSymbol: string, brokerSymbol: string, count: number): Promise<OHLCVCandle[]>;
+
   /** Fetch the last `count` 15-minute candles (used for 3-push and BOS detection) */
   get15MinuteCandles(yahooSymbol: string, brokerSymbol: string, count: number): Promise<OHLCVCandle[]>;
 
@@ -121,11 +124,27 @@ export const YahooProvider: CandleProvider = {
   },
 
   async getMinuteCandles(yahooSymbol, _broker, minutes) {
-    const chart = await yf.chart(yahooSymbol, { interval: '1m', range: '1d' });
+    const period1 = new Date();
+    period1.setDate(period1.getDate() - 2);
+    const chart = await yf.chart(yahooSymbol, { interval: '1m', period1: period1.toISOString().split('T')[0] });
     const all: any[] = chart?.quotes || [];
     const slice = all.slice(-Math.max(minutes + 1, 30)); // always get at least 30
     return slice
-      .filter((c: any) => c.open && c.close)
+      .filter((c: any, i: number, arr: any[]) => c.open && c.close && c.isClosed !== false && (c.isClosed || i < arr.length - 1))
+      .map((c: any) => ({
+        date: new Date(c.date).toISOString(),
+        open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume,
+      }));
+  },
+
+  async get5MinuteCandles(yahooSymbol, _broker, count) {
+    const period1 = new Date();
+    period1.setDate(period1.getDate() - 5);
+    const chart = await yf.chart(yahooSymbol, { interval: '5m', period1: period1.toISOString().split('T')[0] });
+    const all: any[] = chart?.quotes || [];
+    const slice = all.slice(-Math.max(count + 1, 200));
+    return slice
+      .filter((c: any, i: number, arr: any[]) => c.open && c.close && c.isClosed !== false && (c.isClosed || i < arr.length - 1))
       .map((c: any) => ({
         date: new Date(c.date).toISOString(),
         open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume,
@@ -133,11 +152,13 @@ export const YahooProvider: CandleProvider = {
   },
 
   async get15MinuteCandles(yahooSymbol, _broker, count) {
-    const chart = await yf.chart(yahooSymbol, { interval: '15m', range: '5d' });
+    const period1 = new Date();
+    period1.setDate(period1.getDate() - 7);
+    const chart = await yf.chart(yahooSymbol, { interval: '15m', period1: period1.toISOString().split('T')[0] });
     const all: any[] = chart?.quotes || [];
     const slice = all.slice(-Math.max(count + 1, 30));
     return slice
-      .filter((c: any) => c.open && c.close)
+      .filter((c: any, i: number, arr: any[]) => c.open && c.close && c.isClosed !== false && (c.isClosed || i < arr.length - 1))
       .map((c: any) => ({
         date: new Date(c.date).toISOString(),
         open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume,
@@ -212,17 +233,18 @@ function buildMetaApiProvider(profile: {token: string, accountId: string}): Cand
       try {
         await getConnection(profile.token, profile.accountId);
         const account = await getSharedAccount(profile.token, profile.accountId);
-        const startTime = new Date();
-        startTime.setDate(startTime.getDate() - days);
-        const candles: any[] = await account.getHistoricalCandles(broker, '1d', startTime, days + 2);
+        const candles: any[] = await account.getHistoricalCandles(broker, '1d', undefined, days + 2);
         return candles
-          .filter((c: any) => c.open && c.close)
+          .filter((c: any) => c.open && c.close && c.isClosed !== false)
           .map((c: any) => ({
             date: new Date(c.time).toISOString().split('T')[0],
             open: c.open, high: c.high, low: c.low, close: c.close, volume: c.tickVolume,
           }));
       } catch (err: any) {
         console.warn(`[MetaApiProvider] Daily candles failed for ${broker} on account ${profile.accountId}:`, err.message);
+        if (err.message.includes('Fast fail')) {
+           return YahooProvider.getDailyCandles(_yahoo, broker, days);
+        }
         if (err.message.includes('connect') || err.message.includes('disconnect') || err.message.includes('token') || err.message.includes('auth')) {
           clearSharedConnection(profile.token, profile.accountId);
         }
@@ -235,17 +257,18 @@ function buildMetaApiProvider(profile: {token: string, accountId: string}): Cand
       try {
         await getConnection(profile.token, profile.accountId);
         const account = await getSharedAccount(profile.token, profile.accountId);
-        const startTime = new Date();
-        startTime.setMinutes(startTime.getMinutes() - minutes - 5);
-        const candles: any[] = await account.getHistoricalCandles(broker, '1m', startTime, minutes + 10);
+        const candles: any[] = await account.getHistoricalCandles(broker, '1m', undefined, minutes + 10);
         return candles
-          .filter((c: any) => c.open && c.close)
+          .filter((c: any, i: number, arr: any[]) => c.open && c.close && c.isClosed !== false && (c.isClosed || i < arr.length - 1))
           .map((c: any) => ({
             date: new Date(c.time).toISOString(),
             open: c.open, high: c.high, low: c.low, close: c.close, volume: c.tickVolume,
           }));
       } catch (err: any) {
-        console.warn(`[MetaApiProvider] Minute candles failed for ${broker} on account ${profile.accountId}:`, err.message);
+        console.warn(`[MetaApiProvider] 1m candles failed for ${broker} on account ${profile.accountId}:`, err.message);
+        if (err.message.includes('Fast fail')) {
+           return YahooProvider.getMinuteCandles(_yahoo, broker, minutes);
+        }
         if (err.message.includes('connect') || err.message.includes('disconnect') || err.message.includes('token') || err.message.includes('auth')) {
           clearSharedConnection(profile.token, profile.accountId);
         }
@@ -254,21 +277,46 @@ function buildMetaApiProvider(profile: {token: string, accountId: string}): Cand
       return YahooProvider.getMinuteCandles(_yahoo, broker, minutes);
     },
 
-    async get15MinuteCandles(_yahoo, broker, count) {
+    async get5MinuteCandles(_yahoo, broker, count) {
       try {
         await getConnection(profile.token, profile.accountId);
         const account = await getSharedAccount(profile.token, profile.accountId);
-        const startTime = new Date();
-        startTime.setMinutes(startTime.getMinutes() - count * 15 - 60);
-        const candles: any[] = await account.getHistoricalCandles(broker, '15m', startTime, count + 10);
+        const candles: any[] = await account.getHistoricalCandles(broker, '5m', undefined, count + 10);
         return candles
-          .filter((c: any) => c.open && c.close)
+          .filter((c: any, i: number, arr: any[]) => c.open && c.close && c.isClosed !== false && (c.isClosed || i < arr.length - 1))
           .map((c: any) => ({
             date: new Date(c.time).toISOString(),
             open: c.open, high: c.high, low: c.low, close: c.close, volume: c.tickVolume,
           }));
       } catch (err: any) {
-        console.warn(`[MetaApiProvider] 15Minute candles failed for ${broker} on account ${profile.accountId}:`, err.message);
+        console.warn(`[MetaApiProvider] 5m candles failed for ${broker} on account ${profile.accountId}:`, err.message);
+        if (err.message.includes('Fast fail')) {
+           return YahooProvider.get5MinuteCandles(_yahoo, broker, count);
+        }
+        if (err.message.includes('connect') || err.message.includes('disconnect') || err.message.includes('token') || err.message.includes('auth')) {
+          clearSharedConnection(profile.token, profile.accountId);
+        }
+      }
+      metaApiSyncStatus = 'offline';
+      return YahooProvider.get5MinuteCandles(_yahoo, broker, count);
+    },
+
+    async get15MinuteCandles(_yahoo, broker, count) {
+      try {
+        await getConnection(profile.token, profile.accountId);
+        const account = await getSharedAccount(profile.token, profile.accountId);
+        const candles: any[] = await account.getHistoricalCandles(broker, '15m', undefined, count + 10);
+        return candles
+          .filter((c: any, i: number, arr: any[]) => c.open && c.close && c.isClosed !== false && (c.isClosed || i < arr.length - 1))
+          .map((c: any) => ({
+            date: new Date(c.time).toISOString(),
+            open: c.open, high: c.high, low: c.low, close: c.close, volume: c.tickVolume,
+          }));
+      } catch (err: any) {
+        console.warn(`[MetaApiProvider] 15m candles failed for ${broker} on account ${profile.accountId}:`, err.message);
+        if (err.message.includes('Fast fail')) {
+           return YahooProvider.get15MinuteCandles(_yahoo, broker, count);
+        }
         if (err.message.includes('connect') || err.message.includes('disconnect') || err.message.includes('token') || err.message.includes('auth')) {
           clearSharedConnection(profile.token, profile.accountId);
         }
@@ -312,6 +360,9 @@ function buildMetaApiProvider(profile: {token: string, accountId: string}): Cand
         };
       } catch (err: any) {
         console.warn(`[MetaApiProvider] Live quote failed for ${broker} on account ${profile.accountId}:`, err.message);
+        if (err.message.includes('Fast fail')) {
+           return YahooProvider.getLiveQuote(_yahoo, broker);
+        }
         if (err.message.includes('connect') || err.message.includes('disconnect') || err.message.includes('token') || err.message.includes('auth')) {
           clearSharedConnection(profile.token, profile.accountId);
         }
@@ -328,12 +379,25 @@ function buildMetaApiProvider(profile: {token: string, accountId: string}): Cand
         const results = await Promise.allSettled(
           symbols.map(s => this.getLiveQuote(s.yahoo, s.broker))
         );
-        return results
-          .filter((r): r is PromiseFulfilledResult<LiveQuote> => r.status === 'fulfilled')
-          .map(r => r.value);
+        const validQuotes: LiveQuote[] = [];
+        for (let i = 0; i < results.length; i++) {
+          const r = results[i];
+          if (r.status === 'fulfilled') {
+            validQuotes.push(r.value);
+          } else {
+            console.warn(`[MetaApiProvider] Batch quote failed for ${symbols[i].broker}, falling back to Yahoo.`);
+            try {
+              validQuotes.push(await YahooProvider.getLiveQuote(symbols[i].yahoo, symbols[i].broker));
+            } catch (e) {
+              // Ignore if Yahoo also fails
+            }
+          }
+        }
+        return validQuotes;
       } catch (err: any) {
         if (err.message.includes('Fast fail')) {
           metaApiSyncStatus = 'syncing';
+          return YahooProvider.getLiveQuoteBatch(symbols);
         }
       }
       metaApiSyncStatus = 'offline';
@@ -350,23 +414,28 @@ function buildMetaApiProvider(profile: {token: string, accountId: string}): Cand
  */
 import { SimulationProvider } from './simulationProvider';
 
-export function getProviderForProfile(profileId: number): CandleProvider {
+let getProviderForProfilePromise: Promise<any> | null = null;
+export async function getProviderForProfile(profileId: number): Promise<CandleProvider> {
   if (process.env.SIMULATION_MODE === 'true') {
     return SimulationProvider;
   }
 
   try {
-    const profile = db.prepare(
-      `SELECT u.metaapi_token, tp.metaapi_account_id
+    const db = (await import('./db')).default;
+    const profile = await db.prepare(
+      `SELECT u.metaapi_token, u.metaapi_account_id as user_account_id, tp.metaapi_account_id
        FROM trading_profiles tp
        JOIN users u ON u.id = tp.user_id
        WHERE tp.id = ?`
     ).get(profileId) as any;
 
-    if (profile && profile.metaapi_token && profile.metaapi_account_id && profile.metaapi_token !== 'dummy_token' && profile.metaapi_account_id !== 'dummy_acc') {
+    const activeAccountId = profile?.metaapi_account_id || profile?.user_account_id;
+
+    if (profile && profile.metaapi_token && activeAccountId && profile.metaapi_token !== 'dummy_token' && activeAccountId !== 'dummy_acc') {
       try {
         const rawToken = isEncrypted(profile.metaapi_token) ? decrypt(profile.metaapi_token) : profile.metaapi_token;
-        return buildMetaApiProvider({ token: rawToken, accountId: profile.metaapi_account_id });
+        const rawAccountId = isEncrypted(activeAccountId) ? decrypt(activeAccountId) : activeAccountId;
+        return buildMetaApiProvider({ token: rawToken, accountId: rawAccountId });
       } catch {
         // Decryption failed — skip this profile
       }

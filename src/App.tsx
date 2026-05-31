@@ -1,24 +1,23 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { MarketData, TrapSignal, ChatMessage } from './types';
-import WatchList from './components/WatchList';
-import AlertFeed from './components/AlertFeed';
-import TutorPanel from './components/TutorPanel';
-import VoiceTutorCall from './components/VoiceTutorCall';
-import EconomicCalendar from './components/EconomicCalendar';
-import SimpleAlertFeed from './components/SimpleAlertFeed';
+import React, { useState, useEffect } from 'react';
+import { Clock, Zap, MessageSquare, AlertTriangle, LogOut, Settings, Info, X } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+import { useEconomicNews } from './hooks/useEconomicNews';
+import { useSound } from './hooks/useSound';
+
 import AutomateDashboard from './components/AutomateDashboard';
 import LoginScreen from './components/LoginScreen';
 import GlobalSettings from './components/GlobalSettings';
-import BacktestViewer from './pages/BacktestViewer';
-import { GraduationCap, Clock, HelpCircle, Activity, Award, CheckCircle, Presentation, Zap, Radio, MessageSquare, AlertTriangle, LogOut, Settings, X } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
-import { useEconomicNews } from './hooks/useEconomicNews';
+import SignalBar from './components/SignalBar';
+import MinimalAITutor from './components/MinimalAITutor';
+import TopNavWidgets from './components/TopNavWidgets';
+import AboutSection from './components/AboutSection';
+import { WebSocketProvider } from './context/WebSocketContext';
+import ErrorBoundary from './components/ErrorBoundary';
 
 // ── Global fetch wrapper — handles 401 session expiry silently ───────────────
 async function apiFetch(url: string, options: RequestInit = {}): Promise<Response> {
   const res = await fetch(url, { credentials: 'same-origin', ...options });
   if (res.status === 401) {
-    // Session expired — force re-login by reloading the page
     console.warn('[Auth] Session expired — redirecting to login.');
     window.location.reload();
   }
@@ -26,41 +25,14 @@ async function apiFetch(url: string, options: RequestInit = {}): Promise<Respons
 }
 
 export default function App() {
+  const { playClick } = useSound();
   const { activeWarning } = useEconomicNews();
-
-  // ── Auth state: null = not logged in, object = logged in, undefined = checking ──
-  const [authUser, setAuthUser]   = useState<any | null | undefined>(undefined);
-  const [appMode, setAppMode]     = useState<'signal' | 'education' | 'automation'>('education');
-  const [markets, setMarkets]     = useState<MarketData[]>([]);
-  const [alerts, setAlerts]       = useState<TrapSignal[]>([]);
-  const [userProgress, setUserProgress] = useState<any>({});
-
-  const [selectedAssetSymbol, setSelectedAssetSymbol] = useState('NQ=F');
-  const [activeSignal, setActiveSignal]               = useState<TrapSignal | null>(null);
-  const [chatMessages, setChatMessages]               = useState<ChatMessage[]>([]);
-  const chatMessagesRef = useRef<ChatMessage[]>([]);    // FIX: Ref to always have latest value
-  chatMessagesRef.current = chatMessages;
-
+  const [authUser, setAuthUser] = useState<any | null | undefined>(undefined);
+  const [showAITutor, setShowAITutor] = useState(false);
+  const [showAbout, setShowAbout] = useState(false);
+  
   const [showGlobalSettings, setShowGlobalSettings] = useState(false);
-  const [newTokenInput, setNewTokenInput] = useState('');
-  const [tokenUpdateStatus, setTokenUpdateStatus] = useState('');
 
-  const [isThinking, setIsThinking]     = useState(false);
-  const [activeView, setActiveView]     = useState<'monitor' | 'calendar' | 'ai-assistant' | 'backtest'>('monitor');
-  const [selectedTimezone, setSelectedTimezone] = useState<string>('IST');
-  const [showMonitorAlerts, setShowMonitorAlerts]     = useState(true);
-  const [showMonitorWatchlist, setShowMonitorWatchlist] = useState(true);
-
-  const [metaApiMode, setMetaApiMode] = useState<'demo' | 'live'>('demo');
-  const [metaApiStatus, setMetaApiStatus] = useState<'offline' | 'syncing' | 'connected'>('offline');
-
-  const currentMarket = markets.find(m => m.symbol === selectedAssetSymbol) || markets[0];
-
-  const [timeState, setTimeState] = useState({
-    londonActive: false, comexActive: false, ny10Active: false, utcClock: '',
-  });
-
-  // ── Check auth status on mount (cookie-based — no localStorage) ─────────────
   useEffect(() => {
     fetch('/api/auth/me', { credentials: 'same-origin' })
       .then(res => {
@@ -70,9 +42,6 @@ export default function App() {
       .then(data => {
         if (data?.success && data.user) {
           setAuthUser(data.user);
-          if (data.user.hasMetaApiToken) {
-            setMetaApiMode('live');
-          }
         } else {
           setAuthUser(null);
         }
@@ -80,74 +49,9 @@ export default function App() {
       .catch(() => setAuthUser(null));
   }, []);
 
-  // ── Market data polling with AbortController (FIX: no memory leaks) ─────────
-  useEffect(() => {
-    if (!authUser) return; // Don't poll if not logged in or still checking auth
+  // Polling for MetaAPI status and clock has been moved to TopNavWidgets.tsx
+  // to prevent the entire React app from re-rendering every 1 second.
 
-    const controller = new AbortController();
-    let mounted = true;
-
-    const poll = async () => {
-      try {
-        const [mRes, aRes, sRes] = await Promise.all([
-          fetch('/api/market',  { signal: controller.signal, credentials: 'same-origin' }),
-          fetch('/api/alerts',  { signal: controller.signal, credentials: 'same-origin' }),
-          fetch('/api/auth/metaapi/status', { signal: controller.signal, credentials: 'same-origin' }),
-        ]);
-        if (mounted && mRes.ok) {
-          const mData = await mRes.json();
-          if (mData?.success) setMarkets(mData.data);
-        }
-        if (mounted && aRes.ok) {
-          const aData = await aRes.json();
-          if (aData?.success) setAlerts(aData.data);
-        }
-        if (mounted && sRes.ok) {
-          const sData = await sRes.json();
-          if (sData?.success) setMetaApiStatus(sData.status);
-        }
-      } catch (e: any) {
-        if (e.name !== 'AbortError') { /* silent backoff */ }
-      }
-      updateGatesClocks();
-    };
-
-    poll();
-    const interval = setInterval(poll, 1000);
-    return () => { mounted = false; controller.abort(); clearInterval(interval); };
-  }, [authUser, selectedTimezone]);
-
-  // ── Progress fetch (once on login) ──────────────────────────────────────────
-  useEffect(() => {
-    if (!authUser) return;
-    fetch('/api/progress', { credentials: 'same-origin' })
-      .then(r => r.json())
-      .then(d => { if (d?.success) setUserProgress(d.data); })
-      .catch(() => {});
-  }, [authUser]);
-
-  const updateGatesClocks = () => {
-    const now = new Date();
-    const utcHours = now.getUTCHours();
-    const utcMinutes = now.getUTCMinutes();
-    const totalMin = utcHours * 60 + utcMinutes;
-
-    const londonActive = totalMin >= 420 && totalMin <= 570;
-    const comexActive  = totalMin >= 740 && totalMin <= 810;
-    const ny10Active   = totalMin >= 840 && totalMin <= 930;
-
-    let tzString = 'UTC';
-    if (selectedTimezone === 'IST')  tzString = 'Asia/Kolkata';
-    else if (selectedTimezone === 'EST') tzString = 'America/New_York';
-    else if (selectedTimezone === 'GMT') tzString = 'Europe/London';
-    else if (selectedTimezone === 'JST') tzString = 'Asia/Tokyo';
-    else if (selectedTimezone === 'AEDT') tzString = 'Australia/Sydney';
-
-    const timeStr = now.toLocaleTimeString('en-US', { hour12: false, timeZone: tzString }) + ' ' + selectedTimezone;
-    setTimeState({ londonActive, comexActive, ny10Active, utcClock: timeStr });
-  };
-
-  // ── Logout (FIX: clears HttpOnly cookie server-side) ────────────────────────
   const handleLogout = async () => {
     try {
       await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
@@ -156,110 +60,6 @@ export default function App() {
     }
   };
 
-  const handleTriggerSimulation = async (symbol: string, pattern: string) => {
-    try {
-      const res = await apiFetch('/api/alerts/trigger', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ symbol, pattern }),
-      });
-      const data = await res.json();
-      if (data?.success) {
-        await fetch('/api/alerts').then(r => r.json()).then(d => { if (d?.success) setAlerts(d.data); });
-        if (data.data) handleSelectSignal(data.data);
-      }
-    } catch (e) {
-      alert('Failed to trigger simulated trap alert');
-    }
-  };
-
-  const handleSelectSignal = async (signal: TrapSignal) => {
-    setActiveSignal(signal);
-    setSelectedAssetSymbol(signal.symbol);
-    setActiveView('ai-assistant');
-
-    const introPrompt = `Why did the system trigger this high-probability ${signal.pattern} setup on ${signal.displayName}?`;
-    const newUserMsg: ChatMessage = {
-      id: `usr-${Date.now()}`, role: 'user', content: introPrompt,
-      timestamp: new Date().toISOString(), relatedSignalId: signal.id,
-    };
-
-    setChatMessages(prev => [...prev, newUserMsg]);
-    setIsThinking(true);
-
-    try {
-      const res = await apiFetch('/api/tutor', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        // FIX: Use ref to get latest chat messages (avoids stale closure)
-        body: JSON.stringify({ prompt: introPrompt, history: [...chatMessagesRef.current, newUserMsg], relatedSignalId: signal.id }),
-      });
-      const data = await res.json();
-      if (data?.success) {
-        setChatMessages(prev => [...prev, {
-          id: `asst-${Date.now()}`, role: 'assistant', content: data.response,
-          timestamp: new Date().toISOString(), relatedSignalId: signal.id,
-        }]);
-      }
-    } catch (err) { /* Fallback handled in backend */ }
-    finally { setIsThinking(false); }
-  };
-
-  const handleSendMessage = async (text: string) => {
-    const newUserMsg: ChatMessage = {
-      id: `usr-${Date.now()}`, role: 'user', content: text,
-      timestamp: new Date().toISOString(), relatedSignalId: activeSignal?.id,
-    };
-    setChatMessages(prev => [...prev, newUserMsg]);
-    setIsThinking(true);
-
-    try {
-      const res = await apiFetch('/api/tutor', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: text, history: [...chatMessagesRef.current, newUserMsg], relatedSignalId: activeSignal?.id }),
-      });
-      const data = await res.json();
-      if (data?.success) {
-        setChatMessages(prev => [...prev, {
-          id: `asst-${Date.now()}`, role: 'assistant', content: data.response,
-          timestamp: new Date().toISOString(), relatedSignalId: activeSignal?.id,
-        }]);
-      }
-    } catch (err) { /* Fallback in backend */ }
-    finally { setIsThinking(false); }
-  };
-
-  const handleClearSignalContext = () => setActiveSignal(null);
-
-  const handleAddTrade = async (trade: any) => {
-    try {
-      const res = await apiFetch('/api/progress/add-trade', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(trade),
-      });
-      const data = await res.json();
-      if (data?.success) setUserProgress(data.data);
-    } catch (e) { /* quiet */ }
-  };
-
-  const handleTakeQuiz = async (score: number) => {
-    try {
-      const res = await apiFetch('/api/progress/quiz', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ score }),
-      });
-      const data = await res.json();
-      if (data?.success) setUserProgress(data.data);
-    } catch (e) { /* quiet */ }
-  };
-
-  const handleSelectEducationMode = (signal: TrapSignal) => {
-    setAppMode('education');
-    handleSelectSignal(signal);
-  };
-
-  // ── Auth loading state ───────────────────────────────────────────────────────
   if (authUser === undefined) {
     return (
       <div className="min-h-screen bg-[#070913] flex items-center justify-center">
@@ -268,14 +68,22 @@ export default function App() {
     );
   }
 
-  // ── Not logged in → show login screen ───────────────────────────────────────
   if (!authUser) {
     return <LoginScreen onLoginSuccess={setAuthUser} />;
   }
 
   return (
-    <div className={`min-h-screen ${activeWarning ? 'bg-red-950/80 transition-colors duration-1000' : 'bg-[#070913]'} text-slate-300 font-sans antialiased pb-12 selection:bg-indigo-500/30 relative overflow-x-hidden`}>
-      <div className={`fixed inset-0 z-0 pointer-events-none bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] ${activeWarning ? 'from-red-900/30 via-red-950/80 to-[#2e0404] transition-colors duration-1000' : 'from-indigo-900/15 via-slate-950 to-[#070913]'}`} />
+    <ErrorBoundary>
+      <WebSocketProvider authUser={authUser}>
+        <div className={`min-h-screen ${activeWarning ? 'bg-red-950/80 transition-colors duration-1000' : 'bg-[#030508]'} text-slate-300 font-sans antialiased pb-12 selection:bg-emerald-500/30 relative overflow-x-hidden`}>
+      <div className={`fixed inset-0 z-0 pointer-events-none transition-colors duration-1000 ${activeWarning ? 'bg-red-900/30' : ''}`} style={{
+        backgroundImage: activeWarning ? 'none' : 'url(/images/sniper_math_bg_1780240055646.png)',
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+        backgroundAttachment: 'fixed',
+        opacity: 0.35
+      }} />
+      <div className={`fixed inset-0 z-0 pointer-events-none bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] ${activeWarning ? 'from-red-900/30 via-red-950/80 to-[#2e0404] transition-colors duration-1000' : 'from-emerald-900/10 via-[#030508]/80 to-[#030508]'}`} />
 
       <div className="relative z-10">
         <AnimatePresence>
@@ -298,93 +106,54 @@ export default function App() {
           )}
         </AnimatePresence>
 
-
-
         {/* Header */}
         <div className={`${activeWarning ? 'bg-red-950/60 border-red-900/50' : 'bg-slate-900/50 border-slate-850'} border-b backdrop-blur-xl sticky top-0 z-50 transition-colors duration-1000`}>
           <div className="max-w-7xl mx-auto px-4 py-3 sm:px-6 lg:px-8 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
             <div className="flex items-center gap-4">
-              <div className="relative group cursor-pointer" onClick={() => setAppMode(appMode === 'signal' ? 'education' : appMode === 'education' ? 'automation' : 'signal')}>
-                <div className="absolute inset-0 bg-indigo-500 rounded-xl blur opacity-20 group-hover:opacity-40 transition-opacity" />
-                <div className="relative w-10 h-10 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center text-white shadow-md ring-1 ring-white/20">
-                  <span className="font-black tracking-tight text-sm">TR</span>
+              <div className="relative group">
+                <div className="absolute inset-0 bg-[rgba(212,175,55,1)] rounded-xl blur opacity-20 group-hover:opacity-40 transition-opacity" />
+                <div className="relative w-10 h-10 rounded-xl flex items-center justify-center text-white shadow-md ring-1 ring-white/20 overflow-hidden">
+                  <img src="/images/bot_sniper_1780109384823.png" alt="Sniper Trader" className="w-full h-full object-cover" />
                 </div>
               </div>
               <div>
                 <h1 className="font-display font-extrabold text-xs sm:text-sm tracking-tight text-white uppercase flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
                   <span className="flex items-center gap-2">Sniper Trader</span>
-                  <span className="text-[10px] sm:hidden text-slate-400 font-medium normal-case tracking-normal">Multi Asset Scanner, Educator and Trading Automator</span>
-                  <button className={`text-[9px] cursor-default uppercase tracking-widest font-black px-2 py-0.5 border rounded shadow-[0_0_10px_rgba(99,102,241,0.2)] transition-colors ${
-                    metaApiStatus === 'connected' ? 'text-emerald-300 border-emerald-400/30 bg-emerald-950/50' : 
-                    metaApiStatus === 'syncing' ? 'text-amber-300 border-amber-400/30 bg-amber-950/50' :
-                    'text-rose-300 border-rose-400/30 bg-rose-950/50'
-                  }`}>
-                    {metaApiStatus === 'connected' ? '🟢 API Connected' : metaApiStatus === 'syncing' ? '🟡 API Syncing' : '🔴 API Offline'}
+                  <button className="text-[9px] cursor-default uppercase tracking-widest font-black px-2 py-0.5 border rounded shadow-[0_0_10px_rgba(99,102,241,0.2)] transition-colors text-emerald-300 border-emerald-400/30 bg-emerald-950/50 hidden">
+                    Connected
                   </button>
-                  <div className="flex bg-slate-950/80 p-0.5 rounded-full border border-slate-800 shadow-inner ml-2 gap-0.5">
-                    {[
-                      { id: 'signal', label: 'Signal', icon: Radio },
-                      { id: 'education', label: 'Education', icon: GraduationCap },
-                      { id: 'automation', label: 'Automation', icon: Zap },
-                    ].map(mode => {
-                      const Icon = mode.icon;
-                      const active = appMode === mode.id;
-                      return (
-                        <button
-                          key={mode.id}
-                          onClick={() => setAppMode(mode.id as any)}
-                          className={`relative px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider transition-all duration-300 flex items-center gap-1 cursor-pointer ${
-                            active
-                              ? 'bg-indigo-500 text-white shadow-[0_2px_8px_rgba(99,102,241,0.4)] border border-indigo-400/20'
-                              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/50 border border-transparent'
-                          }`}
-                        >
-                          <Icon size={9} className={active ? 'text-white' : 'text-slate-500'} />
-                          <span>{mode.label}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
                 </h1>
                 <p className={`text-[10px] ${activeWarning ? 'text-red-300/80 font-bold' : 'text-slate-500'} font-mono mt-0.5 uppercase tracking-wide`}>
-                  Multi Asset Scanner, Educator and Trading Automator
+                  Automated Trading Engine & AI Mentorship
                 </p>
               </div>
             </div>
+            
             <div className="flex gap-2 items-center flex-wrap">
-              <div className="bg-slate-950/80 border border-slate-800 px-3 py-1.5 rounded-lg flex items-center gap-2 font-mono text-[11px] text-indigo-300 shadow-inner">
-                <Clock size={13} className="text-indigo-400" />
-                <span>{timeState.utcClock || 'Synching GMT...'}</span>
-              </div>
+              <TopNavWidgets />
 
-              <div className="flex items-center gap-1.5 bg-slate-950/80 border border-slate-800 px-3 py-1 rounded-lg shadow-inner">
-                <span className="text-[9.5px] font-mono text-slate-500 font-bold uppercase">TZ:</span>
-                <select value={selectedTimezone} onChange={e => setSelectedTimezone(e.target.value)} className="bg-transparent text-indigo-300 font-mono text-[11px] font-bold border-none outline-none cursor-pointer focus:ring-0">
-                  <option value="UTC"  className="bg-slate-950 text-indigo-300">UTC (GMT+0)</option>
-                  <option value="IST"  className="bg-slate-950 text-indigo-300">IST (GMT+5:30)</option>
-                  <option value="EST"  className="bg-slate-950 text-indigo-300">EST (GMT-5)</option>
-                  <option value="GMT"  className="bg-slate-950 text-indigo-300">BST (GMT+1)</option>
-                  <option value="JST"  className="bg-slate-950 text-indigo-300">JST (GMT+9)</option>
-                  <option value="AEDT" className="bg-slate-950 text-indigo-300">AEDT (GMT+11)</option>
-                </select>
-              </div>
-
-              {[
-                { key: 'london', active: timeState.londonActive, label: 'London', color: 'cyan' },
-                { key: 'comex',  active: timeState.comexActive,  label: 'COMEX',  color: 'emerald' },
-                { key: 'ny10',   active: timeState.ny10Active,   label: '10:00 AM', color: 'indigo' },
-              ].map(({ key, active, label, color }) => (
-                <div key={key} className={`px-2.5 py-1 text-[10px] font-mono rounded-lg border flex items-center gap-1.5 transition-all duration-500 ${active ? `bg-${color}-500/10 text-${color}-400 border-${color}-500/30` : 'bg-slate-900/30 text-slate-500 border-slate-800/60'}`}>
-                  <span className={`w-1.5 h-1.5 rounded-full ${active ? `bg-${color}-400 animate-pulse` : 'bg-slate-600'}`} />
-                  <span>{label} {active && '(ACTIVE)'}</span>
-                </div>
-              ))}
-
-              {/* FIX: Global Settings & Logout buttons ───────────────────────────────────── */}
               <button
-                onClick={() => setShowGlobalSettings(true)}
+                onClick={() => { playClick(); setShowAITutor(true); }}
+                title="AI Tutor"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800/80 border border-slate-700 hover:bg-[#d4af37]/20 hover:border-[#d4af37]/50 text-slate-400 hover:text-[#d4af37] text-[10px] font-mono uppercase tracking-wider transition-all"
+              >
+                <MessageSquare size={12} />
+                AI Tutor
+              </button>
+
+              <button
+                onClick={() => { playClick(); setShowAbout(true); }}
+                title="About"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800/80 border border-slate-700 hover:bg-[#d4af37]/20 hover:border-[#d4af37]/50 text-slate-400 hover:text-[#d4af37] text-[10px] font-mono uppercase tracking-wider transition-all"
+              >
+                <Info size={12} />
+                About
+              </button>
+
+              <button
+                onClick={() => { playClick(); setShowGlobalSettings(true); }}
                 title="Global Settings"
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800/80 border border-slate-700 hover:bg-slate-700/80 hover:border-slate-500/50 text-slate-400 hover:text-slate-200 text-[10px] font-mono uppercase tracking-wider transition-all"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800/80 border border-slate-700 hover:bg-[#d4af37]/20 hover:border-[#d4af37]/50 text-slate-400 hover:text-[#d4af37] text-[10px] font-mono uppercase tracking-wider transition-all"
               >
                 <Settings size={12} />
                 Settings
@@ -401,8 +170,10 @@ export default function App() {
             </div>
           </div>
         </div>
+        
+        {/* Signal Bar directly under header */}
+        <SignalBar />
 
-        {/* ── GLOBAL SETTINGS MODAL ── */}
         <AnimatePresence>
           {showGlobalSettings && (
             <GlobalSettings 
@@ -412,128 +183,62 @@ export default function App() {
           )}
         </AnimatePresence>
 
-        <AnimatePresence mode="wait">
-          {appMode === 'signal' ? (
-            <motion.div key="signal-mode" initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.98 }} transition={{ duration: 0.4, ease: 'easeOut' }}>
-              <SimpleAlertFeed alerts={alerts} onSelectAdvanced={handleSelectEducationMode} />
-            </motion.div>
-          ) : appMode === 'automation' ? (
-            <motion.main key="automation-mode" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} transition={{ duration: 0.4, ease: 'easeOut' }} className="max-w-7xl mx-auto px-4 mt-6 sm:px-6 lg:px-8">
-              <div className="mb-8">
-                <AutomateDashboard />
-              </div>
-            </motion.main>
-          ) : (
-            <motion.main key="education-mode" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} transition={{ duration: 0.4, ease: 'easeOut' }} className="max-w-7xl mx-auto px-4 mt-6 sm:px-6 lg:px-8">
-              <div className="flex flex-wrap bg-slate-900/50 p-1.5 rounded-2xl border border-slate-800/60 mb-8 gap-1 w-fit shadow-inner">
-                {[
-                  { id: 'monitor',      label: '📊 Scanner Monitor' },
-                  { id: 'calendar',     label: '📅 Economic Calendar' },
-                  { id: 'ai-assistant', label: '🤖 AI Assistant' },
-                  { id: 'backtest',     label: '📈 Backtest Analytics' },
-                ].map(tab => (
-                  <button
-                    key={tab.id}
-                    onClick={() => setActiveView(tab.id as any)}
-                    className={`relative px-5 py-2.5 text-xs font-display font-black tracking-wide rounded-xl cursor-pointer transition-all duration-300 ${activeView === tab.id ? 'text-white shadow-[0_4px_12px_rgba(0,0,0,0.5)] bg-slate-800 ring-1 ring-slate-700/50' : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800/50'}`}
-                  >
-                    {activeView === tab.id && (
-                      <motion.div layoutId="activeTabIndicator" className={`absolute inset-0 bg-gradient-to-b ${activeWarning ? 'from-red-500/20 to-rose-500/5 border-red-500/30' : 'from-indigo-500/20 to-purple-500/5 border-indigo-500/30'} rounded-xl border`} initial={false} transition={{ type: 'spring', bounce: 0.2, duration: 0.6 }} />
-                    )}
-                    <span className="relative z-10">{tab.label}</span>
-                  </button>
-                ))}
-              </div>
+        <main className="max-w-7xl mx-auto px-4 mt-6 sm:px-6 lg:px-8">
+          <div className="mb-8">
+            <AutomateDashboard />
+          </div>
+        </main>
 
-              <div className="mb-8">
-                {activeView === 'monitor' && (
-                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-                    {showMonitorAlerts ? (
-                      <section className={`lg:col-span-12 ${showMonitorWatchlist ? 'xl:col-span-7' : 'xl:col-span-12'} space-y-6 relative group pt-5`}>
-                        <div className="absolute top-0 left-0 right-0 z-10 flex justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button onClick={() => setShowMonitorAlerts(false)} className="w-full bg-slate-800/80 hover:bg-slate-700 text-slate-400 h-5 rounded-t-xl border-t border-l border-r border-slate-700 shadow-md flex items-center justify-center cursor-pointer transition-colors">
-                            <span className="block w-20 h-1.5 bg-slate-500 rounded-full" />
-                          </button>
-                        </div>
-                        <AlertFeed alerts={alerts} onSelectSignal={handleSelectSignal} activeSignalId={activeSignal?.id} selectedTimezone={selectedTimezone} />
-                      </section>
-                    ) : (
-                      <div className="lg:col-span-12 flex justify-center">
-                        <button onClick={() => setShowMonitorAlerts(true)} className="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs px-6 py-2 rounded-lg border border-slate-700 shadow-lg font-mono flex items-center justify-center cursor-pointer transition-colors w-full border-dashed">
-                          + EXPAND SIGNAL FEED
-                        </button>
-                      </div>
-                    )}
+        <AnimatePresence>
+          {showAITutor && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowAITutor(false)} />
+              <motion.div initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 20 }} className="bg-slate-900 border border-slate-700 p-2 sm:p-6 rounded-2xl w-full max-w-5xl relative z-10 shadow-2xl max-h-[95vh] overflow-y-auto">
+                <button onClick={() => setShowAITutor(false)} className="absolute top-4 right-4 z-50 text-slate-400 hover:text-white p-2 bg-slate-800 rounded-full hover:bg-slate-700 transition-colors">
+                  <X size={20} />
+                </button>
+                <MinimalAITutor />
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
 
-                    {showMonitorWatchlist ? (
-                      <section className={`lg:col-span-12 ${showMonitorAlerts ? 'xl:col-span-5' : 'xl:col-span-12'} space-y-6 relative group pt-5`}>
-                        <div className="absolute top-0 left-0 right-0 z-10 flex justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button onClick={() => setShowMonitorWatchlist(false)} className="w-full bg-slate-800/80 hover:bg-slate-700 text-slate-400 h-5 rounded-t-xl border-t border-l border-r border-slate-700 shadow-md flex items-center justify-center cursor-pointer transition-colors">
-                            <span className="block w-20 h-1.5 bg-slate-500 rounded-full" />
-                          </button>
-                        </div>
-                        <WatchList markets={markets} onTriggerSimulation={handleTriggerSimulation} selectedAssetSymbol={selectedAssetSymbol} onSelectAsset={symbol => setSelectedAssetSymbol(symbol)} />
-                      </section>
-                    ) : (
-                      <div className="lg:col-span-12 flex justify-center">
-                        <button onClick={() => setShowMonitorWatchlist(true)} className="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs px-6 py-2 rounded-lg border border-slate-700 shadow-lg font-mono flex items-center justify-center cursor-pointer transition-colors w-full border-dashed">
-                          + SHOW WATCHLIST
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {activeView === 'calendar' && (
-                  <div className="max-w-6xl mx-auto">
-                    <EconomicCalendar selectedTimezone={selectedTimezone} />
-                  </div>
-                )}
-
-                {activeView === 'ai-assistant' && (
-                  <div className="max-w-7xl mx-auto space-y-6">
-                    <div className="bg-slate-900/40 backdrop-blur-xl p-6 rounded-3xl border border-slate-700/50 shadow-[0_8px_30px_rgb(0,0,0,0.5)] ring-1 ring-white/5 relative overflow-hidden">
-                      <div className="absolute top-0 right-1/4 w-[500px] h-[500px] bg-indigo-500/10 rounded-full blur-[100px] pointer-events-none" />
-                      <h3 className="font-display font-extrabold text-xs text-indigo-400 uppercase tracking-widest mb-6 flex items-center gap-2 relative z-10">
-                        <span className="relative flex h-2 w-2">
-                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75" />
-                          <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500" />
-                        </span>
-                        TUTOR HUD & CO-PILOT VOICE CALL COACH
-                      </h3>
-                      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start animate-fade-in relative z-10">
-                        <div className="lg:col-span-5">
-                          {currentMarket && <VoiceTutorCall market={currentMarket} activeSignal={activeSignal} />}
-                        </div>
-                        <div className="lg:col-span-7">
-                          <TutorPanel messages={chatMessages} activeSignal={activeSignal} onClearSignalContext={handleClearSignalContext} onSendMessage={handleSendMessage} isThinking={isThinking} />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {activeView === 'backtest' && (
-                  <div className="max-w-7xl mx-auto">
-                    <BacktestViewer />
-                  </div>
-                )}
-              </div>
-            </motion.main>
+        <AnimatePresence>
+          {showAbout && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowAbout(false)} />
+              <motion.div initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 20 }} className="bg-slate-900 border border-slate-700 p-2 sm:p-6 rounded-2xl w-full max-w-5xl relative z-10 shadow-2xl max-h-[95vh] overflow-y-auto">
+                <button onClick={() => setShowAbout(false)} className="absolute top-4 right-4 z-50 text-slate-400 hover:text-white p-2 bg-slate-800 rounded-full hover:bg-slate-700 transition-colors">
+                  <X size={20} />
+                </button>
+                <AboutSection />
+              </motion.div>
+            </div>
           )}
         </AnimatePresence>
 
         <footer className="mt-12 text-center text-[11px] text-slate-600 font-mono">
-          <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row justify-between items-center gap-2 border-t border-slate-900 pt-6">
+          <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row justify-between items-center gap-2 border-t border-slate-900 pt-6 mb-4">
             <p>© 2026 Sniper Trader - by Tazim Sheikh Smart Money Mechanical Lab.</p>
             <div className="flex gap-4">
-              <span className="text-slate-500 border-r border-slate-800 pr-4">Zero Indicators</span>
-              <span className="text-slate-500 border-r border-slate-800 pr-4">Zero Retail Noise</span>
-              <span className="text-emerald-500 font-bold">100% Math Rejections</span>
+               <span className="text-slate-500 border-r border-slate-800 pr-4">Zero Indicators</span>
+               <span className="text-slate-500 border-r border-slate-800 pr-4">Zero Retail Noise</span>
+               <span className="text-emerald-500 font-bold">100% Math Rejections</span>
             </div>
+          </div>
+          <div className="max-w-5xl mx-auto px-4 pb-8 text-[9px] sm:text-[10px] text-slate-500/70 text-justify leading-relaxed">
+            <p className="font-bold mb-1 text-slate-500">HIGH RISK INVESTMENT WARNING & LEGAL DISCLAIMER:</p>
+            <p>
+              Trading foreign exchange (Forex), cryptocurrencies, indices, and other financial instruments on margin carries a high level of risk and may not be suitable for all investors. The high degree of leverage can work against you as well as for you. Before deciding to invest, you should carefully consider your investment objectives, level of experience, and risk appetite. The possibility exists that you could sustain a loss of some or all of your initial investment; therefore, you should not invest money that you cannot afford to lose. 
+            </p>
+            <p className="mt-2">
+              All statistics, win rates, analytics, and "bot metrics" displayed within the Sniper Trader application are derived from historical backtesting data or simulated algorithmic models and are provided strictly for educational and representational purposes. <strong>Past performance is never indicative of future results.</strong> The platform does not account for slippage, liquidity gaps, or catastrophic market anomalies perfectly. This application is an execution tool, not a financial advisor. By using this software, you acknowledge that all trading decisions are executed at your own risk. Tazim Sheikh and the developers of Sniper Trader are completely indemnified and hold no liability for any financial losses or damages incurred through the use of this software.
+            </p>
           </div>
         </footer>
       </div>
-    </div>
-  );
+          </div>
+        </WebSocketProvider>
+      </ErrorBoundary>
+    );
 }

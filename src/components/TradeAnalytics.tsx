@@ -95,7 +95,7 @@ export default function TradeAnalytics({ diary, bots, selectedBotId, onSelectBot
       </div>
 
       {/* Statistics Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {analyticsData?.status === 'connected' && (
           <>
             <div className="bg-slate-800/40 border border-slate-700/50 rounded-xl p-4">
@@ -118,10 +118,7 @@ export default function TradeAnalytics({ diary, bots, selectedBotId, onSelectBot
           <p className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-1">Win Rate</p>
           <p className="text-xl font-mono font-bold text-white">{stats.winRate}%</p>
         </div>
-        <div className="bg-slate-800/40 border border-slate-700/50 rounded-xl p-4">
-          <p className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-1">Total Trades</p>
-          <p className="text-xl font-mono font-bold text-white">{stats.totalTrades}</p>
-        </div>
+
         <div className="bg-slate-800/40 border border-slate-700/50 rounded-xl p-4">
           <p className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-1">Max Drawdown</p>
           <p className="text-xl font-mono font-bold text-rose-400">{stats.maxDD}%</p>

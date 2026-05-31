@@ -1,11 +1,15 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Settings, Shield, Link, Power, Crosshair, AlertTriangle, Save,
   Loader, CheckCircle2, Bot, TrendingUp, BarChart2, Zap, RefreshCw,
-  Lock, ChevronRight, ChevronDown, ChevronUp, Activity, Target, Clock, DollarSign, Database, Wifi, Settings2, ShieldAlert, Trash2
+  Lock, ChevronRight, ChevronDown, ChevronUp, Activity, Target, Clock, DollarSign, Database, Wifi, Settings2, ShieldAlert, Trash2, X
 } from 'lucide-react';
 import TradeAnalytics from './TradeAnalytics';
+import TradingChart from './TradingChart';
+import { useSound } from '../hooks/useSound';
+import { useWebSocket } from '../context/WebSocketContext';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface BotCardData {
@@ -21,6 +25,7 @@ interface BotCardData {
   winRateBacktest: number;
   returnBacktest: string;
   maxDDBacktest: number;
+  tradesPerYear?: number;
   tier?: string;
   isActive: boolean;
 }
@@ -93,7 +98,7 @@ const COLOR_MAP: Record<string, { glow: string; border: string; badge: string; t
 };
 
 // ── Bot Card Component ────────────────────────────────────────────────────────
-function BotCard({ bot, onToggle, disabled, riskPercentage = 5 }: { bot: BotCardData; onToggle: (id: string, active: boolean) => void | Promise<void>; disabled: boolean; riskPercentage?: number; key?: React.Key }) {
+function BotCard({ bot, onToggle, onRiskChange, onSymbolClick, disabled, riskPercentage = 5 }: { bot: BotCardData; onToggle: (id: string, active: boolean) => void | Promise<void>; onRiskChange?: (id: string, val: number) => void; onSymbolClick?: (symbol: string) => void; disabled: boolean; riskPercentage?: number; key?: React.Key }) {
   let mappedColor = bot.color;
   if (bot.tier === 'Apex') mappedColor = 'indigo';
   else if (bot.tier === 'Institutional') mappedColor = 'purple';
@@ -101,11 +106,12 @@ function BotCard({ bot, onToggle, disabled, riskPercentage = 5 }: { bot: BotCard
   else if (bot.tier === 'Scout') mappedColor = 'amber';
 
   const colors = COLOR_MAP[mappedColor] || COLOR_MAP.indigo;
-  const [expanded, setExpanded] = useState(false);
 
-  const riskMultiplier = riskPercentage / 5;
-  const numericReturn = parseInt(bot.returnBacktest.replace(/[^0-9-]/g, ''), 10);
-  const adjustedReturn = isNaN(numericReturn) ? bot.returnBacktest : `+${Math.round(numericReturn * riskMultiplier)}%/yr`;
+
+  const riskMultiplier = riskPercentage;
+  const numericReturn = parseFloat(bot.returnBacktest.replace(/[^0-9.-]/g, ''));
+  const annualizedReturn = numericReturn; // It's already annualized in pairConfigs
+  const adjustedReturn = isNaN(numericReturn) ? bot.returnBacktest : `+${(annualizedReturn * riskMultiplier).toFixed(1)}%/yr`;
   const adjustedDD = (bot.maxDDBacktest * riskMultiplier).toFixed(1);
 
   return (
@@ -126,11 +132,24 @@ function BotCard({ bot, onToggle, disabled, riskPercentage = 5 }: { bot: BotCard
 
       {/* Header */}
       <div className="p-5 flex items-start gap-4">
-        {/* Icon */}
-        <div className={`w-14 h-14 rounded-xl flex items-center justify-center text-2xl shrink-0 ${
-          bot.isActive ? colors.bg : 'bg-slate-800'
-        } transition-colors duration-300`}>
-          {bot.icon}
+        {/* Avatar / Image */}
+        <div className={`w-16 h-16 rounded-xl flex items-center justify-center text-2xl shrink-0 overflow-hidden ring-1 ${
+          bot.isActive ? 'ring-[#d4af37] shadow-[0_0_15px_rgba(212,175,55,0.4)]' : 'ring-slate-700'
+        } transition-all duration-300 relative group`}>
+           <div className="absolute inset-0 bg-black/40 z-10 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+             <span className="text-white text-[10px] uppercase font-bold tracking-widest">{bot.icon}</span>
+           </div>
+           <img 
+             src={
+               bot.tier === 'Apex' ? '/images/apex_tier_1780109310466.png' :
+               bot.tier === 'Institutional' ? '/images/institutional_tier_1780109328905.png' :
+               bot.tier === 'Prop' ? '/images/prop_tier_1780109345293.png' :
+               bot.tier === 'Scout' ? '/images/scout_tier_1780109370182.png' :
+               '/images/bot_sniper_1780109384823.png'
+             }
+             alt={bot.name}
+             className="w-full h-full object-cover"
+           />
         </div>
 
         {/* Info */}
@@ -164,7 +183,7 @@ function BotCard({ bot, onToggle, disabled, riskPercentage = 5 }: { bot: BotCard
         {/* Toggle */}
         <div className="shrink-0 flex flex-col items-end gap-2">
           <button
-            disabled={disabled}
+            disabled={disabled || bot.tagline === 'Disabled'}
             onClick={() => onToggle(bot.id, !bot.isActive)}
             className={`relative w-14 h-7 rounded-full transition-all duration-300 ${
               bot.isActive ? colors.toggle : 'bg-slate-700'
@@ -180,43 +199,70 @@ function BotCard({ bot, onToggle, disabled, riskPercentage = 5 }: { bot: BotCard
         </div>
       </div>
 
+      {/* Individual Risk Slider */}
+      <div className="px-5 pb-4 pt-1">
+        <div className="flex justify-between items-center mb-1.5 ml-1 mr-1">
+          <label className="block text-[10px] font-mono text-slate-500 uppercase tracking-widest">Base Risk</label>
+          <span className={`text-[10px] font-mono font-bold ${colors.text}`}>{riskPercentage}%</span>
+        </div>
+        <div className={`bg-slate-950/50 border border-slate-700/50 rounded-xl px-4 py-2 flex items-center`}>
+          <input
+            type="range" min="1" max="20" step="1"
+            value={riskPercentage}
+            onChange={(e) => onRiskChange && onRiskChange(bot.id, Number(e.target.value))}
+            className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+          />
+        </div>
+      </div>
+
       {/* Stats bar */}
-      <div className="px-5 pb-4 grid grid-cols-3 gap-3">
-        <div className={`rounded-xl p-3 ${bot.isActive ? colors.bg : 'bg-slate-800/50'}`}>
+      <div className="px-5 pb-4 grid grid-cols-2 lg:grid-cols-4 gap-2">
+        <div className={`rounded-xl p-2 ${bot.isActive ? colors.bg : 'bg-slate-800/50'}`}>
           <div className="flex items-center gap-1 mb-1">
             <Target size={10} className={bot.isActive ? colors.text : 'text-slate-500'} />
-            <span className="text-[9px] font-mono uppercase text-slate-500 tracking-wider">Win Rate</span>
+            <span className="text-[8px] font-mono uppercase text-slate-500 tracking-wider">Win Rate</span>
           </div>
-          <span className={`text-lg font-display font-black ${bot.isActive ? colors.text : 'text-slate-400'}`}>
+          <span className={`text-sm font-display font-black ${bot.isActive ? colors.text : 'text-slate-400'}`}>
             {bot.winRateBacktest}%
           </span>
         </div>
-        <div className={`rounded-xl p-3 ${bot.isActive ? colors.bg : 'bg-slate-800/50'}`}>
+        <div className={`rounded-xl p-2 ${bot.isActive ? colors.bg : 'bg-slate-800/50'}`}>
           <div className="flex items-center gap-1 mb-1">
             <TrendingUp size={10} className={bot.isActive ? colors.text : 'text-slate-500'} />
-            <span className="text-[9px] font-mono uppercase text-slate-500 tracking-wider">Return</span>
+            <span className="text-[8px] font-mono uppercase text-slate-500 tracking-wider">Return</span>
           </div>
-          <span className={`text-sm font-display font-black ${bot.isActive ? colors.text : 'text-slate-400'}`}>
+          <span className={`text-[11px] font-display font-black ${bot.isActive ? colors.text : 'text-slate-400'}`}>
             {adjustedReturn}
           </span>
         </div>
-        <div className={`rounded-xl p-3 ${bot.isActive ? colors.bg : 'bg-slate-800/50'}`}>
+        <div className={`rounded-xl p-2 ${bot.isActive ? colors.bg : 'bg-slate-800/50'}`}>
           <div className="flex items-center gap-1 mb-1">
             <Activity size={10} className={bot.isActive ? colors.text : 'text-slate-500'} />
-            <span className="text-[9px] font-mono uppercase text-slate-500 tracking-wider">Max DD</span>
+            <span className="text-[8px] font-mono uppercase text-slate-500 tracking-wider">Max DD</span>
           </div>
-          <span className={`text-lg font-display font-black ${bot.isActive ? colors.text : 'text-slate-400'}`}>
+          <span className={`text-sm font-display font-black ${bot.isActive ? colors.text : 'text-slate-400'}`}>
             {adjustedDD}%
           </span>
         </div>
+        <div className={`p-3 rounded-xl border transition-colors ${bot.isActive ? `${colors.bg} ${colors.border}` : 'bg-slate-800/50 border-slate-700/50'}`}>
+              <div className="text-slate-400 text-[10px] uppercase tracking-widest font-mono mb-1">Trades / Yr</div>
+              <div className={`font-display font-bold text-lg ${bot.isActive ? 'text-white' : 'text-slate-300'}`}>
+                {bot.tradesPerYear || '-'}
+              </div>
+            </div>
       </div>
 
       {/* Symbol tags */}
       <div className="px-5 pb-4 flex flex-wrap gap-1.5">
         {bot.symbols.slice(0, 4).map(s => (
-          <span key={s} className={`text-[9px] font-mono uppercase tracking-wider px-2 py-1 rounded-lg ${colors.badge}`}>
-            {s}
-          </span>
+          <button 
+            key={s} 
+            title={`View ${s} Chart`}
+            onClick={() => onSymbolClick && onSymbolClick(s)}
+            className={`text-[9px] font-mono uppercase tracking-wider px-2 py-1 rounded-lg transition-colors hover:brightness-125 cursor-pointer flex items-center gap-1 ${colors.badge}`}
+          >
+            <BarChart2 size={10} /> Charts
+          </button>
         ))}
         {bot.symbols.length > 4 && (
           <span className="text-[9px] font-mono uppercase tracking-wider px-2 py-1 rounded-lg bg-slate-800 text-slate-500">
@@ -225,40 +271,14 @@ function BotCard({ bot, onToggle, disabled, riskPercentage = 5 }: { bot: BotCard
         )}
       </div>
 
-      {/* Expand toggle */}
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="w-full px-5 py-3 flex items-center justify-between text-slate-600 hover:text-slate-400 border-t border-slate-800 transition-colors text-xs font-mono uppercase tracking-wider"
-      >
-        Strategy Details
-        <ChevronRight size={14} className={`transition-transform ${expanded ? 'rotate-90' : ''}`} />
-      </button>
-
-      {/* Expandable description */}
-      <AnimatePresence>
-        {expanded && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            className="overflow-hidden"
-          >
-            <div className="px-5 pb-5 text-slate-400 text-xs font-mono leading-relaxed border-t border-slate-800/50">
-              <p className="mt-3">{bot.description}</p>
-              <div className="mt-3 flex items-center gap-2 text-[10px] text-slate-500">
-                <DollarSign size={10} />
-                Base risk per trade: <span className={colors.text}>{bot.riskPct}%</span>
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
     </motion.div>
   );
 }
 
 // ── Main Dashboard ────────────────────────────────────────────────────────────
 export default function AutomateDashboard() {
+  const { playToggleOn, playToggleOff, playSave, playClick } = useSound();
+  const [chartModalSymbol, setChartModalSymbol] = useState<string | null>(null);
   const [profiles, setProfiles]                 = useState<any[]>([]);
   const [selectedProfileId, setSelectedProfileId] = useState<number | null>(null);
   const [newProfileName, setNewProfileName]     = useState('');
@@ -269,7 +289,7 @@ export default function AutomateDashboard() {
   const [metaapiAccountId, setMetaapiAccountId] = useState('');
   const [automationActive, setAutomationActive] = useState(false);
   const [aiSniperActive, setAiSniperActive]     = useState(false);
-  const [riskPercentage, setRiskPercentage]     = useState(5);
+  const [botRisks, setBotRisks]                 = useState<Record<string, number>>({});
   const [dataSource, setDataSource]             = useState<'yahoo' | 'metaapi'>('yahoo');
   const [loading, setLoading]   = useState(true);
   const [saving, setSaving]     = useState(false);
@@ -282,9 +302,39 @@ export default function AutomateDashboard() {
   const [syncStatus, setSyncStatus] = useState<'offline' | 'syncing' | 'connected'>('offline');
   const [botHealth, setBotHealth] = useState<any>({ health: 'offline', pendingSignals: 0, missedSignals: 0 });
   const [analyticsData, setAnalyticsData] = useState<any>(null);
+  const [safetyStatus, setSafetyStatus] = useState<any>(null);
+
+  const { activeTradesForChart, dailyPnlForChart } = useMemo(() => {
+    if (!chartModalSymbol) return { activeTradesForChart: [], dailyPnlForChart: 0 };
+    
+    // Active Trades
+    const trades = analyticsData?.positions?.filter((p: any) => p.symbol === chartModalSymbol) || [];
+    
+    // Daily PnL
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const pnl = (diary || []).filter((t: any) => t?.broker_symbol === chartModalSymbol && t?.close_time && new Date(t.close_time) >= today)
+      .reduce((sum: number, t: any) => sum + (t?.profit || 0), 0);
+      
+    return { activeTradesForChart: trades, dailyPnlForChart: pnl };
+  }, [chartModalSymbol, analyticsData, diary]);
+  
+
+  const [safetySettings, setSafetySettings] = useState({
+    dailyLossLimit: 5,
+    maxDrawdownLimit: 20,
+    unprofitablePairLookback: 10,
+    unprofitablePairMinTrades: 5,
+    unprofitablePairMinWinRate: 40,
+    unprofitablePairMinProfitPips: 0,
+    volatilityFilterEnabled: true,
+    volatilityFilterMinAdrPips: 15
+  });
+  const [savingSafety, setSavingSafety] = useState(false);
 
   // UI Collapse States
   const [botsSectionExpanded, setBotsSectionExpanded] = useState(true);
+  const [safetySettingsExpanded, setSafetySettingsExpanded] = useState(false);
   const [expandedTiers, setExpandedTiers] = useState<Record<string, boolean>>({
     Apex: true, Institutional: true, Prop: true, Scout: true
   });
@@ -313,28 +363,14 @@ export default function AutomateDashboard() {
     };
     
     fetchAnalytics();
-    const interval = setInterval(fetchAnalytics, 15000); // 15 seconds
+    
+    // Poll slowly as a fallback
+    const interval = setInterval(fetchAnalytics, 60000); // 60 seconds fallback
     return () => clearInterval(interval);
   }, [selectedProfileId]);
 
-  const [refreshingAnalytics, setRefreshingAnalytics] = useState(false);
-  const handleRefreshAnalytics = async () => {
-    if (!selectedProfileId) return;
-    setRefreshingAnalytics(true);
-    try {
-      const res = await fetch(`/api/auth/profiles/${selectedProfileId}/metaapi/analytics?force=true`, { credentials: 'same-origin' });
-      const data = await res.json();
-      if (data.success) {
-        setAnalyticsData(data);
-        showMsg('Live data refreshed from MetaAPI', 'success');
-      }
-    } catch (e) {
-      showMsg('Failed to refresh data', 'error');
-    } finally {
-      setRefreshingAnalytics(false);
-    }
-  };
-
+  const { socket } = useWebSocket();
+  
   const loadData = useCallback(async (forceProfileId?: number) => {
     setLoading(true);
     try {
@@ -373,7 +409,7 @@ export default function AutomateDashboard() {
         setMetaapiAccountId(profile.metaapi_account_id || '');
         setAutomationActive(profile.automation_active === 1);
         setAiSniperActive(profile.ai_sniper_active === 1);
-        setRiskPercentage(profile.risk_multiplier === 1 ? 5 : (profile.risk_multiplier || 5));
+        try { setBotRisks(JSON.parse(profile.bot_risks || '{}')); } catch(e) { setBotRisks({}); }
       }
 
       if (botsData.success) setBots(botsData.bots);
@@ -381,12 +417,80 @@ export default function AutomateDashboard() {
       if (diaryData.success) setDiary(diaryData.trades || []);
       if (healthData.success) setBotHealth(healthData);
       
+      const safetyRes = await fetch(`/api/settings/safety?profileId=${pId}`, { credentials: 'same-origin' });
+      const safetyData = await safetyRes.json();
+      if (safetyData.success) {
+        setSafetySettings(safetyData.settings);
+      }
+      
     } catch (e) {
       console.error('[AutomateDashboard] Load failed:', e);
     } finally {
       setLoading(false);
     }
   }, [selectedProfileId]);
+
+  // WebSocket Event Listeners for real-time reactivity
+  useEffect(() => {
+    if (!socket || !selectedProfileId) return;
+
+    socket.emit('join_profile', selectedProfileId);
+
+    const onTradeUpdate = () => {
+      console.log('🔄 Trade update received via WebSocket. Refreshing dashboard...');
+      loadData();
+      // Re-fetch analytics immediately when trade status changes
+      fetch(`/api/auth/profiles/${selectedProfileId}/metaapi/analytics`, { credentials: 'same-origin' })
+        .then(res => res.json())
+        .then(data => { if (data.success) setAnalyticsData(data); })
+        .catch(() => {});
+    };
+
+    socket.on('trade_opened', onTradeUpdate);
+    socket.on('trade_closed', onTradeUpdate);
+    socket.on('engine_status_update', loadData);
+
+    return () => {
+      socket.off('trade_opened', onTradeUpdate);
+      socket.off('trade_closed', onTradeUpdate);
+      socket.off('engine_status_update', loadData);
+    };
+  }, [socket, selectedProfileId, loadData]);
+
+  // Poll Safety Status
+  useEffect(() => {
+    if (!selectedProfileId) return;
+    const fetchSafety = async () => {
+      try {
+        const res = await fetch(`/api/settings/safety/status?profileId=${selectedProfileId}`, { credentials: 'same-origin' });
+        const data = await res.json();
+        if (data.success) setSafetyStatus(data.status);
+      } catch(e) {}
+    };
+    fetchSafety();
+    const interval = setInterval(fetchSafety, 15000); // 15 seconds
+    return () => clearInterval(interval);
+  }, [selectedProfileId]);
+
+  const [refreshingAnalytics, setRefreshingAnalytics] = useState(false);
+  const handleRefreshAnalytics = async () => {
+    if (!selectedProfileId) return;
+    setRefreshingAnalytics(true);
+    try {
+      const res = await fetch(`/api/auth/profiles/${selectedProfileId}/metaapi/analytics?force=true`, { credentials: 'same-origin' });
+      const data = await res.json();
+      if (data.success) {
+        setAnalyticsData(data);
+        showMsg('Live data refreshed from MetaAPI', 'success');
+      }
+    } catch (e) {
+      showMsg('Failed to refresh data', 'error');
+    } finally {
+      setRefreshingAnalytics(false);
+    }
+  };
+
+
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -435,17 +539,23 @@ export default function AutomateDashboard() {
   const handleProfileChange = (pId: number) => {
     setSelectedProfileId(pId);
     
+    // IMMEDIATELY clear all profile-scoped data to prevent data bleeding
+    setBots([]);
+    setDiary([]);
+    setAnalyticsData(null);
+    setSafetyStatus(null);
+    setBotHealth({ health: 'offline', pendingSignals: 0, missedSignals: 0 });
     const profile = profiles.find(p => p.id === pId);
     if (profile) {
       setMetaapiAccountId(profile.metaapi_account_id || '');
       setAutomationActive(profile.automation_active === 1);
       setAiSniperActive(profile.ai_sniper_active === 1);
-      setRiskPercentage(profile.risk_multiplier === 1 ? 5 : (profile.risk_multiplier || 5));
+      try { setBotRisks(JSON.parse(profile.bot_risks || '{}')); } catch(e) { setBotRisks({}); }
     } else {
       setMetaapiAccountId('');
       setAutomationActive(false);
       setAiSniperActive(false);
-      setRiskPercentage(5);
+      setBotRisks({});
     }
     loadData(pId);
   };
@@ -497,6 +607,7 @@ export default function AutomateDashboard() {
           setMetaapiAccountId('');
           setAutomationActive(false);
           setAiSniperActive(false);
+          setBotRisks({});
         }
       } else {
         showMsg(data.error || 'Failed to delete profile', 'error');
@@ -528,7 +639,75 @@ export default function AutomateDashboard() {
     }
   };
 
+  const handleResetWatermark = async () => {
+    if (!selectedProfileId) return;
+    if (!window.confirm("Are you sure you want to reset the Peak Balance watermark? Only do this immediately after making a manual withdrawal from your broker.")) return;
+    
+    try {
+      const res = await fetch(`/api/settings/safety/reset-peak`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ profileId: selectedProfileId })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showMsg('Peak balance reset! Waiting for next tick to lock new balance...', 'success');
+        // Will auto refresh on next interval
+      } else {
+        showMsg(data.error || 'Failed to reset watermark', 'error');
+      }
+    } catch (e: any) {
+      showMsg('Network error resetting watermark', 'error');
+    }
+  };
+
+  const handleSaveSafetySettings = async () => {
+    if (!selectedProfileId) return;
+    setSavingSafety(true);
+    try {
+      const res = await fetch('/api/settings/safety', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profileId: selectedProfileId, settings: safetySettings }),
+        credentials: 'same-origin'
+      });
+      const data = await res.json();
+      if (data.success) showMsg('Safety settings saved successfully!', 'success');
+      else showMsg('Failed to save safety settings', 'error');
+    } catch (e: any) {
+      showMsg('Network error saving safety settings', 'error');
+    } finally {
+      setSavingSafety(false);
+    }
+  };
+
   // Save connection settings
+  const toggleMasterAutomation = async () => {
+    const newState = !automationActive;
+    setAutomationActive(newState);
+    if (!selectedProfileId) return;
+    const profile = profiles.find(p => p.id === selectedProfileId);
+    try {
+      await fetch(`/api/auth/profiles/${selectedProfileId}/settings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          profile_name: profile?.profile_name,
+          metaapi_account_id: metaapiAccountId.trim().replace(/[^a-zA-Z0-9\-]/g, ''),
+          bot_risks: botRisks,
+          automation_active: newState,
+          ai_sniper_active: aiSniperActive,
+          risk_multiplier: profile?.risk_multiplier
+        }),
+      });
+      showMsg(`Master Engine ${newState ? 'Armed' : 'Disarmed'}`, 'success');
+    } catch (e) {
+      setAutomationActive(!newState);
+      showMsg('Failed to update engine state', 'error');
+    }
+  };
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedProfileId) return;
@@ -548,16 +727,17 @@ export default function AutomateDashboard() {
         credentials: 'same-origin',
         body: JSON.stringify({
           profile_name: profile?.profile_name,
-          risk_multiplier: riskPercentage,
           metaapi_account_id: cleanAccountId,
+          bot_risks: botRisks,
           automation_active: automationActive,
           ai_sniper_active: aiSniperActive,
+          risk_multiplier: profile?.risk_multiplier,
         }),
       });
       const data = await res.json();
       if (data.success) {
         showMsg('Configuration saved — verifying connection…', 'success');
-
+        playSave();
         // Trigger server-side data-source switch to MetaAPI asynchronously
         fetch('/api/refresh-data-source', {
           method: 'POST',
@@ -598,6 +778,8 @@ export default function AutomateDashboard() {
       if (data.success) {
         setBots(prev => prev.map(b => b.id === botId ? { ...b, isActive: active } : b));
         showMsg(`${active ? '🟢 Bot armed' : '⬛ Bot disarmed'}: ${bots.find(b => b.id === botId)?.name}`, 'success');
+        if (active) playToggleOn();
+        else playToggleOff();
       } else {
         showMsg(data.error || 'Failed to toggle bot.', 'error');
       }
@@ -641,6 +823,44 @@ export default function AutomateDashboard() {
         )}
       </AnimatePresence>
 
+      {/* ── Trading Chart Modal ── */}
+      {chartModalSymbol && createPortal(
+        <AnimatePresence>
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
+            onClick={() => setChartModalSymbol(null)}
+          >
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-[#030508] border border-slate-700/50 rounded-2xl w-full max-w-5xl shadow-2xl overflow-hidden flex flex-col"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex justify-between items-center p-4 border-b border-slate-800">
+                <h3 className="text-white font-display font-black tracking-widest text-lg">Live Chart</h3>
+                <button 
+                  onClick={() => setChartModalSymbol(null)}
+                  className="text-slate-400 hover:text-white p-2 rounded-lg bg-slate-800/50 hover:bg-slate-700/50 transition-colors"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="p-4 w-full h-[60vh]">
+                <TradingChart 
+                  symbol={chartModalSymbol} 
+                  activeTrades={activeTradesForChart}
+                  dailyPnl={dailyPnlForChart}
+                />
+              </div>
+            </motion.div>
+          </motion.div>
+        </AnimatePresence>,
+        document.body
+      )}
       {/* ── Failsafe Lockout Banner ── */}
       {automationActive && botHealth?.tradingBlocked && (
         <motion.div
@@ -697,7 +917,7 @@ export default function AutomateDashboard() {
         </div>
 
         <div className="w-full md:w-auto h-full flex items-end">
-          <form onSubmit={handleCreateProfile} className="flex gap-2 w-full">
+          <form onSubmit={handleCreateProfile} className="flex flex-col sm:flex-row gap-2 w-full">
             <input
               type="text"
               value={newProfileName}
@@ -714,6 +934,7 @@ export default function AutomateDashboard() {
             />
             <button
               type="submit"
+              onClick={playClick}
               disabled={creatingProfile || !newProfileName.trim() || !newProfileAccountId.trim()}
               className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-3 rounded-xl font-display font-bold uppercase tracking-wider text-xs transition-colors disabled:opacity-50"
             >
@@ -771,24 +992,7 @@ export default function AutomateDashboard() {
               />
             </div>
             
-            <div>
-              <div className="flex justify-between items-center mb-1.5 ml-1 mr-1">
-                <label className="block text-[10px] font-mono text-slate-500 uppercase tracking-widest">Base Risk Per Trade</label>
-                <span className="text-[10px] font-mono font-bold text-indigo-400">{riskPercentage}%</span>
-              </div>
-              <div className="bg-slate-950/50 border border-slate-700 rounded-xl px-4 py-3 h-[46px] flex items-center">
-                <input
-                  type="range"
-                  min="1"
-                  max="10"
-                  step="1"
-                  value={riskPercentage}
-                  onChange={(e) => setRiskPercentage(Number(e.target.value))}
-                  className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
-                />
-              </div>
-              <p className="text-[9px] font-mono text-slate-600 mt-1.5 ml-1 uppercase">Recommended: 5% (Aggressive)</p>
-            </div>
+
           </div>
 
           <div className="bg-slate-950/40 border border-slate-800 rounded-xl p-3.5 flex gap-3 items-center">
@@ -803,7 +1007,7 @@ export default function AutomateDashboard() {
           <div className="flex flex-col sm:flex-row items-center justify-between gap-5 pt-4 border-t border-slate-800">
             <div className="flex items-center gap-4">
               <button
-                type="button" onClick={() => setAutomationActive(!automationActive)}
+                type="button" onClick={toggleMasterAutomation}
                 className={`relative w-16 h-8 rounded-full transition-colors duration-300 ${automationActive ? 'bg-emerald-500' : 'bg-slate-700'} shadow-inner`}
               >
                 <span className={`absolute top-1 left-1 bg-white w-6 h-6 rounded-full transition-transform duration-300 shadow-md ${automationActive ? 'translate-x-8' : ''}`} />
@@ -861,65 +1065,6 @@ export default function AutomateDashboard() {
           )}
         </div>
 
-        {/* Combined Matrix Panel */}
-        {activeBotCount > 1 && (
-          <motion.div
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="mb-6 bg-slate-950/60 border border-indigo-500/30 rounded-2xl p-5 shadow-[0_0_20px_rgba(99,102,241,0.1)] flex items-center justify-between"
-          >
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-indigo-500/20 text-indigo-400 rounded-xl flex items-center justify-center border border-indigo-500/30 shadow-inner">
-                <BarChart2 size={20} />
-              </div>
-              <div>
-                <h3 className="text-white font-display font-black tracking-tight text-lg">Combined Portfolio Matrix</h3>
-                <p className="text-slate-500 font-mono text-[10px] uppercase tracking-widest">Aggregate Backtest Metrics</p>
-              </div>
-            </div>
-            
-            <div className="flex items-center gap-8">
-              <div className="text-center">
-                <p className="text-slate-500 font-mono text-[10px] uppercase tracking-widest mb-1">Avg Win Rate</p>
-                <p className="text-white font-display font-bold text-xl">{
-                  (bots.filter(b => b.isActive).reduce((a, b) => a + b.winRateBacktest, 0) / activeBotCount).toFixed(1)
-                }%</p>
-              </div>
-              <div className="w-px h-8 bg-slate-800" />
-              <div className="text-center">
-                <p className="text-slate-500 font-mono text-[10px] uppercase tracking-widest mb-1">Combined Return</p>
-                <p className="text-emerald-400 font-display font-bold text-xl">+{
-                  Math.round(bots.filter(b => b.isActive).reduce((a, b) => {
-                    const val = parseInt(b.returnBacktest.replace(/[^0-9-]/g, ''), 10);
-                    return a + (isNaN(val) ? 0 : val);
-                  }, 0) * (riskPercentage / 5))
-                }%/yr</p>
-              </div>
-              <div className="w-px h-8 bg-slate-800" />
-              <div className="text-center">
-                <p className="text-slate-500 font-mono text-[10px] uppercase tracking-widest mb-1">Estimated Max DD</p>
-                <p className="text-rose-400 font-display font-bold text-xl">{
-                  (Math.max(...bots.filter(b => b.isActive).map(b => b.maxDDBacktest)) * (riskPercentage / 5)).toFixed(1)
-                }%</p>
-              </div>
-            </div>
-          </motion.div>
-        )}
-
-        {/* Warning if master not armed */}
-        {!automationActive && (
-          <motion.div
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="mb-5 flex items-center gap-3 bg-amber-950/40 border border-amber-500/30 rounded-xl px-5 py-3.5"
-          >
-            <Lock size={16} className="text-amber-400 shrink-0" />
-            <p className="text-amber-400 text-xs font-mono">
-              Master Automation Switch must be enabled above before you can arm individual bots.
-            </p>
-          </motion.div>
-        )}
-
         {/* Bot cards grid - Expandable */}
         {botsSectionExpanded && (
           <AnimatePresence>
@@ -961,7 +1106,9 @@ export default function AutomateDashboard() {
                                     bot={bot}
                                     onToggle={handleBotToggle}
                                     disabled={!automationActive || toggling !== null}
-                                    riskPercentage={riskPercentage}
+                                    riskPercentage={botRisks[bot.id] || 5}
+                                    onRiskChange={(id, val) => setBotRisks(prev => ({ ...prev, [id]: val }))}
+                                    onSymbolClick={(symbol) => setChartModalSymbol(symbol)}
                                   />
                                 ))}
                               </div>
@@ -980,7 +1127,238 @@ export default function AutomateDashboard() {
         )}
       </div>
 
-      {/* ── Section 3: Live Status ── */}
+      {/* Combined Matrix Panel */}
+        {activeBotCount > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-6 bg-slate-950/60 border border-indigo-500/30 rounded-2xl p-5 shadow-[0_0_20px_rgba(99,102,241,0.1)] flex items-center justify-between"
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-indigo-500/20 text-indigo-400 rounded-xl flex items-center justify-center border border-indigo-500/30 shadow-inner">
+                <BarChart2 size={20} />
+              </div>
+              <div>
+                <h3 className="text-white font-display font-black tracking-tight text-lg">Combined Portfolio Matrix</h3>
+                <p className="text-slate-500 font-mono text-[10px] uppercase tracking-widest">Aggregate Backtest Metrics</p>
+              </div>
+            </div>
+            
+            <div className="flex items-center gap-8">
+              <div className="text-center">
+                <p className="text-slate-500 font-mono text-[10px] uppercase tracking-widest mb-1">Avg Win Rate</p>
+                <p className="text-white font-display font-bold text-xl">{
+                  activeBotCount > 0 
+                    ? (bots.filter(b => b.isActive).reduce((a, b) => a + (b.winRateBacktest * (b.tradesPerYear || 1)), 0) / 
+                       bots.filter(b => b.isActive).reduce((a, b) => a + (b.tradesPerYear || 1), 0)).toFixed(1)
+                    : "0.0"
+                }%</p>
+              </div>
+              <div className="w-px h-8 bg-slate-800" />
+              <div className="text-center">
+                <p className="text-slate-500 font-mono text-[10px] uppercase tracking-widest mb-1">Avg Trades / Yr</p>
+                <p className="text-indigo-400 font-display font-bold text-xl">{
+                  Math.round(bots.filter(b => b.isActive).reduce((a, b) => a + (b.tradesPerYear || 0), 0))
+                }</p>
+              </div>
+              <div className="w-px h-8 bg-slate-800" />
+              <div className="text-center">
+                <p className="text-slate-500 font-mono text-[10px] uppercase tracking-widest mb-1">Combined Return</p>
+                <p className="text-emerald-400 font-display font-bold text-xl">+{
+                  (() => {
+                    const activeBots = bots.filter(b => b.isActive);
+                    if (activeBots.length === 0) return "0.0";
+                    let combinedAnnualReturn = 0;
+                    
+                    for (const b of activeBots) {
+                      const val = parseFloat(b.returnBacktest.replace(/[^0-9.-]/g, ''));
+                      if (isNaN(val)) continue;
+                      
+                      const br = botRisks[b.id] || 5;
+                      const riskRatio = br / 5.0; // The backtest returns are based on a default 5% risk
+                      combinedAnnualReturn += (val * riskRatio);
+                    }
+                    
+                    if (combinedAnnualReturn > 1000000) return (combinedAnnualReturn / 1000000).toFixed(1) + "M";
+                    if (combinedAnnualReturn > 1000) return (combinedAnnualReturn / 1000).toFixed(1) + "k";
+                    return combinedAnnualReturn.toFixed(1);
+                  })()
+                }%/yr</p>
+              </div>
+              <div className="w-px h-8 bg-slate-800" />
+              <div className="text-center">
+                <p className="text-slate-500 font-mono text-[10px] uppercase tracking-widest mb-1">Est. Max DD</p>
+                <p className="text-rose-400 font-display font-bold text-xl">{
+                  (() => {
+                     const maxDD = Math.max(...bots.filter(b => b.isActive).map(b => (b.maxDDBacktest * ((botRisks[b.id] || 5) / 5.0))));
+                     return maxDD === -Infinity ? "0.0" : maxDD.toFixed(1);
+                  })()
+                }%</p>
+              </div>
+            </div>
+          </motion.div>
+        )}
+
+        {/* ── Section 3.5: Safety Monitor Panel (Moved here) ── */}
+        {selectedProfileId && safetyStatus && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-6 bg-slate-900/40 backdrop-blur-xl p-6 rounded-3xl border border-slate-700/50 shadow-[0_8px_30px_rgb(0,0,0,0.5)] ring-1 ring-white/5"
+          >
+            <div className="flex flex-wrap items-center gap-3 mb-6">
+              <ShieldAlert size={18} className={safetyStatus.circuitBreakerActive ? "text-rose-500 animate-pulse" : "text-emerald-400"} />
+              <h3 className="text-sm font-display font-bold uppercase tracking-wider text-white">Safety & Risk Monitor</h3>
+              {safetyStatus.circuitBreakerActive && (
+                <span className="ml-4 text-[10px] font-mono px-3 py-1 rounded-full bg-rose-500/20 text-rose-400 border border-rose-500/50 uppercase tracking-widest font-bold">
+                  CIRCUIT BREAKER TRIGGERED
+                </span>
+              )}
+            </div>
+            
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+              <div className="bg-slate-950/50 rounded-xl p-4 border border-slate-800 relative group">
+                <div className="flex justify-between items-start mb-1">
+                  <span className="block text-[10px] font-mono text-slate-500 uppercase tracking-widest">Portfolio Drawdown</span>
+                  <button 
+                    onClick={handleResetWatermark}
+                    title="Reset Peak Balance (Use after withdrawal)"
+                    className="opacity-0 group-hover:opacity-100 p-1 bg-slate-800 hover:bg-slate-700 text-slate-400 rounded transition-all"
+                  >
+                    <RefreshCw size={10} />
+                  </button>
+                </div>
+                <span className={`text-lg font-display font-bold ${safetyStatus.drawdownPct > 10 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                  {safetyStatus.drawdownPct.toFixed(2)}%
+                </span>
+              </div>
+              <div className="bg-slate-950/50 rounded-xl p-4 border border-slate-800">
+                <span className="block text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-1">Daily Profit/Loss</span>
+                <span className={`text-lg font-display font-bold ${safetyStatus.dailyProfitPct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  {safetyStatus.dailyProfitPct >= 0 ? '+' : ''}{safetyStatus.dailyProfitPct.toFixed(2)}%
+                </span>
+              </div>
+            </div>
+            
+            {safetyStatus.circuitBreakerActive && (
+              <div className="bg-rose-950/30 border border-rose-900/50 rounded-xl p-4 mb-6 text-rose-300 font-mono text-xs shadow-inner">
+                <AlertTriangle size={14} className="inline mr-2" />
+                {safetyStatus.circuitBreakerReason}
+              </div>
+            )}
+
+            {safetyStatus.blockedPairs && Object.keys(safetyStatus.blockedPairs).length > 0 && (
+              <div className="bg-slate-950/50 rounded-xl p-4 border border-slate-800 mb-6">
+                <span className="block text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-4">Blocked Pairs (Kill Switches Active)</span>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {Object.entries(safetyStatus.blockedPairs).map(([pair, reason]) => (
+                    <div key={pair} className="bg-rose-950/20 border border-rose-900/30 rounded-lg p-3 flex items-center justify-between">
+                      <span className="text-rose-400 font-bold font-mono text-xs">{pair}</span>
+                      <span className="text-rose-300/70 text-[10px] truncate max-w-[150px]" title={String(reason)}>{String(reason)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="border-t border-slate-800 pt-6">
+              <div className="flex items-center justify-between cursor-pointer group mb-4" onClick={() => setSafetySettingsExpanded(!safetySettingsExpanded)}>
+                <h4 className="text-xs font-bold text-slate-400 group-hover:text-slate-300 uppercase tracking-widest flex items-center gap-2 transition-colors">
+                  <Settings size={14} /> Risk & Safety Safeguards Settings
+                </h4>
+                {safetySettingsExpanded ? <ChevronUp size={14} className="text-slate-500" /> : <ChevronDown size={14} className="text-slate-500" />}
+              </div>
+              <AnimatePresence>
+                {safetySettingsExpanded && (
+                  <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
+                    <div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-4">
+                  <div>
+                    <label className="flex justify-between text-[10px] font-mono text-slate-400 uppercase mb-1">
+                      <span>Max Drawdown Limit (%)</span>
+                      <span className="text-rose-400">{safetySettings.maxDrawdownLimit}%</span>
+                    </label>
+                    <input type="range" min="1" max="100" value={safetySettings.maxDrawdownLimit} onChange={e => setSafetySettings({...safetySettings, maxDrawdownLimit: Number(e.target.value)})} className="w-full accent-rose-500" />
+                  </div>
+                  <div>
+                    <label className="flex justify-between text-[10px] font-mono text-slate-400 uppercase mb-1">
+                      <span>Daily Loss Limit (%)</span>
+                      <span className="text-amber-400">{safetySettings.dailyLossLimit}%</span>
+                    </label>
+                    <input type="range" min="1" max="100" value={safetySettings.dailyLossLimit} onChange={e => setSafetySettings({...safetySettings, dailyLossLimit: Number(e.target.value)})} className="w-full accent-amber-500" />
+                  </div>
+                  <div className="pt-2">
+                    <label className="flex items-center gap-2 text-[10px] font-mono text-slate-400 uppercase mb-2 cursor-pointer">
+                      <input type="checkbox" checked={safetySettings.volatilityFilterEnabled} onChange={e => setSafetySettings({...safetySettings, volatilityFilterEnabled: e.target.checked})} className="accent-indigo-500" />
+                      Volatility/Regime Filter Enabled
+                    </label>
+                    {safetySettings.volatilityFilterEnabled && (
+                      <div className="pl-6 space-y-2">
+                        <label className="flex justify-between text-[10px] font-mono text-slate-500 uppercase">
+                          <span>Min ADR (pips)</span>
+                          <span className="text-indigo-400">{safetySettings.volatilityFilterMinAdrPips}</span>
+                        </label>
+                        <input type="range" min="5" max="100" value={safetySettings.volatilityFilterMinAdrPips} onChange={e => setSafetySettings({...safetySettings, volatilityFilterMinAdrPips: Number(e.target.value)})} className="w-full accent-indigo-500" />
+                      </div>
+                    )}
+                  </div>
+                </div>
+                
+                <div className="space-y-3 bg-slate-950/50 p-4 rounded-xl border border-slate-800">
+                  <span className="block text-[10px] font-mono text-slate-400 uppercase mb-2">Unprofitable Pair Kill Switch</span>
+                  <div>
+                    <label className="flex justify-between text-[10px] font-mono text-slate-500 uppercase">
+                      <span>Lookback Trades</span>
+                      <span className="text-emerald-400">{safetySettings.unprofitablePairLookback}</span>
+                    </label>
+                    <input type="range" min="5" max="50" value={safetySettings.unprofitablePairLookback} onChange={e => setSafetySettings({...safetySettings, unprofitablePairLookback: Number(e.target.value)})} className="w-full accent-emerald-500" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-[10px] font-mono text-slate-500 uppercase mb-1">Min Win Rate %</label>
+                      <input type="number" value={safetySettings.unprofitablePairMinWinRate} onChange={e => setSafetySettings({...safetySettings, unprofitablePairMinWinRate: Number(e.target.value)})} className="w-full bg-slate-900 border border-slate-700 text-white rounded px-2 py-1 text-xs" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-mono text-slate-500 uppercase mb-1">Min Net Pips</label>
+                      <input type="number" value={safetySettings.unprofitablePairMinProfitPips} onChange={e => setSafetySettings({...safetySettings, unprofitablePairMinProfitPips: Number(e.target.value)})} className="w-full bg-slate-900 border border-slate-700 text-white rounded px-2 py-1 text-xs" />
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div className="mt-4 flex justify-end">
+                <button
+                  onClick={handleSaveSafetySettings}
+                  disabled={savingSafety}
+                  className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold py-2 px-6 rounded-xl transition-colors font-display tracking-wide text-xs flex items-center justify-center gap-2"
+                >
+                  {savingSafety ? <RefreshCw className="animate-spin" size={14} /> : <Save size={14} />}
+                  Save Safety Rules
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+            </div>
+          </motion.div>
+        )}
+
+        {/* Warning if master not armed */}
+        {!automationActive && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-5 flex items-center gap-3 bg-amber-950/40 border border-amber-500/30 rounded-xl px-5 py-3.5"
+          >
+            <Lock size={16} className="text-amber-400 shrink-0" />
+            <p className="text-amber-400 text-xs font-mono">
+              Master Automation Switch must be enabled above before you can arm individual bots.
+            </p>
+          </motion.div>
+        )}
+
+        {/* ── Section 3: Live Status ── */}
       {activeBotCount > 0 && (
         <motion.div
           initial={{ opacity: 0 }}
@@ -1013,6 +1391,7 @@ export default function AutomateDashboard() {
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             {bots.filter(b => b.isActive).map(bot => {
+
               const colors = COLOR_MAP[bot.color] || COLOR_MAP.indigo;
               return (
                 <div key={bot.id} className={`rounded-xl p-4 border ${colors.border} ${colors.bg}`}>
@@ -1020,9 +1399,15 @@ export default function AutomateDashboard() {
                     <span className="text-lg">{bot.icon}</span>
                     <span className={`text-[10px] font-mono uppercase tracking-wider ${colors.text}`}>{bot.name}</span>
                   </div>
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex items-center gap-1.5 mt-2">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                     <span className="text-[9px] font-mono text-slate-500 uppercase">Scanning {bot.symbols[0]}</span>
+                    <button 
+                      onClick={() => setChartModalSymbol(bot.symbols[0])}
+                      className="ml-auto flex items-center gap-1 text-[9px] font-mono text-indigo-400 hover:text-indigo-300 uppercase cursor-pointer border border-indigo-500/30 bg-indigo-500/10 px-2 py-0.5 rounded transition-colors"
+                    >
+                      <BarChart2 size={10} /> Charts
+                    </button>
                   </div>
                 </div>
               );
