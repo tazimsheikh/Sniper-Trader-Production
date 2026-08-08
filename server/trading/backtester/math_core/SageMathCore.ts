@@ -125,7 +125,22 @@ export function preComputeTriggers(
     }
     // Set orBuilt = true when the build window ends (when it is no longer building but was building)
     if (!isBuildingORB && currentMins >= startMins + orbMinutes && currentMins < startMins + 4 * 60) {
-      orBuilt = true;
+      if (!orBuilt) {
+        if ((orHigh === -Infinity || orLow === Infinity) && i > 0) {
+          for (let k = i - 1; k >= 0; k--) {
+            const mc = m5Candles[k];
+            const mcMin = mc.estMin ?? new Date(mc.timestamp).getUTCMinutes();
+            const mcMins = mc.estHour * 60 + mcMin;
+            if (mcMins >= startMins && mcMins < startMins + orbMinutes) {
+              if (mc.high > orHigh) orHigh = mc.high;
+              if (mc.low < orLow) orLow = mc.low;
+            }
+          }
+        }
+        if (orHigh !== -Infinity && orLow !== Infinity) {
+          orBuilt = true;
+        }
+      }
     }
 
     const endMins = startMins + orbMinutes + 4 * 60; // 4 hour window to trigger sweep AFTER ORB finishes
@@ -148,8 +163,8 @@ export function preComputeTriggers(
 
     // S-4: Use previously closed N-minute Action Candle for sweep detection (matches SageMathBacktester + SageEngine)
     if (orBuilt && isInsideSession && i > 0) {
-      const prevC = m5Candles[i - 1];
-      const actionCandle = getActionCandle(m5Candles, i - 1, actionMinutes);
+      const prevC = m5Candles[i];
+      const actionCandle = getActionCandle(m5Candles, i, actionMinutes);
       if (!actionCandle) continue;
 
       const sweepBuffer = sweepPips * pipSize;
@@ -168,7 +183,7 @@ export function preComputeTriggers(
       const rOrLow  = roundPrice(orLow, pair);
       const boxSize = roundPrice(Math.abs(rOrHigh - rOrLow), pair);
 
-      let startM1Idx = m1Idx;
+      let startM1Idx = c.m1StartIndex !== undefined ? c.m1StartIndex + 5 : 0;
 
       triggers.push({
         m5Index: i,
@@ -372,7 +387,7 @@ export function evaluateExits(
 
     let outcome: "SKIPPED" | "TP" | "SL" | "EOD" | "NEWS_CLOSE" | null = null;
     let rMultiple = 0;
-    let entryTimeMs = 0;
+    let entryTimeMs = m1.timestamp[t.m1Index];
 
     // MathBacktester starts checking for entry immediately on the sweep M1 candle!
     let startM1Idx = t.m1Index;
@@ -443,7 +458,11 @@ export function evaluateExits(
           break;
         }
 
-        if (direction === "BUY") {
+        if (pct === 0) {
+          tradeActive = true;
+          entryTimeMs = m1.timestamp[j];
+          actualEntryPrice = direction === "BUY" ? m1.open[j] + spreadPts : m1.open[j];
+        } else if (direction === "BUY") {
           if (m1.open[j] + spreadPts <= limitBuyPrice) {
             entryTimeMs = m1.timestamp[j];
             const filledPrice = Math.min(m1.open[j] + spreadPts, limitBuyPrice);

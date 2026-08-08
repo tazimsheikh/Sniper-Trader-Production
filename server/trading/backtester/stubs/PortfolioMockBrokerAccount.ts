@@ -426,6 +426,34 @@ export class PortfolioMockBrokerAccount {
 
     for (const [orderId, order] of ordersToCheck) {
       if (order.symbol !== symbol) continue;
+
+      // PARITY: Expire Sage limit orders if candle timestamp is outside the 4-hour session sweep window
+      if (order.botId === 'sage' || (order.clientId && (order.clientId.startsWith('S_') || order.clientId.startsWith('SAGE_')))) {
+        if (orchestratorState && orchestratorState.sageStates) {
+          const sageKey = this.resolveSageKey(orchestratorState, order.clientId);
+          if (sageKey) {
+            const ss = orchestratorState.sageStates[sageKey];
+            if (ss && ss.sessionStartMins !== undefined && ss.sessionEndMins !== undefined) {
+              const currentMins = c.estHour * 60 + c.estMin;
+              let isInsideSession = false;
+              if (ss.sessionOvernight) {
+                isInsideSession = currentMins >= ss.sessionStartMins || currentMins <= ss.sessionEndMins;
+              } else {
+                isInsideSession = currentMins >= ss.sessionStartMins && currentMins <= ss.sessionEndMins;
+              }
+              if (!isInsideSession) {
+                this.pendingOrders.delete(orderId);
+                ss.limitOrderId = null;
+                ss.fired = false;
+                ss.fired_fill_check = false;
+                ss.direction = null;
+                continue;
+              }
+            }
+          }
+        }
+      }
+
       const isBuy = order.direction === 'BUY';
       const originalLimitPrice = order.limitPrice;
 
@@ -603,16 +631,16 @@ export class PortfolioMockBrokerAccount {
       let hitTP = false;
       let exitPrice = 0;
 
-      if (isBuy && c.low <= pos.sl) {
+      if (isBuy && Number(c.low.toFixed(5)) <= Number(pos.sl.toFixed(5))) {
         hitSL = true;
         exitPrice = Math.min(c.open, pos.sl);
-      } else if (!isBuy && c.high + spreadPts >= pos.sl) {
+      } else if (!isBuy && Number((c.high + spreadPts).toFixed(5)) >= Number(pos.sl.toFixed(5))) {
         hitSL = true;
         exitPrice = Math.max(c.open + spreadPts, pos.sl);
-      } else if (isBuy && pos.tp && c.high >= pos.tp) {
+      } else if (isBuy && pos.tp && Number(c.high.toFixed(5)) >= Number(pos.tp.toFixed(5))) {
         hitTP = true;
         exitPrice = pos.tp;
-      } else if (!isBuy && pos.tp && c.low + spreadPts <= pos.tp) {
+      } else if (!isBuy && pos.tp && Number((c.low + spreadPts).toFixed(5)) <= Number(pos.tp.toFixed(5))) {
         hitTP = true;
         exitPrice = pos.tp;
       }

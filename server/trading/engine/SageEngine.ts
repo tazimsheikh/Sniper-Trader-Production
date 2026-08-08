@@ -881,7 +881,10 @@ export async function evaluateSageTrailingOnTick(
 
     const cid = trade.clientId || "";
     const botId = trade.botId || "";
-    let config = sageConfigs.find(c => cid.startsWith(c.signature!) || cid.includes(c.signature!));
+    let config = sageConfigs.find(c => {
+      const shortSig = "S_" + getShortHash(c.signature || "");
+      return cid.startsWith(shortSig) || cid.startsWith(c.signature!) || cid.includes(c.signature!);
+    });
     if (!config) config = sageConfigs.find(c => c.signature === botId || botId.includes(c.signature!));
     if (!config) config = sageConfigs[0] || state.config;
     if (!config) continue;

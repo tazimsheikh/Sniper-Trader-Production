@@ -45,7 +45,7 @@ async function main() {
 
     // Filter T1 to only include trades in the requested date range
     t1Taken = t1Taken.filter((t: any) => {
-        const tMs = new Date(t.date).getTime();
+        const tMs = t.openTime || t.timestamp || t.entryTimeMs || new Date(t.date).getTime();
         return tMs >= targetStartMs && tMs <= targetEndMs;
     });
     // Sort T1 chronologically by timestamp/entry time
