@@ -26,7 +26,7 @@ export const WebSocketProvider: React.FC<{ authUser: any, children: React.ReactN
       return;
     }
 
-    const socketUrl = process.env.NODE_ENV === 'development' ? 'http://localhost:3000' : '/';
+    const socketUrl = '/';
     
     const newSocket = io(socketUrl, {
       withCredentials: true // Relies on session cookies for auth

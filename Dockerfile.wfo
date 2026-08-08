@@ -1,0 +1,24 @@
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Install build dependencies for native modules (e.g. canvas)
+RUN apk add --no-cache \
+    python3 \
+    make \
+    g++ \
+    cairo-dev \
+    pango-dev \
+    jpeg-dev \
+    giflib-dev \
+    librsvg-dev
+
+# Copy package files and install dependencies
+COPY package*.json ./
+RUN npm ci
+
+# Copy the rest of the codebase
+COPY . .
+
+# Command to run the WFO backtester
+CMD ["npx", "tsx", "server/trimurti/backtester/run_monthly_wfo.ts"]

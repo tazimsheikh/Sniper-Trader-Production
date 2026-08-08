@@ -1,37 +1,54 @@
-node_modules
-dist
-.env
-.git
+# Node & Build Outputs
+node_modules/
+dist/
+build/
+.env*
+!.env.example
+
+# Version Control & IDEs
+.git/
 .gitignore
-.vscode
-.antigravity
-Dockerfile
+.vscode/
+.antigravity/
+.agents/
+.metaapi/
+
+# Docker Meta Files
+Dockerfile*
 .dockerignore
-npm-debug.log
-README.md
-AUDJPY_M1_202105030005_202605010159.csv
-AUDUSD_M1_202105030005_202605010159.csv
-CHFJPY_M1_202105030006_202605010159.csv
-EURAUD_M1_202105030000_202605010159.csv
-EURCAD_M1_202105030000_202605010159.csv
-EURCHF_M1_202105030000_202605010159.csv
-EURJPY_M1_202105030000_202605010159.csv
-EURUSD_M1_202105030000_202605010159.csv
-GBPAUD_M1_202105030000_202605010159.csv
-GBPCAD_M1_202105030006_202605010159.csv
-GBPCHF_M1_202105030006_202605010159.csv
-GBPJPY_M1_202105030006_202605010159.csv
-GBPUSD_M1_202105030000_202605010159.csv
-NAS100_M1_202105030100_202605010159.csv
-NZDUSD_M1_202105030000_202605010159.csv
-USDCAD_M1_202105030000_202605010159.csv
-USDCHF_M1_202105030000_202605010159.csv
-USDJPY_M1_202105030000_202605010159.csv
-XAUUSD_M1_202105030101_202605010159.csv
-AUDCAD_M1_202105030005_202605010159.csv
-AUDCHF_M1_202105030006_202605010159.csv
-AUDNZD_M1_202105030000_202605010159.csv
-EURGBP_M1_202105030000_202605010159.csv
-EURNZD_M1_202105030006_202605010159.csv
-GBPNZD_M1_202105030008_202605010159.csv
-NZDJPY_M1_202105030005_202605010159.csv
+docker-compose*.yml
+
+# Logs & Temporary Database Files
+*.log
+npm-debug.log*
+sniper.db*
+logs/
+archive/
+
+# Historical Backtesting Data & Heavy CSVs (2.8+ GB)
+data/csv/
+vision_backtest_results/
+
+# Developer Scratch Scripts & Debug Files
+scratch/
+server/scratch/
+scratch_*.ts
+check_syntax.py
+mage_grid_audit.json
+
+# Heavy Optimizer, Backtester, & Testing Pipelines (Not needed in live Docker runtime)
+server/trading/optimizer/
+server/trading/backtester/
+server/trading/testing/
+
+# Markdown & Documentation
+*.md
+
+# Exclude generic JSON files but preserve required runtime configs
+*.json
+!package.json
+!package-lock.json
+!tsconfig.json
+!tsconfig.backend.json
+!tsconfig.server.json
+!server/trading/output/*.json

@@ -24,9 +24,10 @@ export default function LoginScreen({ onLoginSuccess }: Props) {
     setError('');
 
     // Client-side validation
-    if (!email || !password || !metaapiToken || !accountId) { setError('Email, password, Meta API Token, and Account ID are required.'); return; }
+    if (!email || !password) { setError('Email and password are required.'); return; }
+    if (!isLogin && (!metaapiToken || !accountId)) { setError('Meta API Token and Account ID are required for registration.'); return; }
     if (!isLogin && password.length < 8) { setError('Password must be at least 8 characters.'); return; }
-    if (metaapiToken.trim().length < 20 || accountId.trim().length < 5) { setError('A valid MetaAPI Token and Account ID are required.'); return; }
+    if (!isLogin && (metaapiToken.trim().length < 20 || accountId.trim().length < 5)) { setError('A valid MetaAPI Token and Account ID are required.'); return; }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setError('Please enter a valid email address.'); return; }
 
     setLoading(true);
@@ -42,12 +43,7 @@ export default function LoginScreen({ onLoginSuccess }: Props) {
       const data = await res.json();
 
       if (data.success) {
-        if (data.requiresOtp) {
-          setStep('otp');
-          setOtp('');
-        } else {
-          onLoginSuccess(data.user);
-        }
+        onLoginSuccess(data.user);
       } else {
         setError(data.error || 'Authentication failed. Please try again.');
       }
@@ -130,7 +126,7 @@ export default function LoginScreen({ onLoginSuccess }: Props) {
       <div className="absolute inset-0 z-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-emerald-900/20 via-[#030508]/80 to-[#030508] pointer-events-none" />
 
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="relative z-10 w-full max-w-md">
-        <div className="bg-slate-900/60 backdrop-blur-xl p-8 rounded-3xl border border-[#d4af37]/30 shadow-[0_0_40px_rgba(212,175,55,0.15)] ring-1 ring-white/5">
+        <div className="bg-black/50 p-8 rounded-3xl border border-[#d4af37]/30 shadow-[0_0_40px_rgba(212,175,55,0.15)] ring-1 ring-white/5">
           <div className="flex justify-center mb-6">
             <div className="w-16 h-16 bg-gradient-to-br from-[#d4af37] to-[#8a7322] rounded-2xl flex items-center justify-center text-[#030508] shadow-[0_0_20px_rgba(212,175,55,0.4)] ring-1 ring-[#d4af37]/50 relative overflow-hidden">
               <DollarSign size={32} className="relative z-10" />
@@ -142,7 +138,7 @@ export default function LoginScreen({ onLoginSuccess }: Props) {
             {step === 'otp' ? 'Secure Verification' : (isLogin ? 'Access Terminal' : 'Initialize Account')}
           </h2>
           <p className="text-slate-400 text-center text-sm font-mono mb-8 uppercase tracking-widest">
-            Sniper Trader
+            🔱 The Coven
           </p>
 
           {error && (
@@ -189,7 +185,7 @@ export default function LoginScreen({ onLoginSuccess }: Props) {
               </div>
 
               {/* Local Security Group */}
-              <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/50 space-y-4">
+              <div className="p-4 rounded-xl border border-white/10 bg-black/50 space-y-4">
                 <h3 className="text-[10px] font-mono text-indigo-400 uppercase tracking-widest mb-1">Local Security</h3>
                 
                 <div>
@@ -201,7 +197,7 @@ export default function LoginScreen({ onLoginSuccess }: Props) {
                     <input
                       type="email" required autoComplete="email"
                       value={email} onChange={e => setEmail(e.target.value)}
-                      className="w-full bg-slate-950/50 border border-slate-700 text-white rounded-xl pl-10 pr-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all placeholder:text-slate-600 font-mono text-sm"
+                      className="w-full bg-slate-950/50 border border-white/10 text-white rounded-xl pl-10 pr-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all placeholder:text-slate-600 font-mono text-sm"
                       placeholder="operative@domain.com"
                     />
                   </div>
@@ -216,7 +212,7 @@ export default function LoginScreen({ onLoginSuccess }: Props) {
                     <input
                       type="password" required autoComplete={isLogin ? 'current-password' : 'new-password'}
                       value={password} onChange={e => setPassword(e.target.value)}
-                      className="w-full bg-slate-950/50 border border-slate-700 text-white rounded-xl pl-10 pr-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all placeholder:text-slate-600 font-mono text-sm"
+                      className="w-full bg-slate-950/50 border border-white/10 text-white rounded-xl pl-10 pr-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all placeholder:text-slate-600 font-mono text-sm"
                       placeholder="••••••••"
                     />
                   </div>
@@ -229,44 +225,46 @@ export default function LoginScreen({ onLoginSuccess }: Props) {
               </div>
 
               {/* MetaAPI Bridge Group */}
-              <div className="p-4 rounded-xl border border-slate-800 bg-slate-900/50 space-y-4">
-                <h3 className="text-[10px] font-mono text-indigo-400 uppercase tracking-widest mb-1">MetaAPI Bridge</h3>
-                
-                <div>
-                  <label className="block text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-1.5 ml-1">Meta API Token</label>
-                  <div className="relative">
-                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                      <Zap size={16} className="text-slate-500" />
+              {!isLogin && (
+                <div className="p-4 rounded-xl border border-white/10 bg-black/50 space-y-4">
+                  <h3 className="text-[10px] font-mono text-indigo-400 uppercase tracking-widest mb-1">MetaAPI Bridge</h3>
+                  
+                  <div>
+                    <label className="block text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-1.5 ml-1">Meta API Token</label>
+                    <div className="relative">
+                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                        <Zap size={16} className="text-slate-500" />
+                      </div>
+                      <input
+                        type="password" required={!isLogin}
+                        value={metaapiToken} onChange={e => setMetaapiToken(e.target.value)}
+                        className="w-full bg-slate-950/50 border border-white/10 text-white rounded-xl pl-10 pr-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all placeholder:text-slate-600 font-mono text-sm"
+                        placeholder="Enter Meta API Token..."
+                      />
                     </div>
-                    <input
-                      type="password" required
-                      value={metaapiToken} onChange={e => setMetaapiToken(e.target.value)}
-                      className="w-full bg-slate-950/50 border border-slate-700 text-white rounded-xl pl-10 pr-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all placeholder:text-slate-600 font-mono text-sm"
-                      placeholder="Enter Meta API Token..."
-                    />
+                    <p className="mt-1.5 ml-1 text-[9px] font-mono text-slate-600 uppercase tracking-wider">
+                      Don't have one? Get it at <a href="https://app.metaapi.cloud/" target="_blank" rel="noreferrer" className="text-indigo-400 hover:underline">app.metaapi.cloud</a>
+                    </p>
                   </div>
-                  <p className="mt-1.5 ml-1 text-[9px] font-mono text-slate-600 uppercase tracking-wider">
-                    Don't have one? Get it at <a href="https://app.metaapi.cloud/" target="_blank" rel="noreferrer" className="text-indigo-400 hover:underline">app.metaapi.cloud</a>
-                  </p>
-                </div>
 
-                <div>
-                  <label className="block text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-1.5 ml-1">MetaAPI Account ID</label>
-                  <div className="relative">
-                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
-                      <Database size={16} />
+                  <div>
+                    <label className="block text-[10px] font-mono text-slate-500 uppercase tracking-widest mb-1.5 ml-1">MetaAPI Account ID</label>
+                    <div className="relative">
+                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
+                        <Database size={16} />
+                      </div>
+                      <input
+                        type="text"
+                        value={accountId}
+                        onChange={(e) => setAccountId(e.target.value)}
+                        placeholder="Enter MetaAPI Account ID"
+                        className="w-full bg-slate-950/50 border border-white/10 text-white rounded-xl pl-10 pr-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all placeholder:text-slate-600 font-mono text-sm"
+                        required={!isLogin}
+                      />
                     </div>
-                    <input
-                      type="text"
-                      value={accountId}
-                      onChange={(e) => setAccountId(e.target.value)}
-                      placeholder="Enter MetaAPI Account ID"
-                      className="w-full bg-slate-950/50 border border-slate-700 text-white rounded-xl pl-10 pr-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all placeholder:text-slate-600 font-mono text-sm"
-                      required
-                    />
                   </div>
                 </div>
-              </div>
+              )}
 
               <button
                 type="submit" disabled={loading}
@@ -297,7 +295,7 @@ export default function LoginScreen({ onLoginSuccess }: Props) {
                   <input
                     type="text" required maxLength={6} pattern="\d{6}"
                     value={otp} onChange={e => setOtp(e.target.value.replace(/\D/g, ''))}
-                    className="w-full bg-slate-950/50 border border-slate-700 text-white rounded-xl pl-10 pr-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all placeholder:text-slate-600 font-mono text-center text-lg tracking-[8px] font-bold"
+                    className="w-full bg-slate-950/50 border border-white/10 text-white rounded-xl pl-10 pr-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all placeholder:text-slate-600 font-mono text-center text-lg tracking-[8px] font-bold"
                     placeholder="000000"
                   />
                 </div>

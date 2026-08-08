@@ -65,5 +65,15 @@ export function useSound() {
     setTimeout(() => playTone(1567.98, 'sine', 0.8, 0.1), 200); // G6
   }, [playTone]);
 
-  return { playClick, playToggleOn, playToggleOff, playSave };
+  const playSuccess = useCallback(() => {
+    playTone(880, 'sine', 0.1, 0.1);
+    setTimeout(() => playTone(1318.51, 'sine', 0.4, 0.1), 100);
+  }, [playTone]);
+
+  const playError = useCallback(() => {
+    playTone(300, 'sawtooth', 0.3, 0.1);
+    setTimeout(() => playTone(250, 'sawtooth', 0.4, 0.1), 150);
+  }, [playTone]);
+
+  return { playClick, playToggleOn, playToggleOff, playSave, playSuccess, playError };
 }

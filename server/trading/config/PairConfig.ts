@@ -1,0 +1,513 @@
+// ============================================================
+// PAIR CONFIGURATIONS
+// ============================================================
+
+import type { PairConfig } from "./types.js";
+export type { PairConfig };
+export class PairConfigManager {
+  static isOrbEnabled(sessionPair: string): boolean {
+    const mageCfgs = this.getMageConfigs(sessionPair);
+    const sageCfgs = this.getSageConfigs(sessionPair);
+    const seerCfg = this.getSeerConfigs(sessionPair);
+    return mageCfgs.some(c => c.orbEnabled) || sageCfgs.some(c => c.orbEnabled) || seerCfg.some(c => c.orbEnabled);
+  }
+
+  static getOrbTime(sessionPair: string): { hour: number; min: number } {
+    const mageCfgs = this.getMageConfigs(sessionPair);
+    const sageCfgs = this.getSageConfigs(sessionPair);
+    const seerCfg = this.getSeerConfigs(sessionPair);
+    
+    const config = mageCfgs[0] || sageCfgs[0] || seerCfg[0];
+    
+    if (
+      config?.orbStartHour !== undefined &&
+      config?.orbStartMin !== undefined
+    ) {
+      return { hour: config.orbStartHour, min: config.orbStartMin };
+    }
+    return { hour: 9, min: 30 };
+  }
+
+  static getBaseSymbol(sessionPair: string): string {
+    return sessionPair.split("_")[0].split(".")[0];
+  }
+
+  static isForex(sessionPair: string): boolean {
+    const symbol = this.getBaseSymbol(sessionPair);
+    const isCryptoOrMetals = ["XAUUSD", "XAGUSD", "BTCUSD", "ETHUSD", "XTIUSD"].includes(symbol);
+    const isIndices = ["US30", "NAS100", "SPX500", "GER30", "UK100", "JPN225", "GER40"].includes(symbol);
+    if (isCryptoOrMetals || isIndices) return false;
+    return /^[A-Z]{6}$/.test(symbol);
+  }
+
+  static getSageConfigs(sessionPair: string): PairConfig[] {
+    const baseSymbol = sessionPair.split("_")[0];
+    const data = SAGE_PAIR_CONFIG[sessionPair] || SAGE_PAIR_CONFIG[baseSymbol];
+    if (!data) return [];
+    const configs = Array.isArray(data) ? data : [data as any];
+    return configs.map((c, i) => ({ ...c, signature: c.signature || `SAGE_${sessionPair}_${i}` }));
+  }
+
+  static getMageConfigs(sessionPair: string): PairConfig[] {
+    const baseSymbol = sessionPair.split("_")[0];
+    const data = MAGE_PAIR_CONFIG[sessionPair] || MAGE_PAIR_CONFIG[baseSymbol];
+    if (!data) return [];
+    const configs = Array.isArray(data) ? data : [data as any];
+    return configs.map((c, i) => ({ ...c, signature: c.signature || `MAGE_${sessionPair}_${i}` }));
+  }
+
+  static getSeerConfigs(sessionPair: string): PairConfig[] {
+    const baseSymbol = sessionPair.split("_")[0];
+    const data = SEER_PAIR_CONFIG[sessionPair] || SEER_PAIR_CONFIG[baseSymbol];
+    if (!data) return [];
+    const configs = Array.isArray(data) ? data : [data as any];
+    return configs.map((c, i) => ({ ...c, signature: c.signature || `SEER_${sessionPair}_${i}` }));
+  }
+
+  static getBlackSwanConfigs(_sessionPair: string): PairConfig[] {
+    return [];
+  }
+
+  static getRepresentativeConfig(sessionPair: string): PairConfig | undefined {
+    return this.getMageConfigs(sessionPair)[0] || 
+           this.getSageConfigs(sessionPair)[0] || 
+           this.getSeerConfigs(sessionPair)[0];
+  }
+}
+// ============================================================
+// MAGE OPTIMIZED CONFIGURATIONS
+// ============================================================
+export const MAGE_PAIR_CONFIG: Record<string, PairConfig[]> = {
+  'GBPJPY': [
+    {
+    "tickSize": 0.001,
+    "pipSize": 0.01,
+    "spread": 1.6,
+      "toxicHours": [6],
+      "session": "london",
+      "orbEnabled": true,
+      "orbStartHour": 4,
+      "orbStartMin": 0,
+      "orbMinutes": 10,
+      "actionMinutes": 180,
+      "minSlDist": 20,
+      "maxSlDist": 80,
+      "minBodyPips": 4,
+      "orbPullbackPct": 0,
+      "exitMode": "TRAILING",
+      "trailingSlTrigger": 0.5,
+      "trailingSlStep": 2,
+      "forceCloseHours": 12,
+      "riskPct": 0.03444350469280669
+    }
+  ],
+  'EURUSD': [
+    {
+    "tickSize": 0.00001,
+    "pipSize": 0.0001,
+    "spread": 0.5,
+      "session": "NY_Forex",
+      "orbEnabled": true,
+      "orbStartHour": 9,
+      "orbStartMin": 45,
+      "orbMinutes": 10,
+      "actionMinutes": 180,
+      "minSlDist": 5,
+      "maxSlDist": 50,
+      "minBodyPips": 5,
+      "orbPullbackPct": 0.3,
+      "exitMode": "TRAILING",
+      "trailingSlTrigger": 2,
+      "trailingSlStep": 0.5,
+      "forceCloseHours": 8,
+      "riskPct": 0.032431838027887294
+    }
+  ],
+  'USDJPY': [
+    {
+    "tickSize": 0.001,
+    "pipSize": 0.01,
+    "spread": 0.7,
+      "toxicHours": [4, 11],
+      "session": "london",
+      "orbEnabled": true,
+      "orbStartHour": 3,
+      "orbStartMin": 0,
+      "orbMinutes": 10,
+      "actionMinutes": 120,
+      "minSlDist": 25,
+      "maxSlDist": 30,
+      "minBodyPips": 4,
+      "orbPullbackPct": 0.6,
+      "exitMode": "TRAILING",
+      "trailingSlTrigger": 3,
+      "trailingSlStep": 0.5,
+      "forceCloseHours": 24,
+      "riskPct": 0.03709095454076574
+    },
+    {
+    "tickSize": 0.001,
+    "pipSize": 0.01,
+    "spread": 0.7,
+      "toxicHours": [4, 11],
+      "session": "NY_Forex",
+      "orbEnabled": true,
+      "orbStartHour": 10,
+      "orbStartMin": 0,
+      "orbMinutes": 10,
+      "actionMinutes": 120,
+      "minSlDist": 15,
+      "maxSlDist": 40,
+      "minBodyPips": 4,
+      "orbPullbackPct": 0.6,
+      "exitMode": "TRAILING",
+      "trailingSlTrigger": 3,
+      "trailingSlStep": 0.5,
+      "forceCloseHours": 24,
+      "riskPct": 0.03391868219076323
+    }
+  ],
+  'NAS100': [
+    {
+    "tickSize": 0.1,
+    "pipSize": 1,
+    "spread": 1,
+      "session": "london",
+      "orbEnabled": true,
+      "orbStartHour": 3,
+      "orbStartMin": 30,
+      "orbMinutes": 10,
+      "actionMinutes": 120,
+      "minSlDist": 30,
+      "maxSlDist": 80,
+      "minBodyPips": 10,
+      "orbPullbackPct": 0,
+      "exitMode": "TRAILING",
+      "trailingSlTrigger": 0.5,
+      "trailingSlStep": 2,
+      "forceCloseHours": 16,
+      "riskPct": 0.03997112889346723
+    },
+    {
+    "tickSize": 0.1,
+    "pipSize": 1,
+    "spread": 1,
+      "session": "asia",
+      "orbEnabled": true,
+      "orbStartHour": 20,
+      "orbStartMin": 0,
+      "orbMinutes": 10,
+      "actionMinutes": 60,
+      "minSlDist": 50,
+      "maxSlDist": 350,
+      "minBodyPips": 10,
+      "orbPullbackPct": 0.6,
+      "exitMode": "OPPOSITE_BOUNDARY",
+      "trailingSlTrigger": 3,
+      "trailingSlStep": 1,
+      "forceCloseHours": 16,
+      "riskPct": 0.024596992871742485
+    }
+  ],
+  'GER40': [
+    {
+    "tickSize": 0.1,
+    "pipSize": 1,
+    "spread": 1,
+      "session": "NY_Forex",
+      "orbEnabled": true,
+      "orbStartHour": 9,
+      "orbStartMin": 0,
+      "orbMinutes": 10,
+      "actionMinutes": 180,
+      "minSlDist": 30,
+      "maxSlDist": 250,
+      "minBodyPips": 10,
+      "orbPullbackPct": 0.6,
+      "exitMode": "TRAILING",
+      "trailingSlTrigger": 3,
+      "trailingSlStep": 2,
+      "forceCloseHours": 24,
+      "riskPct": 0.046978176206933446
+    },
+    {
+    "tickSize": 0.1,
+    "pipSize": 1,
+    "spread": 1,
+      "session": "london",
+      "orbEnabled": true,
+      "orbStartHour": 2,
+      "orbStartMin": 0,
+      "orbMinutes": 10,
+      "actionMinutes": 180,
+      "minSlDist": 20,
+      "maxSlDist": 80,
+      "minBodyPips": 10,
+      "orbPullbackPct": 0,
+      "exitMode": "TRAILING",
+      "trailingSlTrigger": 1.5,
+      "trailingSlStep": 0.5,
+      "forceCloseHours": 24,
+      "riskPct": 0.010781699793263037
+    }
+  ],
+  'GBPUSD': [
+    {
+    "tickSize": 0.00001,
+    "pipSize": 0.0001,
+    "spread": 1.3,
+      "toxicHours": [11, 12],
+      "session": "NY_Forex",
+      "orbEnabled": true,
+      "orbStartHour": 9,
+      "orbStartMin": 30,
+      "orbMinutes": 15,
+      "actionMinutes": 120,
+      "minSlDist": 7.5,
+      "maxSlDist": 60,
+      "minBodyPips": 5,
+      "orbPullbackPct": 0,
+      "exitMode": "TRAILING",
+      "trailingSlTrigger": 2,
+      "trailingSlStep": 2,
+      "forceCloseHours": 24,
+      "riskPct": 0.008225249239760212
+    }
+  ],
+  'USDCAD': [
+    {
+    "tickSize": 0.00001,
+    "pipSize": 0.0001,
+    "spread": 0.9,
+      "session": "NY_Forex",
+      "orbEnabled": true,
+      "orbStartHour": 9,
+      "orbStartMin": 45,
+      "orbMinutes": 10,
+      "actionMinutes": 60,
+      "minSlDist": 8,
+      "maxSlDist": 25,
+      "minBodyPips": 4,
+      "orbPullbackPct": 0,
+      "exitMode": "TRAILING",
+      "trailingSlTrigger": 1,
+      "trailingSlStep": 2,
+      "forceCloseHours": 12,
+      "riskPct": 0.03939277134531371
+    }
+  ],
+  'US30': [
+    {
+    "tickSize": 0.1,
+    "pipSize": 1,
+    "spread": 1.5,
+      "toxicHours": [5, 6],
+      "session": "london",
+      "orbEnabled": true,
+      "orbStartHour": 3,
+      "orbStartMin": 15,
+      "orbMinutes": 10,
+      "actionMinutes": 180,
+      "minSlDist": 50,
+      "maxSlDist": 80,
+      "minBodyPips": 10,
+      "orbPullbackPct": 0,
+      "exitMode": "TRAILING",
+      "trailingSlTrigger": 3,
+      "trailingSlStep": 1.5,
+      "forceCloseHours": 16,
+      "riskPct": 0.018859984805330025
+    }
+  ],
+  'AUDUSD': [
+    {
+    "tickSize": 0.00001,
+    "pipSize": 0.0001,
+    "spread": 0.6,
+      "toxicHours": [21],
+      "session": "asia",
+      "orbEnabled": true,
+      "orbStartHour": 20,
+      "orbStartMin": 30,
+      "orbMinutes": 10,
+      "actionMinutes": 180,
+      "minSlDist": 10,
+      "maxSlDist": 25,
+      "minBodyPips": 4,
+      "orbPullbackPct": 0,
+      "exitMode": "TRAILING",
+      "trailingSlTrigger": 2,
+      "trailingSlStep": 1.5,
+      "forceCloseHours": 24,
+      "riskPct": 0.031653692150626016
+    }
+  ]
+};
+
+// ============================================================
+// SAGE OPTIMIZED CONFIGURATIONS
+// ============================================================
+export const SAGE_PAIR_CONFIG: Record<string, PairConfig[]> = {
+  'AUDUSD': [
+    {
+    "tickSize": 0.00001,
+    "pipSize": 0.0001,
+    "spread": 0.6,
+      "toxicHours": [21],
+      "session": "london",
+      "orbEnabled": true,
+      "orbStartHour": 2,
+      "orbStartMin": 0,
+      "orbMinutes": 120,
+      "actionMinutes": 10,
+      "minSlDist": 15,
+      "maxSlDist": 100,
+      "entryPenetrationPct": 0,
+      "sweepPips": 3,
+      "maxSweepMultiplier": 3,
+      "requireCloseInside": false,
+      "exitMode": "TRAILING",
+      "trailingSlTrigger": 0.5,
+      "trailingSlStep": 0.5,
+      "forceCloseHours": 12,
+      "htfAlignmentRequired": true,
+      "maxH1EmaSlope": 20,
+      "riskPct": 0.0981347812346617
+    }
+  ],
+  'EURNZD': [
+    {
+    "tickSize": 0.00001,
+    "pipSize": 0.0001,
+    "spread": 2.2,
+      "toxicHours": [20],
+      "session": "asia",
+      "orbEnabled": true,
+      "orbStartHour": 18,
+      "orbStartMin": 0,
+      "orbMinutes": 60,
+      "actionMinutes": 15,
+      "minSlDist": 40,
+      "maxSlDist": 100,
+      "entryPenetrationPct": 0,
+      "sweepPips": 5,
+      "maxSweepMultiplier": 1.5,
+      "requireCloseInside": true,
+      "exitMode": "TRAILING",
+      "trailingSlTrigger": 0.5,
+      "trailingSlStep": 2,
+      "forceCloseHours": 12,
+      "htfAlignmentRequired": true,
+      "maxH1EmaSlope": 20,
+      "riskPct": 0.1
+    }
+  ],
+  'GER40': [
+    {
+    "tickSize": 0.1,
+    "pipSize": 1,
+    "spread": 1,
+      "session": "london",
+      "orbEnabled": true,
+      "orbStartHour": 2,
+      "orbStartMin": 0,
+      "orbMinutes": 60,
+      "actionMinutes": 15,
+      "minSlDist": 10,
+      "maxSlDist": 80,
+      "entryPenetrationPct": 20,
+      "sweepPips": 10,
+      "maxSweepMultiplier": 2,
+      "requireCloseInside": true,
+      "exitMode": "TRAILING",
+      "trailingSlTrigger": 1,
+      "trailingSlStep": 1,
+      "forceCloseHours": 16,
+      "htfAlignmentRequired": true,
+      "maxH1EmaSlope": 20,
+      "riskPct": 0.02102558812906939
+    }
+  ],
+  'BTCUSD': [
+    {
+    "tickSize": 1,
+    "pipSize": 10,
+    "spread": 1.5,
+      "session": "asia",
+      "orbEnabled": true,
+      "orbStartHour": 20,
+      "orbStartMin": 30,
+      "orbMinutes": 120,
+      "actionMinutes": 10,
+      "minSlDist": 100,
+      "maxSlDist": 300,
+      "entryPenetrationPct": 20,
+      "sweepPips": 20,
+      "maxSweepMultiplier": 2,
+      "requireCloseInside": false,
+      "exitMode": "TRAILING",
+      "trailingSlTrigger": 1,
+      "trailingSlStep": 2,
+      "forceCloseHours": 12,
+      "htfAlignmentRequired": true,
+      "maxH1EmaSlope": 20,
+      "riskPct": 0.1
+    }
+  ],
+  'XAUUSD': [
+    {
+    "tickSize": 0.01,
+    "pipSize": 0.1,
+    "spread": 1.5,
+      "toxicHours": [9],
+      "session": "london",
+      "orbEnabled": true,
+      "orbStartHour": 3,
+      "orbStartMin": 15,
+      "orbMinutes": 120,
+      "actionMinutes": 5,
+      "minSlDist": 40,
+      "maxSlDist": 250,
+      "entryPenetrationPct": 0,
+      "sweepPips": 7,
+      "maxSweepMultiplier": 3,
+      "requireCloseInside": true,
+      "exitMode": "MIDPOINT",
+      "trailingSlTrigger": 1,
+      "trailingSlStep": 2,
+      "forceCloseHours": 16,
+      "htfAlignmentRequired": true,
+      "maxH1EmaSlope": 20,
+      "riskPct": 0.042706717493503285
+    }
+  ],
+  'GBPUSD': [
+    {
+    "tickSize": 0.00001,
+    "pipSize": 0.0001,
+    "spread": 1.3,
+      "toxicHours": [11, 12],
+      "session": "NY_Forex",
+      "orbEnabled": true,
+      "orbStartHour": 9,
+      "orbStartMin": 30,
+      "orbMinutes": 30,
+      "actionMinutes": 10,
+      "minSlDist": 20,
+      "maxSlDist": 40,
+      "entryPenetrationPct": 0,
+      "sweepPips": 2,
+      "maxSweepMultiplier": 1.5,
+      "requireCloseInside": false,
+      "exitMode": "TRAILING",
+      "trailingSlTrigger": 0.5,
+      "trailingSlStep": 2,
+      "forceCloseHours": 8,
+      "htfAlignmentRequired": true,
+      "maxH1EmaSlope": 20,
+      "riskPct": 0.03036106186604874
+    }
+  ]
+};
+
+export const SEER_PAIR_CONFIG: Record<string, PairConfig[]> = {};;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

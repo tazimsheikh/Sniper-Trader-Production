@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "strict": false,
+    "skipLibCheck": true,
+    "outDir": "./build"
+  },
+  "include": ["server/**/*"],
+  "exclude": [
+    "server/trading/testing/**/*",
+    "server/trading/optimizer/**/*",
+    "server/trading/backtester/**/*"
+  ]
+}

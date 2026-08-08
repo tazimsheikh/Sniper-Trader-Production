@@ -1,78 +1,428 @@
-export interface MarketData {
-  symbol: string;
-  displayName: string;
-  currentPrice: number;
-  open: number;
-  high: number;
-  low: number;
-  prevClose: number;
-  hod: number;
-  lod: number;
-  hos: number;
-  los: number;
-  how: number;
-  low_week: number;
-  pipSize: number;
-  change: number;
-  changePercent: number;
-  signalDay: 'FRD' | 'FGD' | 'Inside Day' | 'Normal';
-  dayOfWeek: number;
-  dayOfWeekCycle: 1 | 2 | 3;
-  mondayHigh: number;
-  mondayLow: number;
-  asianHigh: number;
-  asianLow: number;
-  londonHigh: number;
-  londonLow: number;
-  londonOpen: number;
-  londonClose: number;
-  londonNarrative: 'PUMP' | 'DUMP' | 'NONE';
-  last15MSwingHigh?: number;
-  last15MSwingLow?: number;
-  adr14?: number;
-  recentDailyCandles: {
-    date: string;
+/**
+ * Core Definitions & Types Registry
+ * 
+ * This file serves as the absolute source of truth for the backend trading logic.
+ * Do not scatter interface definitions or magic strings. Use this registry.
+ */
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Trading Primitives
+// ─────────────────────────────────────────────────────────────────────────────
+export type TradeDirection = 'BUY' | 'SELL';
+export type TradeOutcome = 'TP' | 'SL' | 'EOD' | 'SKIPPED' | 'EXPIRED' | null;
+export type SessionFilter = 'ALL_DAY' | 'ASIA' | 'LONDON' | 'LONDON_NY_OVERLAP' | 'NY_Forex' | 'NY_Indices';
+export type Timeframe = 5 | 15 | 30 | 60 | 240;
+
+export type SetupType = 'FRD' | 'FGD' | 'DAY3_SHORT' | 'DAY3_LONG' | 'LHF_SHORT' | 'LHF_LONG';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Market Data Types
+// ─────────────────────────────────────────────────────────────────────────────
+export interface SymbolSpec {
+    pipSize: number;
+    tickSize: number;
+    pipValuePerLot: number;
+    minVolume: number;
+    maxVolume: number;
+    volumeStep: number;
+    digits?: number;
+}
+
+export interface OHLCVTick {
+    timestamp: number;
     open: number;
     high: number;
     low: number;
     close: number;
-  }[];
-  lastUpdated: string;
+    volume: number; // NOTE: Fixed from tickVolume in some files
+    tickVolume?: number;
 }
 
-export interface TrapSignal {
-  id: string;
-  symbol: string;
-  displayName: string;
-  pattern: string;
+export interface AggregatedCandle extends OHLCVTick {
+    dateStr: string;
+    estHour: number;
+    estMin?: number;
+    isNY?: boolean;
+    isLondon?: boolean;
+    maxSpread?: number;
+    m1StartIndex?: number; // Support for CandleAggregator logic
+}
+
+export interface M1Row {
+  dateStr: string; // YYYY-MM-DD
+  hour: number;
+  minute: number;
+  utcMonth: number;
+  dow: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  tickVol: number;
+  spread: number;
+  timestamp: number;
+  estHour: number;
+}
+
+export interface M1Acc {
+  periodMs: number;  // Floor of current M1 period (UTC ms)
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  vol: number;
+  ticks: number;
+}
+
+export interface StacyDailyCandle {
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  startTime: number;
+  dateStr: string; // the calendar date the daily candle represents
+  
+  weeklyHigh: number;
+  weeklyLow: number;
+  
+  // Context state
+  isFirstRedDay: boolean;
+  isFirstGreenDay: boolean;
+  isInsideDay: boolean;
+  isPumpDay: boolean;
+  isDumpDay: boolean;
+  
+  isDay2BreakoutLongs: boolean;
+  isDay2BreakoutShorts: boolean;
+  
+  isDay3BreakoutLongs: boolean;
+  isDay3BreakoutShorts: boolean;
+  
+  isTrendingLong: boolean;
+  isTrendingShort: boolean;
+  
+  dayCount: 1 | 2 | 3;
+}
+
+export interface BollingerBands {
+    upper: number;
+    lower: number;
+    middle: number;  // SMA
+    width: number;   // (upper - lower) / middle
+    stdDev: number;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Configuration Types
+// ─────────────────────────────────────────────────────────────────────────────
+export interface PairConfig {
+  tickSize: number;
+  pipSize: number;
+  spread: number;
+  maxSpreadLimit?: number;
+  minBodyPips?: number;
+  minSlDist?: number;
+  maxSlDist?: number;
+  trailingSlTrigger?: number;
+  trailingSlStep?: number;
+  forceCloseHours?: number;
+  orbEnabled?: boolean;
+  orbStartHour?: number;
+  orbStartMin?: number;
+  orbEndHour?: number;
+  orbEndMin?: number;
+  orbMinutes?: number;
+  orbPullbackPct?: number;
+  rangeFilterPct?: number;
+  sweepPips?: number;
+  entryPenetrationPct?: number;
+  reversalEnabled?: boolean;
+  exitMode?: string;
+  pinBarWickBodyRatio?: number;
+  minEmaDistance?: number;
+  maxEmaDistance?: number;
+  minTpDist?: number;
+  defaultTpDist?: number;
+  maxTpDist?: number;
+  session?: 'NY_Forex' | 'NY_Indices' | 'london' | 'asia';
+  sessions?: ('NY_Forex' | 'NY_Indices' | 'london' | 'asia')[];
+}
+
+export interface SageOptimizerConfig extends PairConfig {}
+
+export interface MathFilterConfig {
+  blockedHours?: number[];
+  blockedDaysOfWeek?: string[];
+  blockedPairDays?: Array<{ pair: string; dayOfWeek: string }>;
+  blockedPairSetups?: Array<{ pair: string; setupType: string }>;
+  drawdownLimitPct?: number;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Optimizer & Backtester Records
+// ─────────────────────────────────────────────────────────────────────────────
+export interface TriggerEvent {
+    m5Index: number;
+    m1Index: number;
+    direction: 'BUY' | 'SELL' | 'PENDING';
+    orHigh: number;
+    orLow: number;
+    boxSize: number;
+    cBodyPips: number;
+    dateStr: string;
+    tradingDayId: number;
+    slBaseHigh?: number;
+    slBaseLow?: number;
+}
+
+export interface TradeRecord {
+    timestamp: number;
+    date: string;
+    pair: string;
+    setupType: SetupType | string;
+    sessionName: string;
+    decision: 'TRADE' | 'NO_TRADE' | 'BUY' | 'SELL';
+    confidence: number;
+    setupQuality: number | string;
+    reasoning: string;
+    entry: number;
+    stopLoss: number;
+    takeProfit: number;
+    riskPips: number;
+    outcome: TradeOutcome;
+    pips: number | null;
+    rMultiple?: number;
+    mfePips?: number; // Added to resolve TS2339
+    hypotheticalOutcome?: string;
+    hypotheticalPips?: number;
+    orHigh?: number;
+    orLow?: number;
+}
+
+export interface BasicTrade {
+  pair: string;
+  setupType: string;
+  timestamp: number; // UTC epoch ms
+  pips?: number;
+  riskPips?: number;
+  outcome?: string;
+}
+
+export interface ShadowResult {
+  pair: string;
+  totalNetR: number;
+  wins: number;
+  losses: number;
+  eod: number;
+  winRate: number;
+  maxDrawdown: number;
+  tradeCount: number;
+  tradeLog: any[];       // populated by mockAccount.tradeLog
+  finalBalance?: number; // To support legacy wrappers
+}
+
+export interface ShadowOptions {
+  enableMage?: boolean;
+  enableSage?: boolean;
+  enableSeer?: boolean;
+  startingBalance?: number;
+  riskPct?: number;
+}
+
+export interface LiveBacktestOptions {
+    botType: 'SAGE' | 'MAGE' | 'SEER';
+    initialBalance: number;
+    riskPct: number;
+    sessionPair: string;
+    startDate: Date;
+    endDate?: Date;
+    csvPath: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Simulator Execution Types
+// ─────────────────────────────────────────────────────────────────────────────
+export interface SimPosition {
+    id: string;
+    symbol: string;
+    type: 'POSITION_TYPE_BUY' | 'POSITION_TYPE_SELL';
+    volume: number;
+    openPrice: number;
+    sl: number;
+    originalSl?: number;
+    tp: number;
+    isStopOrder?: boolean;
+    time: string;
+    brokerComment?: string;
+}
+
+export interface PendingLimitOrder {
+    id: string;
+    symbol: string;
+    type?: 'ORDER_TYPE_BUY_LIMIT' | 'ORDER_TYPE_SELL_LIMIT';
+    direction?: 'BUY' | 'SELL';
+    limitPrice?: number;
+    volume: number;
+    openPrice?: number;
+    sl: number;
+    tp: number;
+    placedAt?: number;
+    isStopOrder?: boolean; // Resolves mock broker errors
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AI Vision Evaluator Types
+// ─────────────────────────────────────────────────────────────────────────────
+export interface VisionDecision {
+    decision: 'TRADE' | 'NO_TRADE' | 'BUY' | 'SELL';
+    confidence: number;
+    setupQuality: number | string;
+    reasoning: string;
+    direction?: 'BUY' | 'SELL';
+    takeProfit?: number | null;
+    stopLoss?: number | null;
+    entry?: number | null;
+    riskPips?: number | null;
+    patternVisible?: boolean;
+    rawResponse?: string;
+}
+
+export interface ChartRenderOptions {
+  candles: AggregatedCandle[];
+  emaValues: number[];
+  prevDayHigh: number;
+  prevDayLow: number;
+  currentDayHigh: number;
+  currentDayLow: number;
+  setupType: 'FRD' | 'FGD' | string;
+  pair: string;
+  sessionName: string;
+  sessionStartIdx: number;
+  sessionEndIdx: number;
+  drawTrapBox?: boolean;
+  mainTitle?: string;
+  timeframe?: string;
+  chartType?: string;
+  orbHigh?: number;
+  orbLow?: number;
+}
+
+export interface VisionEvalContext {
+  pair: string;
+  setupType: string;
+  sessionName: string;
+  candleTimeEST: string;
+  prevDayHigh: number;
+  prevDayLow: number;
+  currentDayHigh: number;
+  currentDayLow: number;
+  ema20Current: number;
+  tickSize: number;
+  currentPrice: number;
+  dailyMacroBias: string;
+  distanceToPdhPips: number;
+  distanceToPdlPips: number;
+  distanceToSessionHighPips: number;
+  distanceToSessionLowPips: number;
+}
+
+export interface MageEvalContext {
+  pair: string;
+  orHigh: number;
+  orLow: number;
   direction: 'BUY' | 'SELL';
-  triggerPrice: number;
-  levelType: 'HOD' | 'LOD' | 'HOW' | 'LOW' | 'HOS' | 'LOS' | 'Round Number' | 'Breakout Trap';
-  keyLevel: number;
-  grade: 1 | 2 | 3 | 4 | 5; // Star rating based on Confluence Points
-  timingGate: 'Asian Session' | 'London Session' | 'New York Session' | 'COMEX Open' | 'Major News Spike' | 'Equity Open Box' | '10:00 AM Club' | 'Gap Time';
-  timestamp: string;
-  details: string;
-  confluenceMatrix?: any; // The raw data matrix and grading packet
-  suggestedStopLoss: number; // in pips/points (e.g. 25 pips)
-  suggestedTakeProfit: number; // measured move target
-  isThreeDaySetup?: boolean;
-  isThreeSessionSetup?: boolean;
-  isHolyGrailConfluence?: boolean;
-  status?: 'Wait' | 'Get Ready' | 'Trade Now' | 'Trade Expired';
-  tutorAnalysis?: {
-    setupType: string;
-    gradeJustification: string;
-    trappedAudience: string;
-    executionSteps: string[];
-    riskManagementRules: string;
-  };
+  limitPrice: number;
+  slPrice: number;
+  tpPrice: number;
 }
 
-export interface ChatMessage {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  timestamp: string;
-  relatedSignalId?: string;
+// ─────────────────────────────────────────────────────────────────────────────
+// Synthesizer Types
+// ─────────────────────────────────────────────────────────────────────────────
+export interface OptimizationResults {
+    setup: string;
+    dailyNetR: Record<string, number>;
+    trades: number;
+    winRate: number;
+    totalNetR: number;
+}
+
+export interface OptimizerState {
+    completedPairs: string[];
+    portfolioRecord: string[];
+}
+
+export interface GrandmasterPairing {
+    pair: string;
+    setup: string;
+}
+
+export interface MockTradeRecord {
+  symbol: string;
+  direction: 'BUY' | 'SELL';
+  entryPrice: number;
+  exitPrice: number;
+  slPrice: number;
+  outcome: 'SL' | 'EOD' | 'TP';
+  rMultiple: number;
+  openTime: number;
+  closeTime: number;
+}
+
+export interface SynthesizerTradeRecord {
+    timestamp: number;
+    rMultiple: number;
+}
+
+export interface GrandmasterOptimizerState {
+    setup: string;
+    tradeRecords?: SynthesizerTradeRecord[];
+    dailyNetR: Record<string, number>;
+    trades: number;
+    winRate: number;
+    totalNetR: number;
+    profitFactor?: number;
+    maxDd?: number;
+    recentNetR?: number;
+}
+
+export interface GrandmasterSynthesisPairing {
+    symbol: string;
+    mageSetup: string;
+    sageSetup: string;
+    combinedTrades: number;
+    combinedTotalR: number;
+    combinedMaxDrawdown: number;
+    correlation: number;
+    sharpeRatio: number;
+    sortinoRatio: number;
+    recoveryFactor: number;
+    hedgeScore: number;
+    monteCarloDrawdown99?: number;
+    dailyReturns?: number[];
+}
+
+export interface SeerOptimizationResults {
+  pair: string;
+  baseline: {
+    trades: number;
+    wins: number;
+    losses: number;
+    netPips: number;
+    winRate: number;
+    maxDrawdown: number;
+  };
+  optimized: {
+    trades: number;
+    wins: number;
+    losses: number;
+    netPips: number;
+    winRate: number;
+    maxDrawdown: number;
+    params: {
+      minBodyPips: number;
+      minWickBodyRatio: number;
+    };
+  };
 }

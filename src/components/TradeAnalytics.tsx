@@ -1,13 +1,44 @@
 import React, { useMemo } from 'react';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { RefreshCw } from 'lucide-react';
+import { formatDate } from '../utils/timezone';
 
-export default function TradeAnalytics({ diary, bots, selectedBotId, onSelectBot, analyticsData, onRefresh, isRefreshing }: any) {
+interface TradeDiaryRecord {
+  id?: number;
+  bot_id: string;
+  broker_symbol: string;
+  direction: string;
+  profit: number;
+  pips: number;
+  open_time: number;
+  close_time: number;
+  status: string;
+}
+
+interface TradeAnalyticsProps {
+  diary: TradeDiaryRecord[];
+  bots: any[];
+  selectedBotId: string;
+  onSelectBot: (id: string) => void;
+  analyticsData: any;
+  onRefresh?: () => void;
+  isRefreshing?: boolean;
+}
+
+const TradeAnalytics = ({ diary, bots, selectedBotId, onSelectBot, analyticsData, onRefresh, isRefreshing }: TradeAnalyticsProps) => {
   // Filter diary based on selected bot (or all)
   const filteredDiary = useMemo(() => {
-    const sorted = [...diary].sort((a, b) => a.open_time - b.open_time); // Chronological
+    const sorted = [...diary].sort((a, b) => (Number(a.open_time) || 0) - (Number(b.open_time) || 0)); // Chronological
     if (selectedBotId === 'all') return sorted;
-    return sorted.filter(t => t.bot_id === selectedBotId);
+    return sorted.filter(t => {
+      const dbBotId = (t.bot_id || '').toLowerCase();
+      const selBotId = selectedBotId.toLowerCase();
+      if (dbBotId === selBotId) return true;
+      if (selBotId === 'seer' && (dbBotId === 'discretionary_trader' || dbBotId === 'seer')) return true;
+      if (selBotId === 'mage' && (dbBotId === 'mage' || dbBotId === 'orb')) return true;
+      if (selBotId === 'sage' && (dbBotId === 'sage' || dbBotId === 'reversal')) return true;
+      return false;
+    });
   }, [diary, selectedBotId]);
 
   // Calculate statistics
@@ -31,7 +62,7 @@ export default function TradeAnalytics({ diary, bots, selectedBotId, onSelectBot
         name: `Trade ${idx + 1}`,
         profit: totalProfit,
         rawProfit: trade.profit,
-        date: new Date(trade.close_time).toLocaleDateString()
+        date: formatDate(trade.close_time)
       };
     });
 
@@ -68,10 +99,10 @@ export default function TradeAnalytics({ diary, bots, selectedBotId, onSelectBot
                analyticsData?.status === 'syncing' ? 'Connecting...' : 'Offline'}
             </span>
             {onRefresh && (
-              <button 
+              <button type="button" 
                 onClick={onRefresh}
                 disabled={isRefreshing}
-                className="p-1.5 hover:bg-slate-800 rounded-md transition-colors text-slate-400 hover:text-white disabled:opacity-50 flex items-center gap-2 text-[10px] font-mono uppercase tracking-wider ml-2 border border-slate-700/50"
+                className="p-1.5 hover:bg-slate-800 rounded-md transition-colors text-slate-400 hover:text-white disabled:opacity-50 flex items-center gap-2 text-[10px] font-mono uppercase tracking-wider ml-2 border border-white/10"
                 title="Refresh Live Data"
               >
                 <RefreshCw size={12} className={isRefreshing ? "animate-spin" : ""} />
@@ -85,11 +116,11 @@ export default function TradeAnalytics({ diary, bots, selectedBotId, onSelectBot
         <select
           value={selectedBotId}
           onChange={(e) => onSelectBot(e.target.value)}
-          className="bg-slate-800/80 border border-slate-700 text-sm text-slate-200 rounded-lg px-4 py-2 outline-none focus:border-indigo-500 min-w-[200px]"
+          className="bg-slate-800/80 border border-white/10 text-sm text-slate-200 rounded-lg px-4 py-2 outline-none focus:border-indigo-500 min-w-[200px]"
         >
           <option value="all">Overall Portfolio</option>
           {bots.map((b: any) => (
-            <option key={b.id} value={b.id}>{b.name} ({b.symbols.join(', ')})</option>
+            <option key={b.id} value={b.id}>{b.name} ({(b.symbols || []).join(', ')})</option>
           ))}
         </select>
       </div>
@@ -98,35 +129,40 @@ export default function TradeAnalytics({ diary, bots, selectedBotId, onSelectBot
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {analyticsData?.status === 'connected' && (
           <>
-            <div className="bg-slate-800/40 border border-slate-700/50 rounded-xl p-4">
+            <div className="bg-slate-800/40 border border-white/10 rounded-xl p-4">
               <p className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-1">Live Balance</p>
               <p className="text-xl font-mono font-bold text-white">${analyticsData.account.balance?.toFixed(2)}</p>
             </div>
-            <div className="bg-slate-800/40 border border-slate-700/50 rounded-xl p-4">
+            <div className="bg-slate-800/40 border border-white/10 rounded-xl p-4">
               <p className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-1">Live Equity</p>
               <p className="text-xl font-mono font-bold text-white">${analyticsData.account.equity?.toFixed(2)}</p>
             </div>
           </>
         )}
-        <div className="bg-slate-800/40 border border-slate-700/50 rounded-xl p-4">
+        <div className="bg-slate-800/40 border border-white/10 rounded-xl p-4">
           <p className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-1">Total Net Profit</p>
           <p className={`text-xl font-mono font-bold ${stats.totalProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
             ${stats.totalProfit.toFixed(2)}
           </p>
         </div>
-        <div className="bg-slate-800/40 border border-slate-700/50 rounded-xl p-4">
-          <p className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-1">Win Rate</p>
-          <p className="text-xl font-mono font-bold text-white">{stats.winRate}%</p>
+        <div className="bg-slate-800/40 border border-white/10 rounded-xl p-4">
+          <p className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-1">Total Trades</p>
+          <p className="text-xl font-mono font-bold text-white">{stats.totalTrades}</p>
         </div>
-
-        <div className="bg-slate-800/40 border border-slate-700/50 rounded-xl p-4">
+        <div className="bg-slate-800/40 border border-white/10 rounded-xl p-4">
+          <p className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-1">Win Rate</p>
+          <p className="text-xl font-mono font-bold text-white">{Number(stats.winRate).toFixed(1)}%</p>
+        </div>
+        <div className="bg-slate-800/40 border border-white/10 rounded-xl p-4">
           <p className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-1">Max Drawdown</p>
-          <p className="text-xl font-mono font-bold text-rose-400">{stats.maxDD}%</p>
+          <p className="text-xl font-mono font-bold text-rose-400">
+            {Number(stats.maxDD).toFixed(1)}%
+          </p>
         </div>
       </div>
 
       {/* Equity Curve Graph */}
-      <div className="bg-slate-800/40 border border-slate-700/50 rounded-xl p-6 h-[400px]">
+      <div className="bg-slate-800/40 border border-white/10 rounded-xl p-6 h-[400px]">
         {stats.chartData.length > 1 ? (
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={stats.chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
@@ -159,7 +195,7 @@ export default function TradeAnalytics({ diary, bots, selectedBotId, onSelectBot
         ) : (
           <div className="w-full h-full flex flex-col items-center justify-center text-slate-500">
             <svg className="w-12 h-12 mb-3 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 19v-6a2 2 0 00-2-2H2a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
             </svg>
             <p>No trades logged yet.</p>
             <p className="text-xs mt-1">The equity curve will appear once trades are closed.</p>
@@ -173,7 +209,7 @@ export default function TradeAnalytics({ diary, bots, selectedBotId, onSelectBot
           <p className="text-slate-400 font-mono text-[10px] uppercase tracking-widest mb-3">Live Active Positions</p>
           <div className="space-y-2">
             {analyticsData.positions.map((p: any) => (
-              <div key={p.id} className="flex items-center justify-between bg-slate-800/40 border border-slate-700/50 p-3 rounded-xl">
+              <div key={p.id} className="flex items-center justify-between bg-slate-800/40 border border-white/10 p-3 rounded-xl">
                  <div className="flex items-center gap-3">
                    <span className={`text-[10px] font-bold px-2 py-1 rounded ${p.type === 'BUY' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'}`}>
                      {p.type}
@@ -192,3 +228,5 @@ export default function TradeAnalytics({ diary, bots, selectedBotId, onSelectBot
     </div>
   );
 }
+
+export default React.memo(TradeAnalytics);

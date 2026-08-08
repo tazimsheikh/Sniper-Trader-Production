@@ -79,3 +79,30 @@ body {
   -webkit-backdrop-filter: blur(16px);
   border: 1px solid rgba(255, 255, 255, 0.05);
 }
+
+@keyframes living-wallpaper {
+  0%, 100% { transform: scale(1.0) translate(0px, 0px); }
+  50% { transform: scale(1.25) translate(15px, -15px); }
+}
+
+.animate-living-bg {
+  animation: living-wallpaper 25s ease-in-out infinite;
+  transform-origin: center center;
+  will-change: transform;
+}
+
+@keyframes dust-drift {
+  0% { background-position: 0px 0px; }
+  100% { background-position: 400px -400px; }
+}
+
+.animate-dust {
+  background-image: 
+    radial-gradient(2px 2px at 20px 30px, rgba(255,255,255,0.7) 100%, transparent),
+    radial-gradient(2px 2px at 40px 70px, rgba(255,255,255,0.5) 100%, transparent),
+    radial-gradient(3px 3px at 90px 40px, rgba(255,255,255,0.8) 100%, transparent),
+    radial-gradient(2.5px 2.5px at 160px 120px, rgba(255,255,255,0.6) 100%, transparent),
+    radial-gradient(1.5px 1.5px at 120px 180px, rgba(255,255,255,0.9) 100%, transparent);
+  background-size: 200px 200px;
+  animation: dust-drift 30s linear infinite;
+}

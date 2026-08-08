@@ -18,7 +18,7 @@ export default defineConfig(() => {
       // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
       // Exclude data files, SQLite DBs, and csv to prevent EBUSY/resource locked errors on Windows.
       watch: process.env.DISABLE_HMR === 'true' ? null : {
-        ignored: ['**/data/**', '**/*.csv', '**/*.sqlite*', '**/node_modules/**']
+        ignored: ['**/data/**', '**/*.csv', '**/*.sqlite*', '**/*.db', '**/node_modules/**', '**/server/algo_trader/algo_trader_portfolio.json', '**/.system_generated/**', '**/.gemini/**', '**/brain/**', '**/*.log']
       },
     },
   };

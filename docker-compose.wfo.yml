@@ -1,0 +1,12 @@
+version: '3.8'
+services:
+  trimurti-wfo:
+    build: 
+      context: .
+      dockerfile: Dockerfile.wfo
+    container_name: trimurti-wfo-runner
+    # Map the local portfolio JSON so the container can read the resume state
+    # and write the final results back to the host machine
+    volumes:
+      - ./server/trimurti/trimurti_portfolio.json:/app/server/trimurti/trimurti_portfolio.json
+    restart: "no" # We want it to run once and exit

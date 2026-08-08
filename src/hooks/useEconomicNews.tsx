@@ -6,7 +6,7 @@ export interface NewsEvent {
   timeUTC: string; 
   currency: string;
   event: string;
-  impact: 'HIGH' | 'MID' | 'LOW';
+  impact: 'CRITICAL' | 'HIGH' | 'MODERATE' | 'LOW';
   forecast: string;
   previous: string;
   actual: string | null;
@@ -30,7 +30,7 @@ export function useEconomicNews() {
     try {
       if (force) setIsRefreshing(true);
       const url = force ? '/api/economic-calendar?refresh=true' : '/api/economic-calendar';
-      const response = await fetch(url);
+      const response = await fetch(url, { credentials: 'same-origin' });
       if (!response.ok) throw new Error('Network response was not ok');
       const data = await response.json();
       
@@ -39,9 +39,10 @@ export function useEconomicNews() {
         const dateStr = dateObj.toISOString().split('T')[0];
         const timeStr = `${dateObj.getUTCHours().toString().padStart(2, '0')}:${dateObj.getUTCMinutes().toString().padStart(2, '0')}`;
         
-        let impactLevel: 'HIGH' | 'MID' | 'LOW' = 'LOW';
-        if (item.impact === 'High') impactLevel = 'HIGH';
-        if (item.impact === 'Medium') impactLevel = 'MID';
+        let impactLevel: 'CRITICAL' | 'HIGH' | 'MODERATE' | 'LOW' = 'LOW';
+        if (item.impact === 'Very High') impactLevel = 'CRITICAL';
+        else if (item.impact === 'High') impactLevel = 'HIGH';
+        else if (item.impact === 'Medium') impactLevel = 'MODERATE';
 
         return {
           id: `real-news-${index}`,
@@ -100,22 +101,28 @@ export function useEconomicNews() {
               changed = true;
             }
 
-            if (evt.impact === 'HIGH') {
+            if (finalEvt.impact === 'CRITICAL' || finalEvt.impact === 'HIGH' || finalEvt.impact === 'MODERATE') {
               if (diffMinutes > 0 && diffMinutes <= 15) {
-                currentWarning = {
+                const newWarning = {
                   event: finalEvt,
                   minutesLeft: diffMinutes,
                   minutesPassed: 0,
                   status: 'UPCOMING' as const
                 };
+                if (!currentWarning || finalEvt.impact === 'CRITICAL' || (finalEvt.impact === 'HIGH' && currentWarning.event.impact === 'MODERATE')) {
+                    currentWarning = newWarning;
+                }
               }
               else if (diffMinutes <= 0 && diffMinutes >= -15) {
-                currentWarning = {
+                const newWarning = {
                   event: finalEvt,
                   minutesLeft: 0,
                   minutesPassed: Math.abs(diffMinutes),
                   status: 'RECENT' as const
                 };
+                if (!currentWarning || finalEvt.impact === 'CRITICAL' || (finalEvt.impact === 'HIGH' && currentWarning.event.impact === 'MODERATE')) {
+                    currentWarning = newWarning;
+                }
               }
             }
           }
