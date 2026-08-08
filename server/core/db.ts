@@ -440,6 +440,17 @@ export async function initDb() {
       created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS m5_candles_cache (
+      symbol TEXT NOT NULL,
+      timestamp BIGINT NOT NULL,
+      open DOUBLE PRECISION NOT NULL,
+      high DOUBLE PRECISION NOT NULL,
+      low DOUBLE PRECISION NOT NULL,
+      close DOUBLE PRECISION NOT NULL,
+      tick_volume INT DEFAULT 1,
+      PRIMARY KEY (symbol, timestamp)
+    );
+
     -- User preferences (timezone etc.) — persisted server-side so they survive new devices
     DO $$
     BEGIN
@@ -467,6 +478,9 @@ export async function initDb() {
       END IF;
       IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_profile_pair_configs_profile_id') THEN
         CREATE INDEX idx_profile_pair_configs_profile_id ON profile_pair_configs(profile_id);
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_m5_candles_sym_ts') THEN
+        CREATE INDEX idx_m5_candles_sym_ts ON m5_candles_cache(symbol, timestamp DESC);
       END IF;
     END $$;
 

@@ -166,7 +166,7 @@ export async function runShadowBacktest(pair: string, startDate?: string, endDat
   if (csvFiles.length === 0) throw new Error(`No CSV found for ${pair}`);
 
   const csvPath = path.join(csvDir, csvFiles[0]);
-  const startD = new Date(new Date(startDate).getTime() - 15 * 86400000); // 15 days pre-load (matches MathBacktester)
+  const startD = new Date(new Date(startDate).getTime() - 30 * 86400000); // 30 days pre-load (matches MathBacktester)
   const endD = new Date(endDate + 'T23:59:59Z');
   
   const m1Candles = await loadCsv(csvPath, actualSpread, startD, endD);

@@ -114,7 +114,7 @@ export function preComputeTriggers(
         if (mCfg.toxicHours && mCfg.toxicHours.includes(c.estHour)) continue;
       }
 
-      // MATHEMATICAL PARITY FIX: Prevent the last candle of the ORB from falsely triggering itself.
+      // MATHEMATICAL PARITY FIX: Use closed M5 candle c (matches MageEngine.ts:L359 state.m5Buffer[len-1])
       const actionCandle = c;
       const actionCandleMins = actionCandle.estHour * 60 + (actionCandle.estMin || 0);
       if (actionCandleMins < startMins + orbMinutes) continue;
@@ -537,7 +537,7 @@ export function evaluateExits(
       .toISOString()
       .split("T")[0];
     records.push({
-      timestamp: m5Candles[t.m5Index].timestamp,
+      timestamp: entryTimeMs || m5Candles[t.m5Index].timestamp,
       date: dateStr,
       pair: pair,
       setupType: "ORB_MATH",

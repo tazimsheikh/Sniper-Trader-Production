@@ -626,9 +626,56 @@ export class LiveOrchestrator {
     }
     if (broadcast) this.broadcastStatus();
   }
-  async warmup() {
-    logger.info(`[DiscretionaryTrader] \u23F3 Starting Hydration Sequence... Fetching history for ${DISCRETIONARY_TRADER_PAIRS.length} pairs.`,);
+
+  async loadCachedM5Candles(symbol: string, days: number = 30): Promise<any[]> {
     try {
+      const cutoffTs = Date.now() - days * 86400 * 1000;
+      const rows = await db.prepare(
+        "SELECT symbol, timestamp, open, high, low, close, tick_volume FROM m5_candles_cache WHERE symbol = ? AND timestamp >= ? ORDER BY timestamp ASC"
+      ).all(symbol, cutoffTs);
+      if (!rows || !Array.isArray(rows)) return [];
+      return rows.map((r: any) => ({
+        time: new Date(Number(r.timestamp)).toISOString(),
+        timestamp: Number(r.timestamp),
+        open: Number(r.open),
+        high: Number(r.high),
+        low: Number(r.low),
+        close: Number(r.close),
+        tickVolume: Number(r.tick_volume || 1),
+      }));
+    } catch (e: any) {
+      logger.warn(`[DiscretionaryTrader] Could not load cached candles from DB for ${symbol}: ${e.message}`);
+      return [];
+    }
+  }
+
+  async saveM5CandlesToCache(symbol: string, candles: any[]): Promise<void> {
+    if (!candles || candles.length === 0) return;
+    try {
+      for (const c of candles) {
+        const ts = typeof c.timestamp === "number" ? c.timestamp : new Date(c.time).getTime();
+        await db.prepare(
+          "INSERT INTO m5_candles_cache (symbol, timestamp, open, high, low, close, tick_volume) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (symbol, timestamp) DO NOTHING RETURNING timestamp"
+        ).run(symbol, ts, c.open, c.high, c.low, c.close, c.tickVolume || 1);
+      }
+    } catch (e: any) {
+      logger.warn(`[DiscretionaryTrader] Error persisting M5 candles to cache for ${symbol}: ${e.message}`);
+    }
+  }
+
+  async pruneOldM5Candles(daysToRetain: number = 60): Promise<void> {
+    try {
+      const cutoffTs = Date.now() - daysToRetain * 86400 * 1000;
+      await db.prepare("DELETE FROM m5_candles_cache WHERE timestamp < ?").run(cutoffTs);
+    } catch (e: any) {
+      // Non-fatal
+    }
+  }
+
+  async warmup() {
+    logger.info(`[DiscretionaryTrader] ⏳ Starting 30-Day Hydration Sequence (DB Cache + Delta MetaApi)...`);
+    try {
+      await this.pruneOldM5Candles(60);
       const account = await getSharedAccount(this.token, this.accountId);
       
       if (!this.customMap) {
@@ -661,24 +708,101 @@ export class LiveOrchestrator {
           };
         }, "mapCandles");
         try {
-          const m5 = await Promise.race([
-            account.getHistoricalCandles(brokerSym, "5m", void 0, 600),
-            new Promise((_, reject) =>
-              setTimeout(
-                () =>
-                  reject(
-                    new Error("MetaApi getHistoricalCandles timeout (30s)"),
+          // 1. Load 30 days of cached M5 candles from local DB
+          const dbCandles = await this.loadCachedM5Candles(symbol, 30);
+          let rawM5: any[] = [];
+          const nowMs = Date.now();
+          const targetCutoff = nowMs - 30 * 86400 * 1000;
+
+          if (dbCandles.length > 0) {
+            const latestCachedTs = dbCandles[dbCandles.length - 1].timestamp;
+            const msGap = nowMs - latestCachedTs;
+            logger.info(`[DiscretionaryTrader] 💾 Loaded ${dbCandles.length} M5 candles from local DB cache for ${symbol} (0 MetaApi calls).`);
+            rawM5 = [...dbCandles];
+
+            // If gap is more than 5 minutes, fetch missing delta candles from MetaApi
+            if (msGap > 5 * 60 * 1000) {
+              const expectedMissing = Math.ceil(msGap / (5 * 60 * 1000));
+              const fetchCount = Math.min(1000, Math.max(10, Math.ceil(expectedMissing * 1.10)));
+              const deltaCandles: any[] = await Promise.race([
+                account.getHistoricalCandles(brokerSym, "5m", new Date(latestCachedTs + 1), fetchCount),
+                new Promise((_, reject) =>
+                  setTimeout(
+                    () => reject(new Error("MetaApi getHistoricalCandles timeout (30s)")),
+                    3e4,
                   ),
-                3e4,
-              ),
-            ),
-          ]);
-          const mapped = m5
+                ),
+              ]);
+              if (deltaCandles && deltaCandles.length > 0) {
+                logger.info(`[DiscretionaryTrader] ⚡ Fetched ${deltaCandles.length} missing gap candles from MetaApi for ${symbol}. Saving to DB cache...`);
+                await this.saveM5CandlesToCache(symbol, deltaCandles);
+                for (const dc of deltaCandles) {
+                  const dcTs = new Date(dc.time).getTime();
+                  if (!rawM5.some((existing) => existing.timestamp === dcTs)) {
+                    rawM5.push({
+                      time: dc.time,
+                      timestamp: dcTs,
+                      open: dc.open,
+                      high: dc.high,
+                      low: dc.low,
+                      close: dc.close,
+                      tickVolume: dc.tickVolume || 1,
+                    });
+                  }
+                }
+              }
+            }
+          } else {
+            // Cold start: DB cache is empty. Fetch 30 days from MetaApi once to seed DB.
+            logger.info(`[DiscretionaryTrader] ❄️ Cold start for ${symbol}: Fetching 30 days of M5 candles from MetaApi...`);
+            let fetchStartTime: Date | undefined = undefined;
+            const MAX_CANDLES = 8640;
+            const CHUNK_SIZE = 1000;
+            let fetchedChunks = 0;
+
+            while (rawM5.length < MAX_CANDLES) {
+              const fetchCount = Math.min(CHUNK_SIZE, MAX_CANDLES - rawM5.length);
+              const chunk: any[] = await Promise.race([
+                account.getHistoricalCandles(brokerSym, "5m", fetchStartTime, fetchCount),
+                new Promise((_, reject) =>
+                  setTimeout(
+                    () => reject(new Error("MetaApi getHistoricalCandles timeout (30s)")),
+                    3e4,
+                  ),
+                ),
+              ]);
+
+              if (!chunk || chunk.length === 0) break;
+              fetchedChunks++;
+              chunk.sort((a: any, b: any) => new Date(a.time).getTime() - new Date(b.time).getTime());
+
+              const newCandles = chunk.filter((c: any) => {
+                const ts = new Date(c.time).getTime();
+                return !rawM5.some((existing) => existing.timestamp === ts);
+              });
+              if (newCandles.length === 0) break;
+
+              rawM5 = [...newCandles, ...rawM5];
+              const oldestTime = new Date(rawM5[0].time).getTime();
+              if (oldestTime <= targetCutoff) break;
+              fetchStartTime = new Date(oldestTime - 1);
+            }
+
+            if (rawM5.length > 0) {
+              logger.info(`[DiscretionaryTrader] 💾 Persisting ${rawM5.length} backfilled M5 candles to DB cache for ${symbol} (${fetchedChunks} MetaApi calls).`);
+              await this.saveM5CandlesToCache(symbol, rawM5);
+            }
+          }
+
+          const mapped = rawM5
             .map(mapCandles)
             .sort((a, b) => a.timestamp - b.timestamp);
           const alpha = 2 / (20 + 1);
           let prevEma = mapped[0]?.close || null;
           state.emaArr = [];
+          state.m5Buffer = [];
+          state.dailyTracker = new DailyContextTracker();
+
           for (let i = 0; i < mapped.length; i++) {
             const c = mapped[i];
             state.dailyTracker.processCandle(c);
@@ -751,12 +875,12 @@ export class LiveOrchestrator {
           }
         }
       }
-      logger.info(`[DiscretionaryTrader] \u{1F52E} Seer Hydration Completed. Daily Context Tracker primed.`,);
-      logger.info(`[DiscretionaryTrader] \u{1F52E} Mage Hydration Completed. Session ORB mathematically reconstructed.`,);
-      logger.info(`[DiscretionaryTrader] \u{1F52E} Sage Hydration Completed. Reversal state context primed.`,);
-      logger.info(`[DiscretionaryTrader] \u{1F52E} Black Swan Hydration Completed. Ultra-consistency setups primed.`,);
+      logger.info(`[DiscretionaryTrader] 🔮 Seer Hydration Completed. Daily Context Tracker primed.`);
+      logger.info(`[DiscretionaryTrader] 🔮 Mage Hydration Completed. Session ORB mathematically reconstructed.`);
+      logger.info(`[DiscretionaryTrader] 🔮 Sage Hydration Completed. Reversal state context primed.`);
+      logger.info(`[DiscretionaryTrader] 🔮 Black Swan Hydration Completed. Ultra-consistency setups primed.`);
     } catch (e) {
-      logger.error(`[DiscretionaryTrader] \u26A0\uFE0F Master Hydration failed: ${e.message}`,);
+      logger.error(`[DiscretionaryTrader] ⚠️ Master Hydration failed: ${e.message}`);
     }
   }
 
@@ -1080,9 +1204,13 @@ export class LiveOrchestrator {
         return;
       }
       logger.info(`[DiscretionaryTrader] Found ${rawM5.length} gap candles for ${symbol}. Hydrating...`,);
+      await this.saveM5CandlesToCache(symbol, rawM5);
       const mapCandles = __name((c) => {
         const d = new Date(c.time);
         const estDate = getFixedEstDate(d);
+        const yyyy = estDate.getUTCFullYear();
+        const mm = String(estDate.getUTCMonth() + 1).padStart(2, "0");
+        const dd = String(estDate.getUTCDate()).padStart(2, "0");
         return {
           timestamp: d.getTime(),
           open: c.open,
@@ -1090,7 +1218,7 @@ export class LiveOrchestrator {
           low: c.low,
           close: c.close,
           tickVolume: c.tickVolume || 1,
-          dateStr: d.toISOString().slice(0, 10),
+          dateStr: `${yyyy}-${mm}-${dd}`,
           estHour: estDate.getUTCHours(),
           estMinute: estDate.getUTCMinutes(),
         };
@@ -1119,7 +1247,7 @@ export class LiveOrchestrator {
           if (state.emaArr.length > 0) state.emaArr.shift();
         }
       }
-      logger.info(`[DiscretionaryTrader] \u2705 Gap hydration complete for ${symbol}. Current buffer size: ${state.m5Buffer.length}`,);
+      logger.info(`[DiscretionaryTrader] ✅ Gap hydration complete for ${symbol}. Current buffer size: ${state.m5Buffer.length}`,);
     } catch (err) {
       const today = new Date();
       const isWeekend = today.getDay() === 0 || today.getDay() === 6;
@@ -1639,6 +1767,7 @@ export class LiveOrchestrator {
     state.lastEvaluatedM5Start = c.timestamp;
     state.m5Buffer.push(c);
     state.dailyTracker.processCandle(c);
+    this.saveM5CandlesToCache(symbol, [c]).catch(() => {});
     const alpha = 2 / (20 + 1);
     let ema = null;
     if (state.m5Buffer.length === 1) {

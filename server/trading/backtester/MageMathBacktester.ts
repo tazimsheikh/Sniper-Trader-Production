@@ -111,7 +111,7 @@ export async function runMathBacktest(
   let globalStartIdx = 0;
   let globalEndIdx = m5Candles.length - 1;
   if (startDate || endDate) {
-    const start = startDate ? new Date(startDate).getTime() - 86400000 * 15 : 0; // 15 days warmup
+    const start = startDate ? new Date(startDate).getTime() - 86400000 * 30 : 0; // 30 days warmup for ATR convergence
     const end = endDate ? new Date(endDate).getTime() + 86400000 : Infinity;
     globalStartIdx = m5Candles.findIndex((c) => c.timestamp >= start);
     if (globalStartIdx === -1) globalStartIdx = 0;

@@ -181,7 +181,10 @@ export async function _runMageBotForConfig(orch: any, symbol: string, state: any
       let shouldCancel = false;
       let cancelReason = "";
 
-      if (fcHours !== undefined && c.timestamp - os.limitPlacedAt >= fcHours * 3600000) {
+      if (isRolloverCircuitBreaker(estHour, estMin)) {
+          shouldCancel = true;
+          cancelReason = "rollover circuit breaker (17:00 EST)";
+      } else if (fcHours !== undefined && c.timestamp - os.limitPlacedAt >= fcHours * 3600000) {
           shouldCancel = true;
           cancelReason = `expired after ${fcHours} hours`;
       } else if (os.breakoutDir === "BUY" && c.high >= os.tpPrice) {
@@ -208,6 +211,7 @@ export async function _runMageBotForConfig(orch: any, symbol: string, state: any
           os.limitPlacedAt = 0;
           os.fired = true;
           os.mageTradeTakenToday = true;
+          os.tradeTakenOnOrbDay = dateStr;
       }
   }
 
@@ -343,8 +347,8 @@ export async function _runMageBotForConfig(orch: any, symbol: string, state: any
     isInsideActionWindow = currentMins >= (startMins + orDurationMins) && currentMins < endMins;
   }
 
-  if (!isInsideActionWindow && os.orBuilt) {
-    os.fired = true;
+  if (!isInsideActionWindow) {
+    if (os.orBuilt) os.fired = true;
     return;
   }
   if (os.tradeTakenOnOrbDay && os.tradeTakenOnOrbDay === os.currentOrbDateStr) {
@@ -861,6 +865,7 @@ async function placeMageLimitOrder(orch: any, symbol: string, state: any, c: any
         
         os.fired = true;  // Set only after successful broker confirmation
         os.tradeTakenDate = os.currentDateStr;
+        os.tradeTakenOnOrbDay = os.currentDateStr;
         os.mageTradeTakenToday = true;
         globalTradeGate.register(
           orch.profileId,
