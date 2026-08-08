@@ -652,11 +652,20 @@ export class LiveOrchestrator {
   async saveM5CandlesToCache(symbol: string, candles: any[]): Promise<void> {
     if (!candles || candles.length === 0) return;
     try {
-      for (const c of candles) {
-        const ts = typeof c.timestamp === "number" ? c.timestamp : new Date(c.time).getTime();
-        await db.prepare(
-          "INSERT INTO m5_candles_cache (symbol, timestamp, open, high, low, close, tick_volume) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (symbol, timestamp) DO NOTHING RETURNING timestamp"
-        ).run(symbol, ts, c.open, c.high, c.low, c.close, c.tickVolume || 1);
+      const BATCH_SIZE = 200;
+      for (let i = 0; i < candles.length; i += BATCH_SIZE) {
+        const batch = candles.slice(i, i + BATCH_SIZE);
+        const placeholders: string[] = [];
+        const params: any[] = [];
+
+        for (const c of batch) {
+          const ts = typeof c.timestamp === "number" ? c.timestamp : new Date(c.time).getTime();
+          placeholders.push("(?, ?, ?, ?, ?, ?, ?)");
+          params.push(symbol, ts, c.open, c.high, c.low, c.close, c.tickVolume || 1);
+        }
+
+        const sql = `INSERT INTO m5_candles_cache (symbol, timestamp, open, high, low, close, tick_volume) VALUES ${placeholders.join(", ")} ON CONFLICT (symbol, timestamp) DO NOTHING RETURNING timestamp`;
+        await db.prepare(sql).run(...params);
       }
     } catch (e: any) {
       logger.warn(`[DiscretionaryTrader] Error persisting M5 candles to cache for ${symbol}: ${e.message}`);
