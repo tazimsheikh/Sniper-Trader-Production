@@ -11,7 +11,16 @@ const INDICES = [
 
 export async function discoverBrokerSymbols(profileId: number, token: string, accountId: string) {
   try {
-    const conn = await getSharedConnection(token, accountId, true);
+    let conn: any;
+    try {
+      conn = await getSharedConnection(token, accountId, true);
+    } catch (e: any) {
+      if (e.message?.includes("Fast fail")) {
+        conn = await getSharedConnection(token, accountId, false);
+      } else {
+        throw e;
+      }
+    }
     console.log(`[AutoDiscover] Fetching all symbols for profile ${profileId}...`);
     let symbolsRaw: any[] = [];
     for (let attempt = 1; attempt <= 3; attempt++) {

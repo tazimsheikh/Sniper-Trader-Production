@@ -652,7 +652,7 @@ export class LiveOrchestrator {
   async saveM5CandlesToCache(symbol: string, candles: any[]): Promise<void> {
     if (!candles || candles.length === 0) return;
     try {
-      const BATCH_SIZE = 200;
+      const BATCH_SIZE = 50;
       for (let i = 0; i < candles.length; i += BATCH_SIZE) {
         const batch = candles.slice(i, i + BATCH_SIZE);
         const placeholders: string[] = [];
@@ -664,7 +664,7 @@ export class LiveOrchestrator {
           params.push(symbol, ts, c.open, c.high, c.low, c.close, c.tickVolume || 1);
         }
 
-        const sql = `INSERT INTO m5_candles_cache (symbol, timestamp, open, high, low, close, tick_volume) VALUES ${placeholders.join(", ")} ON CONFLICT (symbol, timestamp) DO NOTHING RETURNING timestamp`;
+        const sql = `INSERT INTO m5_candles_cache (symbol, timestamp, open, high, low, close, tick_volume) VALUES ${placeholders.join(", ")} ON CONFLICT (symbol, timestamp) DO NOTHING`;
         await db.prepare(sql).run(...params);
       }
     } catch (e: any) {
@@ -687,9 +687,21 @@ export class LiveOrchestrator {
       await this.pruneOldM5Candles(60);
       const account = await getSharedAccount(this.token, this.accountId);
       
-      if (!this.customMap) {
+      if (!this.customMap || Object.keys(this.customMap).length === 0) {
         const profile = await db.prepare("SELECT broker_symbol_map FROM trading_profiles WHERE id = ?").get(this.profileId);
-        this.customMap = profile && profile.broker_symbol_map ? JSON.parse(profile.broker_symbol_map) : {};
+        let loadedMap: Record<string, string> = {};
+        try { if (profile && profile.broker_symbol_map) loadedMap = JSON.parse(profile.broker_symbol_map); } catch(e) {}
+        
+        if (Object.keys(loadedMap).length === 0 && !(global as any).isSimulator) {
+          logger.info(`[LiveOrchestrator] 🔍 Profile ${this.profileId} has empty symbol map. Auto-discovering broker symbols...`);
+          try {
+            const { discoverBrokerSymbols } = await import("../../utils/discoverSymbols.js");
+            loadedMap = await discoverBrokerSymbols(this.profileId, this.token, this.accountId);
+          } catch (e: any) {
+            logger.warn(`[LiveOrchestrator] Auto symbol discovery skipped/failed for profile ${this.profileId}: ${e.message}`);
+          }
+        }
+        this.customMap = loadedMap;
       }
       
       for (const cfg of DISCRETIONARY_TRADER_PAIRS) {
@@ -803,9 +815,9 @@ export class LiveOrchestrator {
             }
           }
 
-          const mapped = rawM5
+          const mapped: any[] = rawM5
             .map(mapCandles)
-            .sort((a, b) => a.timestamp - b.timestamp);
+            .sort((a: any, b: any) => a.timestamp - b.timestamp);
           const alpha = 2 / (20 + 1);
           let prevEma = mapped[0]?.close || null;
           state.emaArr = [];
