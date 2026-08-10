@@ -398,7 +398,7 @@ export async function _runMageBotForConfig(orch: any, symbol: string, state: any
 
     // Log scanning activity for visibility on dev console
     if (!(global as any).isSimulator) {
-      logger.info(`[MageEngine] 🔍 Scanning ${_sessionPair} Breakout [${new Date(actionCandle.timestamp).toISOString().substring(11, 16)} EST] | ` +
+      logger.info(`[MageEngine][P${orch.profileId}] 🔍 Scanning ${_sessionPair} Breakout [${new Date(actionCandle.timestamp).toISOString().substring(11, 16)} EST] | ` +
         `Candle [High/Low/Close]: [${actionCandle.high}/${actionCandle.low}/${actionCandle.close}] | ` +
         `ORB [High/Low]: [${os.orHigh.toFixed(5)}/${os.orLow.toFixed(5)}]`);
     }
@@ -416,7 +416,7 @@ export async function _runMageBotForConfig(orch: any, symbol: string, state: any
       const orPips = (os.orHigh - os.orLow) / pipSize;
       if (!state.m5Buffer || state.m5Buffer.length < 14) {
         if (!(global as any).isSimulator) {
-          logger.info(`[MageEngine] ATR-Relative OR filter skipped breakout for ${symbol}: Insufficient M5 history buffer (${state.m5Buffer?.length || 0}/14).`);
+          logger.info(`[MageEngine][P${orch.profileId}] ATR-Relative OR filter skipped breakout for ${symbol}: Insufficient M5 history buffer (${state.m5Buffer?.length || 0}/14).`);
         }
         return;
       }
@@ -429,7 +429,7 @@ export async function _runMageBotForConfig(orch: any, symbol: string, state: any
         const ratio = Math.round((orPips / atr14Pips) * 100) / 100;
         if (ratio < minRatio || ratio > maxRatio) {
           if (!(global as any).isSimulator) {
-            logger.info(`[MageEngine] ATR-Relative OR filter blocked breakout for ${symbol}. OR/ATR ratio: ${ratio.toFixed(2)}`);
+            logger.info(`[MageEngine][P${orch.profileId}] ATR-Relative OR filter blocked breakout for ${symbol}. OR/ATR ratio: ${ratio.toFixed(2)}`);
           }
           return;
         }
