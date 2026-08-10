@@ -657,47 +657,49 @@ export async function resumePersistedBots(): Promise<void> {
       return;
     }
 
-    for (const profile of profiles as any[]) {
-      let activeBots: string[] = [];
-      try {
-        activeBots = JSON.parse(profile.active_bots || "[]");
-      } catch {
-        activeBots = [];
-      }
-      if (activeBots.length === 0) continue;
-
-      console.log(`[AutoResume] 🔄 Resuming bots [${activeBots.join(", ")}] for profile ${profile.id}...`);
-
-      try {
-        const tokenToUse = isEncrypted(profile.metaapi_token)
-          ? decrypt(profile.metaapi_token)
-          : profile.metaapi_token;
-
-        const orch = await LiveOrchestrator.create(
-          profile.id,
-          tokenToUse,
-          profile.metaapi_account_id,
-        );
-
-        // Re-enable each persisted bot
-        for (const botId of activeBots) {
-          orch.toggleBot(botId, true);
+    await Promise.allSettled(
+      (profiles as any[]).map(async (profile) => {
+        let activeBots: string[] = [];
+        try {
+          activeBots = JSON.parse(profile.active_bots || "[]");
+        } catch {
+          activeBots = [];
         }
+        if (activeBots.length === 0) return;
 
-        await orch.start();
+        console.log(`[AutoResume] 🔄 Resuming bots [${activeBots.join(", ")}] for profile ${profile.id}...`);
 
-        const feed = TickFeed.create(profile.id, tokenToUse, profile.metaapi_account_id);
-        feed.start().catch((err: any) => {
-          console.error(`[AutoResume] TickFeed failed for profile ${profile.id}:`, err.message);
-          orch.stop();
-          feed.stop();
-        });
+        try {
+          const tokenToUse = isEncrypted(profile.metaapi_token)
+            ? decrypt(profile.metaapi_token)
+            : profile.metaapi_token;
 
-        console.log(`[AutoResume] ✅ Profile ${profile.id} bots [${activeBots.join(", ")}] resumed successfully.`);
-      } catch (err: any) {
-        console.error(`[AutoResume] ❌ Failed to resume profile ${profile.id}:`, err.message);
-      }
-    }
+          const orch = await LiveOrchestrator.create(
+            profile.id,
+            tokenToUse,
+            profile.metaapi_account_id,
+          );
+
+          // Re-enable each persisted bot
+          for (const botId of activeBots) {
+            orch.toggleBot(botId, true);
+          }
+
+          await orch.start();
+
+          const feed = TickFeed.create(profile.id, tokenToUse, profile.metaapi_account_id);
+          feed.start().catch((err: any) => {
+            console.error(`[AutoResume] TickFeed failed for profile ${profile.id}:`, err.message);
+            orch.stop();
+            feed.stop();
+          });
+
+          console.log(`[AutoResume] ✅ Profile ${profile.id} bots [${activeBots.join(", ")}] resumed successfully.`);
+        } catch (err: any) {
+          console.error(`[AutoResume] ❌ Failed to resume profile ${profile.id}:`, err.message);
+        }
+      })
+    );
   } catch (err: any) {
     console.error("[AutoResume] Fatal error during bot resumption:", err.message);
   }
