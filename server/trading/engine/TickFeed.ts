@@ -181,20 +181,20 @@ export class TickFeed {
     }
 
     const SYMBOL_FALLBACKS: Record<string, string[]> = {
-      GER40: ["DE40", "DAX40", "GER30", "DE30", "GER40.cash", "GER40.ecn", "DE40.cash", "DAX", "GDAXI", ".DE40", ".GER40", "GER40.Daily", "GER40.m"],
-      UK100: ["UK100.Daily", "FTSE100", "UK100.cash", "UK100.ecn"],
-      US30: ["US30.Daily", "DJ30", "DOWJONES", "US30.cash", "US30.ecn", "US30.m", ".US30"],
-      NAS100: ["NAS100.Daily", "US100", "USTEC", "NDX100", "NAS100.cash", "NAS100.ecn", "NAS100.m", ".NAS100"],
-      SPX500: ["SPX500.Daily", "US500", "SP500", "SPX500.cash", "SPX500.ecn", "SPX500.m", ".SPX500"],
-      JPN225: ["JPN225.Daily", "JP225", "NIKKEI225", "JPN225.cash", "JPN225.ecn", ".JPN225"],
-      XAUUSD: ["GOLD", "XAUUSD.m", "XAUUSD.a", "XAUUSD.ecn", "XAUUSD.Daily", "XAUUSD.cash", "GOLD.m"],
-      GBPJPY: ["GBPJPY.m", "GBPJPY.a", "GBPJPY.ecn", "GBPJPY.Daily"],
-      AUDUSD: ["AUDUSD.m", "AUDUSD.a", "AUDUSD.ecn", "AUDUSD.Daily"],
-      USDJPY: ["USDJPY.m", "USDJPY.a", "USDJPY.ecn", "USDJPY.Daily"],
-      BTCUSD: ["BTCUSD.m", "BTCUSD.a", "BTCUSD.ecn", "BTCUSD.Daily"],
-      ETHUSD: ["ETHUSD.m", "ETHUSD.a", "ETHUSD.ecn", "ETHUSD.Daily"],
-      EURUSD: ["EURUSD.m", "EURUSD.a", "EURUSD.ecn", "EURUSD.Daily"],
-      GBPUSD: ["GBPUSD.m", "GBPUSD.a", "GBPUSD.ecn", "GBPUSD.Daily"],
+      GER40: ["GER40.Daily", "GER40.daily", "DE40", "DAX40", "GER30", "DE30", "GER40.cash", "GER40.ecn", "DE40.cash", "DAX", "GDAXI", ".DE40", ".GER40", "GER40.m"],
+      UK100: ["UK100.Daily", "UK100.daily", "FTSE100", "UK100.cash", "UK100.ecn"],
+      US30: ["US30.Daily", "US30.daily", "DJ30", "DOWJONES", "US30.cash", "US30.ecn", "US30.m", ".US30"],
+      NAS100: ["NAS100.Daily", "NAS100.daily", "US100", "USTEC", "NDX100", "NAS100.cash", "NAS100.ecn", "NAS100.m", ".NAS100"],
+      SPX500: ["SPX500.Daily", "SPX500.daily", "US500", "SP500", "SPX500.cash", "SPX500.ecn", "SPX500.m", ".SPX500"],
+      JPN225: ["JPN225.Daily", "JPN225.daily", "JP225", "NIKKEI225", "JPN225.cash", "JPN225.ecn", ".JPN225"],
+      XAUUSD: ["XAUUSD.Daily", "XAUUSD.daily", "GOLD", "XAUUSD.m", "XAUUSD.a", "XAUUSD.ecn", "XAUUSD.cash", "GOLD.m"],
+      GBPJPY: ["GBPJPY.Daily", "GBPJPY.daily", "GBPJPY.m", "GBPJPY.a", "GBPJPY.ecn"],
+      AUDUSD: ["AUDUSD.Daily", "AUDUSD.daily", "AUDUSD.m", "AUDUSD.a", "AUDUSD.ecn"],
+      USDJPY: ["USDJPY.Daily", "USDJPY.daily", "USDJPY.m", "USDJPY.a", "USDJPY.ecn"],
+      BTCUSD: ["BTCUSD.Daily", "BTCUSD.daily", "BTCUSD.m", "BTCUSD.a", "BTCUSD.ecn"],
+      ETHUSD: ["ETHUSD.Daily", "ETHUSD.daily", "ETHUSD.m", "ETHUSD.a", "ETHUSD.ecn"],
+      EURUSD: ["EURUSD.Daily", "EURUSD.daily", "EURUSD.m", "EURUSD.a", "EURUSD.ecn"],
+      GBPUSD: ["GBPUSD.Daily", "GBPUSD.daily", "GBPUSD.m", "GBPUSD.a", "GBPUSD.ecn"],
     };
 
     let mapUpdated = false;
