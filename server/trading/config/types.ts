@@ -32,7 +32,7 @@ export interface ActiveEntry {
   traderType: TraderType;
 }
 
-export type TradeOutcome = "TP" | "SL" | "EOD" | "SKIPPED" | "EXPIRED" | "NEWS_CLOSE" | null;
+export type TradeOutcome = "TP" | "SL" | "EOD" | "EOD_CLOSE" | "SKIPPED" | "EXPIRED" | "NEWS_CLOSE" | null;
 export type SessionFilter =
   | "ALL_DAY"
   | "ASIA"
@@ -222,8 +222,8 @@ export interface PairConfig {
   minTpDist?: number;
   defaultTpDist?: number;
   maxTpDist?: number;
-  session?: "NY_Forex" | "NY_Indices" | "london" | "asia";
-  sessions?: ("NY_Forex" | "NY_Indices" | "london" | "asia")[];
+  session?: "NY_Forex" | "NY_Indices" | "london" | "asia" | "ny";
+  sessions?: ("NY_Forex" | "NY_Indices" | "london" | "asia" | "ny")[];
   maxH1EmaSlope?: number;
   delayStartMinutes?: number;
   cutoffHour?: number;
@@ -235,6 +235,8 @@ export interface PairConfig {
   blackswan_risk?: number;
   toxicHours?: number[];
   htfAlignmentRequired?: boolean;
+  dummy?: boolean;
+  comment?: string;
 }
 
 export interface SageOptimizerConfig extends PairConfig {}
@@ -264,6 +266,7 @@ export interface TriggerEvent {
   slBaseLow?: number;
   actionCandleHigh?: number;
   actionCandleLow?: number;
+  actionCandleOpen?: number;
   actionCandleClose?: number;
   sweepBuffer?: number;
   // Pre-baked metadata so evaluateExits never calls getActionCandle() in the hot path
@@ -277,6 +280,8 @@ export interface TradeRecord {
   botId?: string;
   clientId?: string;
   openTime?: number;
+  entryTimeMs?: number;
+  exitTimeMs?: number;
   timestamp: number;
   date: string;
   pair: string;

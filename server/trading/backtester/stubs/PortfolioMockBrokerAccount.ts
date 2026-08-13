@@ -55,7 +55,7 @@ export interface TradeRecord {
   slPrice: number;
   originalSl?: number;
   tpPrice: number;
-  outcome: 'SL' | 'EOD' | 'TP' | 'NEWS_CLOSE';
+  outcome: 'SL' | 'EOD' | 'EOD_CLOSE' | 'TP' | 'NEWS_CLOSE';
   rMultiple: number;
   openTime: number;
   closeTime: number;

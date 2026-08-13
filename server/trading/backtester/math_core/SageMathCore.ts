@@ -183,7 +183,7 @@ export function preComputeTriggers(
       const rOrLow  = roundPrice(orLow, pair);
       const boxSize = roundPrice(Math.abs(rOrHigh - rOrLow), pair);
 
-      let startM1Idx = c.m1StartIndex !== undefined ? c.m1StartIndex + 5 : 0;
+      let startM1Idx = Math.min(m1Rows.length - 1, m1Idx + 5);
 
       triggers.push({
         m5Index: i,
@@ -197,6 +197,7 @@ export function preComputeTriggers(
         tradingDayId,
         actionCandleHigh: actionCandle.high,
         actionCandleLow: actionCandle.low,
+        actionCandleOpen: actionCandle.open,
         actionCandleClose: actionCandle.close,
         sweepBuffer,
         // Pre-baked metadata — eliminates getActionCandle() call in evaluateExits hot path
@@ -297,6 +298,19 @@ export function evaluateExits(
 
     const direction = sweepHighTriggered ? "SELL" : "BUY";
     
+    // WBR Filter: wickPips / bodyPips >= 1.5
+    const acOpen = (t as any).actionCandleOpen;
+    const acClose = t.actionCandleClose;
+    const bodyTop = Math.max(acOpen, acClose);
+    const bodyBottom = Math.min(acOpen, acClose);
+    const bodyPips = Math.max((bodyTop - bodyBottom) / pipSize, 0.1);
+    const wickPips = direction === "SELL" 
+      ? (sweepHigh - bodyTop) / pipSize 
+      : (bodyBottom - sweepLow) / pipSize;
+      
+    if ((wickPips / bodyPips) < 1.5) {
+      continue; // Strict rejection rule: skip full-bodied momentum candles
+    }
 
 
 
@@ -502,21 +516,6 @@ export function evaluateExits(
           }
         }
 
-        // S-4 Parity: Cancel limit order if TP boundary is swept before fill
-        if (!tradeActive) {
-          if (direction === "BUY" && m1.high[j] >= preCalcTpPrice) {
-            missedTrade = true;
-            outcome = "SKIPPED";
-            rMultiple = 0;
-            break;
-          }
-          if (direction === "SELL" && (m1.low[j] + spreadPts) <= preCalcTpPrice) {
-            missedTrade = true;
-            outcome = "SKIPPED";
-            rMultiple = 0;
-            break;
-          }
-        }
 
           if (tradeActive) {
             // Use clampedSl fixed at order placement, penalizing gap-fills correctly.

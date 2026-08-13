@@ -11,7 +11,7 @@
       "netR": 0.473333333333112,
       "trades": 7
     },
-    "params": "asia_60%_MinSL15_MaxSL100_Body4_Trig2_Step2_FC12_StartH20_StartM30_OrbMins10_ActMins120_ExitTRAILING"
+    "params": "asia_60%_MinSL15_MaxSL100_Body4_Trig2_Step2_FC12_StartH20_StartM30_OrbMins10_ActMins60_ExitTRAILING"
   },
   {
     "windowIndex": 0,
@@ -25,7 +25,7 @@
       "netR": 0.473333333333112,
       "trades": 7
     },
-    "params": "asia_60%_MinSL15_MaxSL150_Body4_Trig2_Step2_FC12_StartH20_StartM30_OrbMins10_ActMins180_ExitTRAILING"
+    "params": "asia_60%_MinSL15_MaxSL150_Body4_Trig2_Step2_FC12_StartH20_StartM30_OrbMins10_ActMins60_ExitTRAILING"
   },
   {
     "windowIndex": 0,
@@ -39,35 +39,7 @@
       "netR": 0.473333333333112,
       "trades": 7
     },
-    "params": "asia_60%_MinSL15_MaxSL60_Body4_Trig2_Step2_FC12_StartH20_StartM30_OrbMins10_ActMins120_ExitTRAILING"
-  },
-  {
-    "windowIndex": 1,
-    "session": "asia",
-    "inSample": {
-      "netR": 24.45844707274589,
-      "trades": 38,
-      "maxDrawdown": 2
-    },
-    "outOfSample": {
-      "netR": 9.860970465951583,
-      "trades": 17
-    },
-    "params": "asia_0%_MinSL20_MaxSL80_Body4_Trig1_Step1.5_FC12_StartH20_StartM30_OrbMins10_ActMins180_ExitTRAILING"
-  },
-  {
-    "windowIndex": 1,
-    "session": "asia",
-    "inSample": {
-      "netR": 24.45844707274589,
-      "trades": 38,
-      "maxDrawdown": 2
-    },
-    "outOfSample": {
-      "netR": 9.860970465951583,
-      "trades": 17
-    },
-    "params": "asia_0%_MinSL20_MaxSL70_Body4_Trig1_Step1.5_FC12_StartH20_StartM30_OrbMins10_ActMins180_ExitTRAILING"
+    "params": "asia_60%_MinSL15_MaxSL40_Body4_Trig2_Step2_FC12_StartH20_StartM30_OrbMins10_ActMins120_ExitTRAILING"
   },
   {
     "windowIndex": 1,
@@ -81,194 +53,203 @@
       "netR": 8.000000000000302,
       "trades": 15
     },
-    "params": "asia_60%_MinSL15_MaxSL40_Body4_Trig2_Step2_FC12_StartH20_StartM30_OrbMins10_ActMins180_ExitTRAILING"
+    "params": "asia_60%_MinSL15_MaxSL150_Body4_Trig2_Step2_FC12_StartH20_StartM30_OrbMins10_ActMins180_ExitTRAILING"
+  },
+  {
+    "windowIndex": 1,
+    "session": "asia",
+    "inSample": {
+      "netR": 32.440000000000786,
+      "trades": 32,
+      "maxDrawdown": 4.766666666666701
+    },
+    "outOfSample": {
+      "netR": 8.000000000000302,
+      "trades": 15
+    },
+    "params": "asia_60%_MinSL15_MaxSL100_Body4_Trig2_Step2_FC12_StartH20_StartM30_OrbMins10_ActMins60_ExitTRAILING"
+  },
+  {
+    "windowIndex": 1,
+    "session": "asia",
+    "inSample": {
+      "netR": 32.440000000000786,
+      "trades": 32,
+      "maxDrawdown": 4.766666666666701
+    },
+    "outOfSample": {
+      "netR": 8.000000000000302,
+      "trades": 15
+    },
+    "params": "asia_60%_MinSL15_MaxSL100_Body4_Trig2_Step2_FC12_StartH20_StartM30_OrbMins10_ActMins120_ExitTRAILING"
   },
   {
     "windowIndex": 2,
     "session": "asia",
     "inSample": {
-      "netR": 31.27992698606502,
+      "netR": 31.069964118207302,
       "trades": 47,
       "maxDrawdown": 2
     },
     "outOfSample": {
-      "netR": 0.7058952752524643,
-      "trades": 17
-    },
-    "params": "asia_0%_MinSL20_MaxSL100_Body4_Trig1_Step1_FC12_StartH20_StartM30_OrbMins10_ActMins180_ExitTRAILING"
-  },
-  {
-    "windowIndex": 2,
-    "session": "asia",
-    "inSample": {
-      "netR": 31.27992698606502,
-      "trades": 47,
-      "maxDrawdown": 2
-    },
-    "outOfSample": {
-      "netR": 1.7058952752524643,
-      "trades": 16
-    },
-    "params": "asia_0%_MinSL20_MaxSL100_Body4_Trig1_Step1_FC12_StartH20_StartM30_OrbMins10_ActMins120_ExitTRAILING"
-  },
-  {
-    "windowIndex": 2,
-    "session": "asia",
-    "inSample": {
-      "netR": 31.27992698606502,
-      "trades": 47,
-      "maxDrawdown": 2
-    },
-    "outOfSample": {
-      "netR": 1.7058952752524643,
+      "netR": 4.705895275252182,
       "trades": 14
+    }
+  },
+  {
+    "windowIndex": 2,
+    "session": "asia",
+    "inSample": {
+      "netR": 31.069964118207302,
+      "trades": 47,
+      "maxDrawdown": 2
     },
-    "params": "asia_0%_MinSL20_MaxSL30_Body4_Trig1_Step1_FC12_StartH20_StartM30_OrbMins10_ActMins120_ExitTRAILING"
+    "outOfSample": {
+      "netR": 4.705895275252182,
+      "trades": 15
+    }
+  },
+  {
+    "windowIndex": 2,
+    "session": "asia",
+    "inSample": {
+      "netR": 31.069964118207302,
+      "trades": 47,
+      "maxDrawdown": 2
+    },
+    "outOfSample": {
+      "netR": 3.705895275252182,
+      "trades": 16
+    }
   },
   {
     "windowIndex": 3,
     "session": "asia",
     "inSample": {
-      "netR": 33.298168498170554,
-      "trades": 37,
+      "netR": 24.686666666668504,
+      "trades": 36,
       "maxDrawdown": 4
     },
     "outOfSample": {
-      "netR": 1.641762452107523,
-      "trades": 19
-    },
-    "params": "asia_30%_MinSL15_MaxSL150_Body4_Trig2_Step0.5_FC12_StartH20_StartM30_OrbMins10_ActMins60_ExitTRAILING"
-  },
-  {
-    "windowIndex": 3,
-    "session": "asia",
-    "inSample": {
-      "netR": 33.298168498170554,
-      "trades": 37,
-      "maxDrawdown": 4
-    },
-    "outOfSample": {
-      "netR": 4.141762452107429,
-      "trades": 21
-    },
-    "params": "asia_30%_MinSL15_MaxSL150_Body4_Trig2_Step0.5_FC12_StartH20_StartM30_OrbMins10_ActMins120_ExitTRAILING"
-  },
-  {
-    "windowIndex": 3,
-    "session": "asia",
-    "inSample": {
-      "netR": 33.298168498170554,
-      "trades": 37,
-      "maxDrawdown": 4
-    },
-    "outOfSample": {
-      "netR": 4.141762452107429,
-      "trades": 21
-    },
-    "params": "asia_30%_MinSL15_MaxSL100_Body4_Trig2_Step0.5_FC12_StartH20_StartM30_OrbMins10_ActMins120_ExitTRAILING"
-  },
-  {
-    "windowIndex": 4,
-    "session": "asia",
-    "inSample": {
-      "netR": 39.02659761694328,
-      "trades": 42,
-      "maxDrawdown": 8
-    },
-    "outOfSample": {
-      "netR": -16,
-      "trades": 18
-    },
-    "params": "asia_30%_MinSL15_MaxSL60_Body5_Trig2_Step0.5_FC12_StartH20_StartM30_OrbMins10_ActMins120_ExitTRAILING"
-  },
-  {
-    "windowIndex": 4,
-    "session": "asia",
-    "inSample": {
-      "netR": 39.02659761694328,
-      "trades": 42,
-      "maxDrawdown": 8
-    },
-    "outOfSample": {
-      "netR": -16,
-      "trades": 18
-    },
-    "params": "asia_30%_MinSL15_MaxSL150_Body5_Trig2_Step0.5_FC12_StartH20_StartM30_OrbMins10_ActMins120_ExitTRAILING"
-  },
-  {
-    "windowIndex": 4,
-    "session": "asia",
-    "inSample": {
-      "netR": 39.02659761694328,
-      "trades": 42,
-      "maxDrawdown": 8
-    },
-    "outOfSample": {
-      "netR": -16,
+      "netR": -5.003448275861887,
       "trades": 18
     }
   },
   {
-    "windowIndex": 5,
+    "windowIndex": 3,
     "session": "asia",
     "inSample": {
-      "netR": 31.506666666667364,
-      "trades": 38,
-      "maxDrawdown": 2
+      "netR": 26.333333333335364,
+      "trades": 29,
+      "maxDrawdown": 3
     },
     "outOfSample": {
-      "netR": -2.0333333333334913,
-      "trades": 11
-    },
-    "params": "asia_30%_MinSL15_MaxSL80_Body4_Trig1_Step1_FC24_StartH18_StartM0_OrbMins10_ActMins180_ExitTRAILING"
-  },
-  {
-    "windowIndex": 5,
-    "session": "asia",
-    "inSample": {
-      "netR": 31.506666666667364,
-      "trades": 38,
-      "maxDrawdown": 2
-    },
-    "outOfSample": {
-      "netR": -2.0333333333334913,
-      "trades": 11
-    },
-    "params": "asia_30%_MinSL15_MaxSL70_Body4_Trig1_Step1_FC24_StartH18_StartM0_OrbMins10_ActMins180_ExitTRAILING"
-  },
-  {
-    "windowIndex": 5,
-    "session": "asia",
-    "inSample": {
-      "netR": 31.506666666667364,
-      "trades": 38,
-      "maxDrawdown": 2
-    },
-    "outOfSample": {
-      "netR": -2.0333333333334913,
-      "trades": 11
+      "netR": -1.4999999999998916,
+      "trades": 16
     }
+  },
+  {
+    "windowIndex": 3,
+    "session": "asia",
+    "inSample": {
+      "netR": 26.333333333335364,
+      "trades": 29,
+      "maxDrawdown": 3
+    },
+    "outOfSample": {
+      "netR": -1.4999999999998916,
+      "trades": 16
+    }
+  },
+  {
+    "windowIndex": 4,
+    "session": "asia",
+    "inSample": {
+      "netR": 30.30666666666547,
+      "trades": 30,
+      "maxDrawdown": 5
+    },
+    "outOfSample": {
+      "netR": -3.000000000000189,
+      "trades": 10
+    }
+  },
+  {
+    "windowIndex": 4,
+    "session": "asia",
+    "inSample": {
+      "netR": 22.480000000000864,
+      "trades": 40,
+      "maxDrawdown": 5
+    },
+    "outOfSample": {
+      "netR": -13,
+      "trades": 18
+    },
+    "params": "asia_60%_MinSL15_MaxSL30_Body5_Trig1_Step2_FC16_StartH20_StartM30_OrbMins10_ActMins120_ExitTRAILING"
+  },
+  {
+    "windowIndex": 4,
+    "session": "asia",
+    "inSample": {
+      "netR": 25.386666666667274,
+      "trades": 39,
+      "maxDrawdown": 8
+    },
+    "outOfSample": {
+      "netR": -16,
+      "trades": 18
+    },
+    "params": "asia_30%_MinSL15_MaxSL30_Body5_Trig2_Step0.5_FC12_StartH20_StartM30_OrbMins10_ActMins120_ExitTRAILING"
+  },
+  {
+    "windowIndex": 5,
+    "session": "asia",
+    "inSample": {
+      "netR": 43.172000000000025,
+      "trades": 34,
+      "maxDrawdown": 5
+    },
+    "outOfSample": {
+      "netR": -8.160000000000082,
+      "trades": 12
+    },
+    "params": "asia_60%_MinSL25_MaxSL60_Body4_Trig3_Step0.5_FC24_StartH17_StartM0_OrbMins45_ActMins180_ExitTRAILING"
+  },
+  {
+    "windowIndex": 5,
+    "session": "asia",
+    "inSample": {
+      "netR": 32.506666666667364,
+      "trades": 36,
+      "maxDrawdown": 2
+    },
+    "outOfSample": {
+      "netR": -2.0333333333334913,
+      "trades": 11
+    },
+    "params": "asia_30%_MinSL15_MaxSL60_Body4_Trig1_Step1_FC24_StartH18_StartM0_OrbMins10_ActMins180_ExitTRAILING"
+  },
+  {
+    "windowIndex": 5,
+    "session": "asia",
+    "inSample": {
+      "netR": 32.506666666667364,
+      "trades": 36,
+      "maxDrawdown": 2
+    },
+    "outOfSample": {
+      "netR": -2.0333333333334913,
+      "trades": 11
+    },
+    "params": "asia_30%_MinSL15_MaxSL40_Body4_Trig1_Step1_FC16_StartH18_StartM0_OrbMins10_ActMins180_ExitTRAILING"
   },
   {
     "windowIndex": 6,
     "session": "asia",
     "inSample": {
-      "netR": 32.61335033047846,
-      "trades": 45,
-      "maxDrawdown": 6
-    },
-    "outOfSample": {
-      "netR": -3.000000000000316,
-      "trades": 13
-    },
-    "params": "asia_0%_MinSL15_MaxSL100_Body4_Trig3_Step2_FC16_StartH21_StartM0_OrbMins10_ActMins180_ExitTRAILING"
-  },
-  {
-    "windowIndex": 6,
-    "session": "asia",
-    "inSample": {
-      "netR": 32.61335033047846,
-      "trades": 45,
+      "netR": 33.61335033047846,
+      "trades": 44,
       "maxDrawdown": 6
     },
     "outOfSample": {
@@ -281,14 +262,43 @@
     "windowIndex": 6,
     "session": "asia",
     "inSample": {
-      "netR": 31.456329881188243,
-      "trades": 45,
+      "netR": 33.61335033047846,
+      "trades": 44,
       "maxDrawdown": 6
     },
     "outOfSample": {
       "netR": -3.000000000000316,
       "trades": 13
-    }
+    },
+    "params": "asia_0%_MinSL15_MaxSL50_Body4_Trig3_Step2_FC16_StartH21_StartM0_OrbMins10_ActMins180_ExitTRAILING"
+  },
+  {
+    "windowIndex": 6,
+    "session": "asia",
+    "inSample": {
+      "netR": 33.61335033047846,
+      "trades": 44,
+      "maxDrawdown": 6
+    },
+    "outOfSample": {
+      "netR": -3.000000000000316,
+      "trades": 13
+    },
+    "params": "asia_0%_MinSL15_MaxSL150_Body4_Trig3_Step2_FC16_StartH21_StartM0_OrbMins10_ActMins180_ExitTRAILING"
+  },
+  {
+    "windowIndex": 7,
+    "session": "asia",
+    "inSample": {
+      "netR": 26.8937028775544,
+      "trades": 53,
+      "maxDrawdown": 4
+    },
+    "outOfSample": {
+      "netR": 5.044864311346018,
+      "trades": 18
+    },
+    "params": "asia_0%_MinSL30_MaxSL50_Body4_Trig1_Step1.5_FC16_StartH20_StartM45_OrbMins10_ActMins180_ExitTRAILING"
   },
   {
     "windowIndex": 7,
@@ -308,27 +318,13 @@
     "windowIndex": 7,
     "session": "asia",
     "inSample": {
-      "netR": 26.8937028775544,
-      "trades": 53,
-      "maxDrawdown": 4
+      "netR": 29.995532249601485,
+      "trades": 52,
+      "maxDrawdown": 7
     },
     "outOfSample": {
-      "netR": 5.044864311346018,
-      "trades": 18
-    },
-    "params": "asia_0%_MinSL30_MaxSL40_Body4_Trig1_Step1.5_FC16_StartH20_StartM45_OrbMins10_ActMins180_ExitTRAILING"
-  },
-  {
-    "windowIndex": 7,
-    "session": "asia",
-    "inSample": {
-      "netR": 26.8937028775544,
-      "trades": 53,
-      "maxDrawdown": 4
-    },
-    "outOfSample": {
-      "netR": 5.044864311346018,
-      "trades": 18
+      "netR": 14.029011417803856,
+      "trades": 12
     }
   },
   {
@@ -349,70 +345,69 @@
     "windowIndex": 8,
     "session": "asia",
     "inSample": {
-      "netR": 27.14903261940322,
-      "trades": 56,
-      "maxDrawdown": 3.5317082857537843
+      "netR": 35.088595246334876,
+      "trades": 49,
+      "maxDrawdown": 5
     },
     "outOfSample": {
-      "netR": -0.30336989522152447,
+      "netR": 4.071894836806972,
       "trades": 11
-    },
-    "params": "asia_0%_MinSL40_MaxSL80_Body4_Trig1_Step1.5_FC24_StartH20_StartM45_OrbMins10_ActMins180_ExitTRAILING"
+    }
   },
   {
     "windowIndex": 8,
     "session": "asia",
     "inSample": {
-      "netR": 27.14903261940322,
-      "trades": 56,
-      "maxDrawdown": 3.5317082857537843
+      "netR": 35.088595246334876,
+      "trades": 49,
+      "maxDrawdown": 5
     },
     "outOfSample": {
-      "netR": -0.30336989522152447,
+      "netR": 4.071894836806972,
       "trades": 11
+    }
+  },
+  {
+    "windowIndex": 9,
+    "session": "asia",
+    "inSample": {
+      "netR": 45.153333333332455,
+      "trades": 55,
+      "maxDrawdown": 6
     },
-    "params": "asia_0%_MinSL40_MaxSL70_Body4_Trig1_Step1.5_FC24_StartH20_StartM45_OrbMins10_ActMins180_ExitTRAILING"
+    "outOfSample": {
+      "netR": -2.000000000000189,
+      "trades": 9
+    },
+    "params": "asia_60%_MinSL15_MaxSL30_Body4_Trig1.5_Step2_FC12_StartH21_StartM30_OrbMins10_ActMins180_ExitTRAILING"
+  },
+  {
+    "windowIndex": 9,
+    "session": "asia",
+    "inSample": {
+      "netR": 45.153333333332455,
+      "trades": 55,
+      "maxDrawdown": 6
+    },
+    "outOfSample": {
+      "netR": -2.000000000000189,
+      "trades": 9
+    },
+    "params": "asia_60%_MinSL15_MaxSL30_Body4_Trig1.5_Step2_FC12_StartH21_StartM30_OrbMins10_ActMins120_ExitTRAILING"
   },
   {
     "windowIndex": 9,
     "session": "asia",
     "inSample": {
       "netR": 44.873333333332276,
-      "trades": 54,
+      "trades": 55,
       "maxDrawdown": 6
     },
     "outOfSample": {
       "netR": -3.000000000000189,
       "trades": 10
-    }
-  },
-  {
-    "windowIndex": 9,
-    "session": "asia",
-    "inSample": {
-      "netR": 43.873333333332276,
-      "trades": 56,
-      "maxDrawdown": 7
     },
-    "outOfSample": {
-      "netR": -3.000000000000189,
-      "trades": 10
-    },
-    "params": "asia_60%_MinSL15_MaxSL100_Body4_Trig1.5_Step2_FC24_StartH21_StartM30_OrbMins10_ActMins120_ExitTRAILING"
-  },
-  {
-    "windowIndex": 9,
-    "session": "asia",
-    "inSample": {
-      "netR": 43.873333333332276,
-      "trades": 56,
-      "maxDrawdown": 7
-    },
-    "outOfSample": {
-      "netR": -3.000000000000189,
-      "trades": 10
-    },
-    "params": "asia_60%_MinSL15_MaxSL150_Body4_Trig1.5_Step2_FC24_StartH21_StartM30_OrbMins10_ActMins180_ExitTRAILING"
+    "params": "asia_60%_MinSL15_MaxSL30_Body4_Trig1.5_Step2_FC24_StartH21_StartM30_OrbMins10_ActMins120_ExitTRAILING"
   },
   {
     "windowIndex": 10,
@@ -426,7 +421,7 @@
       "netR": -0.7133333333323,
       "trades": 14
     },
-    "params": "asia_60%_MinSL15_MaxSL70_Body4_Trig1.5_Step1.5_FC24_StartH21_StartM30_OrbMins10_ActMins120_ExitTRAILING"
+    "params": "asia_60%_MinSL15_MaxSL150_Body4_Trig1.5_Step1.5_FC24_StartH21_StartM30_OrbMins10_ActMins180_ExitTRAILING"
   },
   {
     "windowIndex": 10,
@@ -439,7 +434,8 @@
     "outOfSample": {
       "netR": -0.7133333333323,
       "trades": 14
-    }
+    },
+    "params": "asia_60%_MinSL15_MaxSL150_Body4_Trig1.5_Step1.5_FC24_StartH21_StartM30_OrbMins10_ActMins120_ExitTRAILING"
   },
   {
     "windowIndex": 10,
@@ -452,19 +448,6 @@
     "outOfSample": {
       "netR": -0.7133333333323,
       "trades": 14
-    }
-  },
-  {
-    "windowIndex": 11,
-    "session": "asia",
-    "inSample": {
-      "netR": 24.693333333333005,
-      "trades": 44,
-      "maxDrawdown": 5.500000000000284
-    },
-    "outOfSample": {
-      "netR": -4.520000000000379,
-      "trades": 15
     },
     "params": "asia_60%_MinSL15_MaxSL70_Body4_Trig1.5_Step1.5_FC24_StartH21_StartM30_OrbMins10_ActMins180_ExitTRAILING"
   },
@@ -480,7 +463,7 @@
       "netR": -4.520000000000379,
       "trades": 15
     },
-    "params": "asia_60%_MinSL15_MaxSL60_Body4_Trig1.5_Step1.5_FC24_StartH21_StartM30_OrbMins10_ActMins180_ExitTRAILING"
+    "params": "asia_60%_MinSL15_MaxSL30_Body4_Trig1.5_Step1.5_FC24_StartH21_StartM30_OrbMins10_ActMins180_ExitTRAILING"
   },
   {
     "windowIndex": 11,
@@ -494,21 +477,20 @@
       "netR": -4.520000000000379,
       "trades": 15
     },
-    "params": "asia_60%_MinSL15_MaxSL40_Body4_Trig1.5_Step1.5_FC24_StartH21_StartM30_OrbMins10_ActMins120_ExitTRAILING"
+    "params": "asia_60%_MinSL15_MaxSL150_Body4_Trig1.5_Step1.5_FC24_StartH21_StartM30_OrbMins10_ActMins60_ExitTRAILING"
   },
   {
-    "windowIndex": 12,
+    "windowIndex": 11,
     "session": "asia",
     "inSample": {
-      "netR": 39.413333333334585,
-      "trades": 33,
-      "maxDrawdown": 4.753333333333492
+      "netR": 24.693333333333005,
+      "trades": 44,
+      "maxDrawdown": 5.500000000000284
     },
     "outOfSample": {
-      "netR": 7.173333333332638,
-      "trades": 13
-    },
-    "params": "asia_30%_MinSL15_MaxSL40_Body4_Trig3_Step1_FC8_StartH20_StartM45_OrbMins10_ActMins180_ExitTRAILING"
+      "netR": -4.520000000000379,
+      "trades": 15
+    }
   },
   {
     "windowIndex": 12,
@@ -536,414 +518,443 @@
       "netR": 7.173333333332638,
       "trades": 13
     },
-    "params": "asia_30%_MinSL15_MaxSL50_Body4_Trig3_Step1_FC8_StartH20_StartM45_OrbMins10_ActMins180_ExitTRAILING"
+    "params": "asia_30%_MinSL15_MaxSL70_Body4_Trig3_Step1_FC8_StartH20_StartM45_OrbMins10_ActMins180_ExitTRAILING"
+  },
+  {
+    "windowIndex": 12,
+    "session": "asia",
+    "inSample": {
+      "netR": 33.56000000000016,
+      "trades": 33,
+      "maxDrawdown": 3.7533333333334915
+    },
+    "outOfSample": {
+      "netR": 11.17333333333264,
+      "trades": 12
+    },
+    "params": "asia_30%_MinSL15_MaxSL30_Body4_Trig1_Step2_FC8_StartH20_StartM45_OrbMins10_ActMins180_ExitTRAILING"
   },
   {
     "windowIndex": 13,
     "session": "asia",
     "inSample": {
-      "netR": 47.48666666666628,
+      "netR": 51.340000000000714,
       "trades": 39,
-      "maxDrawdown": 5
+      "maxDrawdown": 7
     },
     "outOfSample": {
-      "netR": 6.6333333333329225,
+      "netR": 3.9999999999996207,
       "trades": 5
-    }
+    },
+    "params": "asia_30%_MinSL15_MaxSL30_Body4_Trig3_Step1_FC8_StartH20_StartM45_OrbMins10_ActMins180_ExitTRAILING"
   },
   {
     "windowIndex": 13,
     "session": "asia",
     "inSample": {
-      "netR": 46.48666666666628,
+      "netR": 50.340000000000714,
       "trades": 40,
-      "maxDrawdown": 5
+      "maxDrawdown": 7
     },
     "outOfSample": {
-      "netR": 6.6333333333329225,
+      "netR": 3.9999999999996207,
       "trades": 5
     },
-    "params": "asia_30%_MinSL15_MaxSL100_Body4_Trig1_Step2_FC8_StartH20_StartM45_OrbMins10_ActMins180_ExitTRAILING"
+    "params": "asia_30%_MinSL15_MaxSL80_Body4_Trig3_Step1_FC8_StartH20_StartM45_OrbMins10_ActMins180_ExitTRAILING"
   },
   {
     "windowIndex": 13,
     "session": "asia",
     "inSample": {
-      "netR": 46.48666666666628,
+      "netR": 50.340000000000714,
       "trades": 40,
+      "maxDrawdown": 7
+    },
+    "outOfSample": {
+      "netR": 3.9999999999996207,
+      "trades": 5
+    },
+    "params": "asia_30%_MinSL15_MaxSL150_Body4_Trig3_Step1_FC8_StartH20_StartM45_OrbMins10_ActMins180_ExitTRAILING"
+  },
+  {
+    "windowIndex": 14,
+    "session": "asia",
+    "inSample": {
+      "netR": 45.65333333333226,
+      "trades": 35,
       "maxDrawdown": 5
     },
     "outOfSample": {
-      "netR": 6.6333333333329225,
-      "trades": 5
+      "netR": -1,
+      "trades": 3
     },
-    "params": "asia_30%_MinSL15_MaxSL70_Body4_Trig1_Step2_FC8_StartH20_StartM45_OrbMins10_ActMins180_ExitTRAILING"
+    "params": "asia_30%_MinSL15_MaxSL30_Body4_Trig1_Step2_FC12_StartH20_StartM45_OrbMins10_ActMins120_ExitTRAILING"
+  },
+  {
+    "windowIndex": 14,
+    "session": "asia",
+    "inSample": {
+      "netR": 44.65333333333226,
+      "trades": 36,
+      "maxDrawdown": 5
+    },
+    "outOfSample": {
+      "netR": -1,
+      "trades": 3
+    },
+    "params": "asia_30%_MinSL15_MaxSL50_Body4_Trig1_Step2_FC12_StartH20_StartM45_OrbMins10_ActMins120_ExitTRAILING"
+  },
+  {
+    "windowIndex": 14,
+    "session": "asia",
+    "inSample": {
+      "netR": 44.65333333333226,
+      "trades": 36,
+      "maxDrawdown": 5
+    },
+    "outOfSample": {
+      "netR": -1,
+      "trades": 3
+    },
+    "params": "asia_30%_MinSL15_MaxSL100_Body4_Trig1_Step2_FC12_StartH20_StartM45_OrbMins10_ActMins120_ExitTRAILING"
   },
   {
     "windowIndex": 0,
     "session": "london",
     "inSample": {
-      "netR": 22.50865090724852,
-      "trades": 20,
-      "maxDrawdown": 3.803428001992965
+      "netR": 12.767145028611415,
+      "trades": 26,
+      "maxDrawdown": 3
     },
     "outOfSample": {
-      "netR": -2.4160956380784118,
-      "trades": 6
+      "netR": -4.490636704119913,
+      "trades": 10
     }
   },
   {
     "windowIndex": 0,
     "session": "london",
     "inSample": {
-      "netR": 21.50865090724852,
-      "trades": 21,
-      "maxDrawdown": 3.803428001992965
+      "netR": 11.999999999999268,
+      "trades": 26,
+      "maxDrawdown": 3
     },
     "outOfSample": {
-      "netR": -2.4160956380784118,
-      "trades": 6
-    },
-    "params": "london_0%_MinSL20_MaxSL100_Body5_Trig3_Step2_FC12_StartH3_StartM0_OrbMins10_ActMins180_ExitTRAILING"
-  },
-  {
-    "windowIndex": 0,
-    "session": "london",
-    "inSample": {
-      "netR": 21.50865090724852,
-      "trades": 21,
-      "maxDrawdown": 3.803428001992965
-    },
-    "outOfSample": {
-      "netR": -2.4160956380784118,
-      "trades": 6
-    },
-    "params": "london_0%_MinSL20_MaxSL80_Body5_Trig3_Step2_FC12_StartH3_StartM0_OrbMins10_ActMins180_ExitTRAILING"
-  },
-  {
-    "windowIndex": 1,
-    "session": "london",
-    "inSample": {
-      "netR": 17.145534992693904,
-      "trades": 23,
-      "maxDrawdown": 5.046048970506586
-    },
-    "outOfSample": {
-      "netR": -2.3051732377537424,
-      "trades": 8
-    }
-  },
-  {
-    "windowIndex": 1,
-    "session": "london",
-    "inSample": {
-      "netR": 17.145534992693904,
-      "trades": 23,
-      "maxDrawdown": 5.046048970506586
-    },
-    "outOfSample": {
-      "netR": -2.3051732377537424,
-      "trades": 8
-    }
-  },
-  {
-    "windowIndex": 1,
-    "session": "london",
-    "inSample": {
-      "netR": 17.145534992693904,
-      "trades": 23,
-      "maxDrawdown": 5.046048970506586
-    },
-    "outOfSample": {
-      "netR": -2.3051732377537424,
-      "trades": 8
-    }
-  },
-  {
-    "windowIndex": 2,
-    "session": "london",
-    "inSample": {
-      "netR": 32.036157870705466,
-      "trades": 28,
-      "maxDrawdown": 4
-    },
-    "outOfSample": {
-      "netR": 0.46491228070122936,
-      "trades": 11
-    },
-    "params": "london_0%_MinSL15_MaxSL100_Body4_Trig3_Step1.5_FC24_StartH3_StartM30_OrbMins10_ActMins180_ExitTRAILING"
-  },
-  {
-    "windowIndex": 2,
-    "session": "london",
-    "inSample": {
-      "netR": 32.036157870705466,
-      "trades": 28,
-      "maxDrawdown": 4
-    },
-    "outOfSample": {
-      "netR": 0.46491228070122936,
+      "netR": -5,
       "trades": 10
     },
-    "params": "london_0%_MinSL15_MaxSL70_Body4_Trig3_Step1.5_FC24_StartH3_StartM30_OrbMins10_ActMins60_ExitTRAILING"
+    "params": "london_0%_MinSL15_MaxSL100_Body4_Trig0.5_Step2_FC24_StartH2_StartM0_OrbMins10_ActMins180_ExitTRAILING"
+  },
+  {
+    "windowIndex": 0,
+    "session": "london",
+    "inSample": {
+      "netR": 11.999999999999268,
+      "trades": 26,
+      "maxDrawdown": 3
+    },
+    "outOfSample": {
+      "netR": -5,
+      "trades": 10
+    },
+    "params": "london_0%_MinSL15_MaxSL60_Body4_Trig0.5_Step2_FC24_StartH2_StartM0_OrbMins10_ActMins180_ExitTRAILING"
+  },
+  {
+    "windowIndex": 1,
+    "session": "london",
+    "inSample": {
+      "netR": 13.565843009480883,
+      "trades": 20,
+      "maxDrawdown": 5.046728971962967
+    },
+    "outOfSample": {
+      "netR": 0.48673436102480583,
+      "trades": 6
+    }
+  },
+  {
+    "windowIndex": 1,
+    "session": "london",
+    "inSample": {
+      "netR": 13.565843009480883,
+      "trades": 20,
+      "maxDrawdown": 5.046728971962967
+    },
+    "outOfSample": {
+      "netR": 0.48673436102480583,
+      "trades": 6
+    }
+  },
+  {
+    "windowIndex": 1,
+    "session": "london",
+    "inSample": {
+      "netR": 13.565843009480883,
+      "trades": 20,
+      "maxDrawdown": 5.046728971962967
+    },
+    "outOfSample": {
+      "netR": 0.48673436102480583,
+      "trades": 6
+    }
   },
   {
     "windowIndex": 2,
     "session": "london",
     "inSample": {
-      "netR": 32.036157870705466,
-      "trades": 28,
-      "maxDrawdown": 4
+      "netR": 17.219999999999594,
+      "trades": 31,
+      "maxDrawdown": 3.440000000000034
     },
     "outOfSample": {
-      "netR": 1.4649122807012294,
-      "trades": 9
+      "netR": -3.4500000000000695,
+      "trades": 10
     },
-    "params": "london_0%_MinSL15_MaxSL30_Body4_Trig3_Step1.5_FC24_StartH3_StartM30_OrbMins10_ActMins60_ExitTRAILING"
+    "params": "london_30%_MinSL40_MaxSL150_Body4_Trig2_Step0.5_FC24_StartH5_StartM0_OrbMins10_ActMins60_ExitTRAILING"
+  },
+  {
+    "windowIndex": 2,
+    "session": "london",
+    "inSample": {
+      "netR": 17.219999999999594,
+      "trades": 31,
+      "maxDrawdown": 3.440000000000034
+    },
+    "outOfSample": {
+      "netR": -3.4500000000000695,
+      "trades": 10
+    },
+    "params": "london_30%_MinSL40_MaxSL100_Body4_Trig2_Step0.5_FC24_StartH5_StartM0_OrbMins10_ActMins60_ExitTRAILING"
+  },
+  {
+    "windowIndex": 2,
+    "session": "london",
+    "inSample": {
+      "netR": 16.219999999999597,
+      "trades": 32,
+      "maxDrawdown": 3.440000000000034
+    },
+    "outOfSample": {
+      "netR": -3.4775000000001293,
+      "trades": 11
+    },
+    "params": "london_30%_MinSL40_MaxSL150_Body4_Trig2_Step0.5_FC24_StartH5_StartM0_OrbMins10_ActMins180_ExitTRAILING"
   },
   {
     "windowIndex": 3,
     "session": "london",
     "inSample": {
-      "netR": 29.435949144999775,
-      "trades": 25,
-      "maxDrawdown": 5
-    },
-    "outOfSample": {
-      "netR": 23.309561075729178,
-      "trades": 18
-    },
-    "params": "london_0%_MinSL15_MaxSL30_Body4_Trig3_Step1.5_FC24_StartH3_StartM30_OrbMins10_ActMins180_ExitTRAILING"
-  },
-  {
-    "windowIndex": 3,
-    "session": "london",
-    "inSample": {
-      "netR": 29.435949144999775,
-      "trades": 25,
-      "maxDrawdown": 5
-    },
-    "outOfSample": {
-      "netR": 23.309561075729178,
-      "trades": 18
-    },
-    "params": "london_0%_MinSL15_MaxSL30_Body4_Trig3_Step1.5_FC24_StartH3_StartM30_OrbMins10_ActMins120_ExitTRAILING"
-  },
-  {
-    "windowIndex": 3,
-    "session": "london",
-    "inSample": {
-      "netR": 28.435949144999775,
+      "netR": 23.041189525832273,
       "trades": 26,
       "maxDrawdown": 5
     },
     "outOfSample": {
-      "netR": 22.309561075729178,
-      "trades": 19
+      "netR": 31.79610155629893,
+      "trades": 17
     },
-    "params": "london_0%_MinSL15_MaxSL150_Body4_Trig3_Step1.5_FC24_StartH3_StartM30_OrbMins10_ActMins180_ExitTRAILING"
+    "params": "london_0%_MinSL15_MaxSL60_Body4_Trig3_Step1.5_FC24_StartH3_StartM30_OrbMins10_ActMins120_ExitTRAILING"
+  },
+  {
+    "windowIndex": 3,
+    "session": "london",
+    "inSample": {
+      "netR": 23.041189525832273,
+      "trades": 26,
+      "maxDrawdown": 5
+    },
+    "outOfSample": {
+      "netR": 31.79610155629893,
+      "trades": 17
+    },
+    "params": "london_0%_MinSL15_MaxSL70_Body4_Trig3_Step1.5_FC24_StartH3_StartM30_OrbMins10_ActMins120_ExitTRAILING"
+  },
+  {
+    "windowIndex": 3,
+    "session": "london",
+    "inSample": {
+      "netR": 23.041189525832273,
+      "trades": 26,
+      "maxDrawdown": 5
+    },
+    "outOfSample": {
+      "netR": 31.79610155629893,
+      "trades": 17
+    },
+    "params": "london_0%_MinSL15_MaxSL80_Body4_Trig3_Step1.5_FC24_StartH3_StartM30_OrbMins10_ActMins180_ExitTRAILING"
   },
   {
     "windowIndex": 4,
     "session": "london",
     "inSample": {
-      "netR": 52.056845190339686,
+      "netR": 57.556845190340475,
       "trades": 43,
-      "maxDrawdown": 6
+      "maxDrawdown": 9
     },
     "outOfSample": {
-      "netR": -1.4167883245348798,
-      "trades": 15
-    },
-    "params": "london_0%_MinSL15_MaxSL40_Body4_Trig3_Step1_FC24_StartH3_StartM15_OrbMins10_ActMins180_ExitTRAILING"
-  },
-  {
-    "windowIndex": 4,
-    "session": "london",
-    "inSample": {
-      "netR": 52.056845190339686,
-      "trades": 43,
-      "maxDrawdown": 6
-    },
-    "outOfSample": {
-      "netR": -1.4167883245348798,
-      "trades": 15
-    },
-    "params": "london_0%_MinSL15_MaxSL150_Body4_Trig3_Step1_FC24_StartH3_StartM15_OrbMins10_ActMins180_ExitTRAILING"
-  },
-  {
-    "windowIndex": 4,
-    "session": "london",
-    "inSample": {
-      "netR": 52.056845190339686,
-      "trades": 43,
-      "maxDrawdown": 6
-    },
-    "outOfSample": {
-      "netR": -1.4167883245348798,
-      "trades": 15
-    },
-    "params": "london_0%_MinSL15_MaxSL80_Body4_Trig3_Step1_FC24_StartH3_StartM15_OrbMins10_ActMins180_ExitTRAILING"
-  },
-  {
-    "windowIndex": 5,
-    "session": "london",
-    "inSample": {
-      "netR": 39.97796134632203,
-      "trades": 48,
-      "maxDrawdown": 6
-    },
-    "outOfSample": {
-      "netR": 13.358713702854958,
+      "netR": -2.4167883245348794,
       "trades": 16
     },
-    "params": "london_0%_MinSL15_MaxSL150_Body4_Trig2_Step2_FC12_StartH3_StartM15_OrbMins10_ActMins60_ExitTRAILING"
+    "params": "london_0%_MinSL15_MaxSL150_Body4_Trig3_Step2_FC24_StartH3_StartM15_OrbMins10_ActMins180_ExitTRAILING"
+  },
+  {
+    "windowIndex": 4,
+    "session": "london",
+    "inSample": {
+      "netR": 57.556845190340475,
+      "trades": 43,
+      "maxDrawdown": 9
+    },
+    "outOfSample": {
+      "netR": -2.4167883245348794,
+      "trades": 16
+    },
+    "params": "london_0%_MinSL15_MaxSL70_Body4_Trig3_Step2_FC24_StartH3_StartM15_OrbMins10_ActMins180_ExitTRAILING"
+  },
+  {
+    "windowIndex": 4,
+    "session": "london",
+    "inSample": {
+      "netR": 57.70054597774207,
+      "trades": 42,
+      "maxDrawdown": 9
+    },
+    "outOfSample": {
+      "netR": -2.4167883245348794,
+      "trades": 16
+    },
+    "params": "london_0%_MinSL15_MaxSL40_Body4_Trig3_Step2_FC24_StartH3_StartM15_OrbMins10_ActMins120_ExitTRAILING"
   },
   {
     "windowIndex": 5,
     "session": "london",
     "inSample": {
-      "netR": 39.97796134632203,
-      "trades": 48,
-      "maxDrawdown": 6
+      "netR": 55.0285224201304,
+      "trades": 51,
+      "maxDrawdown": 11.274285714286009
     },
     "outOfSample": {
-      "netR": 12.358713702854958,
-      "trades": 17
+      "netR": 9.406350555522422,
+      "trades": 16
     },
-    "params": "london_0%_MinSL15_MaxSL100_Body4_Trig2_Step2_FC12_StartH3_StartM15_OrbMins10_ActMins120_ExitTRAILING"
+    "params": "london_0%_MinSL15_MaxSL60_Body4_Trig3_Step2_FC24_StartH3_StartM15_OrbMins10_ActMins180_ExitTRAILING"
   },
   {
     "windowIndex": 5,
     "session": "london",
     "inSample": {
-      "netR": 39.97796134632203,
-      "trades": 48,
-      "maxDrawdown": 6
+      "netR": 55.0285224201304,
+      "trades": 51,
+      "maxDrawdown": 11.274285714286009
     },
     "outOfSample": {
-      "netR": 12.358713702854958,
-      "trades": 17
+      "netR": 9.406350555522422,
+      "trades": 16
     },
-    "params": "london_0%_MinSL15_MaxSL150_Body4_Trig2_Step2_FC12_StartH3_StartM15_OrbMins10_ActMins120_ExitTRAILING"
+    "params": "london_0%_MinSL15_MaxSL80_Body4_Trig3_Step2_FC24_StartH3_StartM15_OrbMins10_ActMins180_ExitTRAILING"
+  },
+  {
+    "windowIndex": 5,
+    "session": "london",
+    "inSample": {
+      "netR": 55.0285224201304,
+      "trades": 51,
+      "maxDrawdown": 11.274285714286009
+    },
+    "outOfSample": {
+      "netR": 9.406350555522422,
+      "trades": 16
+    },
+    "params": "london_0%_MinSL15_MaxSL150_Body4_Trig3_Step2_FC24_StartH3_StartM15_OrbMins10_ActMins180_ExitTRAILING"
   },
   {
     "windowIndex": 6,
     "session": "london",
     "inSample": {
-      "netR": 45.344529484238805,
+      "netR": 56.88780716259044,
       "trades": 53,
-      "maxDrawdown": 7.101010101009734
+      "maxDrawdown": 13.274285714286009
     },
     "outOfSample": {
-      "netR": -2.6225218503237535,
+      "netR": -7.592467656162905,
       "trades": 21
     },
-    "params": "london_0%_MinSL15_MaxSL150_Body4_Trig2_Step2_FC12_StartH3_StartM15_OrbMins10_ActMins60_ExitTRAILING"
+    "params": "london_0%_MinSL15_MaxSL30_Body4_Trig3_Step2_FC24_StartH3_StartM15_OrbMins10_ActMins180_ExitTRAILING"
   },
   {
     "windowIndex": 6,
     "session": "london",
     "inSample": {
-      "netR": 45.344529484238805,
+      "netR": 56.88780716259044,
       "trades": 53,
-      "maxDrawdown": 7.101010101009734
+      "maxDrawdown": 13.274285714286009
     },
     "outOfSample": {
-      "netR": -2.6225218503237535,
-      "trades": 21
-    },
-    "params": "london_0%_MinSL15_MaxSL60_Body4_Trig2_Step2_FC12_StartH3_StartM15_OrbMins10_ActMins60_ExitTRAILING"
-  },
-  {
-    "windowIndex": 6,
-    "session": "london",
-    "inSample": {
-      "netR": 45.344529484238805,
-      "trades": 53,
-      "maxDrawdown": 7.101010101009734
-    },
-    "outOfSample": {
-      "netR": -2.6225218503237535,
-      "trades": 21
-    },
-    "params": "london_0%_MinSL15_MaxSL70_Body4_Trig2_Step2_FC12_StartH3_StartM15_OrbMins10_ActMins60_ExitTRAILING"
-  },
-  {
-    "windowIndex": 7,
-    "session": "london",
-    "inSample": {
-      "netR": 22.74212657258483,
-      "trades": 48,
-      "maxDrawdown": 4.155279503105625
-    },
-    "outOfSample": {
-      "netR": -2.150157401832075,
-      "trades": 21
-    },
-    "params": "london_0%_MinSL15_MaxSL150_Body4_Trig3_Step1_FC8_StartH4_StartM0_OrbMins10_ActMins60_ExitTRAILING"
-  },
-  {
-    "windowIndex": 7,
-    "session": "london",
-    "inSample": {
-      "netR": 22.74212657258483,
-      "trades": 48,
-      "maxDrawdown": 4.155279503105625
-    },
-    "outOfSample": {
-      "netR": -2.150157401832075,
-      "trades": 21
-    },
-    "params": "london_0%_MinSL15_MaxSL80_Body4_Trig3_Step1_FC8_StartH4_StartM0_OrbMins10_ActMins120_ExitTRAILING"
-  },
-  {
-    "windowIndex": 7,
-    "session": "london",
-    "inSample": {
-      "netR": 22.74212657258483,
-      "trades": 48,
-      "maxDrawdown": 4.155279503105625
-    },
-    "outOfSample": {
-      "netR": -2.150157401832075,
+      "netR": -7.592467656162905,
       "trades": 21
     }
   },
   {
-    "windowIndex": 8,
+    "windowIndex": 6,
     "session": "london",
     "inSample": {
-      "netR": 46.026666666666614,
-      "trades": 33,
-      "maxDrawdown": 3
+      "netR": 55.88780716259035,
+      "trades": 55,
+      "maxDrawdown": 13.89044733044733
     },
     "outOfSample": {
-      "netR": 2.693333333333017,
-      "trades": 7
+      "netR": -7.592467656162905,
+      "trades": 21
     },
-    "params": "london_60%_MinSL15_MaxSL50_Body5_Trig3_Step1_FC16_StartH3_StartM30_OrbMins10_ActMins120_ExitTRAILING"
+    "params": "london_0%_MinSL15_MaxSL150_Body4_Trig3_Step2_FC24_StartH3_StartM15_OrbMins10_ActMins120_ExitTRAILING"
+  },
+  {
+    "windowIndex": 7,
+    "session": "london",
+    "inSample": {
+      "netR": 22.532813328728516,
+      "trades": 37,
+      "maxDrawdown": 4.733909020952238
+    },
+    "outOfSample": {
+      "netR": 1.9134684284014192,
+      "trades": 12
+    },
+    "params": "london_0%_MinSL20_MaxSL30_Body4_Trig3_Step0.5_FC12_StartH3_StartM0_OrbMins10_ActMins60_ExitTRAILING"
+  },
+  {
+    "windowIndex": 7,
+    "session": "london",
+    "inSample": {
+      "netR": 22.032813328728572,
+      "trades": 37,
+      "maxDrawdown": 4.733909020952238
+    },
+    "outOfSample": {
+      "netR": 1.9134684284014192,
+      "trades": 12
+    },
+    "params": "london_0%_MinSL20_MaxSL30_Body4_Trig3_Step1.5_FC12_StartH3_StartM0_OrbMins10_ActMins60_ExitTRAILING"
+  },
+  {
+    "windowIndex": 7,
+    "session": "london",
+    "inSample": {
+      "netR": 22.032813328728572,
+      "trades": 37,
+      "maxDrawdown": 4.733909020952238
+    },
+    "outOfSample": {
+      "netR": 1.9134684284014192,
+      "trades": 12
+    },
+    "params": "london_0%_MinSL20_MaxSL30_Body4_Trig3_Step2_FC12_StartH3_StartM0_OrbMins10_ActMins60_ExitTRAILING"
   },
   {
     "windowIndex": 8,
     "session": "london",
     "inSample": {
-      "netR": 46.026666666666614,
-      "trades": 33,
-      "maxDrawdown": 3
-    },
-    "outOfSample": {
-      "netR": 2.693333333333017,
-      "trades": 7
-    },
-    "params": "london_60%_MinSL15_MaxSL100_Body5_Trig3_Step1_FC16_StartH3_StartM30_OrbMins10_ActMins120_ExitTRAILING"
-  },
-  {
-    "windowIndex": 8,
-    "session": "london",
-    "inSample": {
-      "netR": 46.026666666666614,
-      "trades": 33,
+      "netR": 48.026666666666614,
+      "trades": 31,
       "maxDrawdown": 3
     },
     "outOfSample": {
@@ -953,92 +964,136 @@
     "params": "london_60%_MinSL15_MaxSL150_Body5_Trig3_Step1_FC16_StartH3_StartM30_OrbMins10_ActMins180_ExitTRAILING"
   },
   {
-    "windowIndex": 9,
+    "windowIndex": 8,
     "session": "london",
     "inSample": {
-      "netR": 32.26618999945891,
-      "trades": 50,
-      "maxDrawdown": 4.057291666666354
+      "netR": 48.026666666666614,
+      "trades": 31,
+      "maxDrawdown": 3
     },
     "outOfSample": {
-      "netR": -0.7849518924861234,
-      "trades": 12
+      "netR": 2.693333333333017,
+      "trades": 7
     },
-    "params": "london_0%_MinSL15_MaxSL80_Body4_Trig1.5_Step2_FC8_StartH3_StartM30_OrbMins10_ActMins60_ExitTRAILING"
+    "params": "london_60%_MinSL15_MaxSL80_Body5_Trig3_Step1_FC16_StartH3_StartM30_OrbMins10_ActMins180_ExitTRAILING"
+  },
+  {
+    "windowIndex": 8,
+    "session": "london",
+    "inSample": {
+      "netR": 48.026666666666614,
+      "trades": 31,
+      "maxDrawdown": 3
+    },
+    "outOfSample": {
+      "netR": 2.693333333333017,
+      "trades": 7
+    },
+    "params": "london_60%_MinSL15_MaxSL100_Body5_Trig3_Step1_FC16_StartH3_StartM30_OrbMins10_ActMins120_ExitTRAILING"
   },
   {
     "windowIndex": 9,
     "session": "london",
     "inSample": {
-      "netR": 32.26618999945891,
-      "trades": 50,
-      "maxDrawdown": 4.057291666666354
+      "netR": 35.6023407772879,
+      "trades": 44,
+      "maxDrawdown": 3
     },
     "outOfSample": {
-      "netR": -0.7849518924861234,
-      "trades": 12
+      "netR": -2.118285225819508,
+      "trades": 11
     },
-    "params": "london_0%_MinSL15_MaxSL100_Body4_Trig1.5_Step2_FC8_StartH3_StartM30_OrbMins10_ActMins180_ExitTRAILING"
+    "params": "london_0%_MinSL15_MaxSL30_Body4_Trig1.5_Step1_FC8_StartH3_StartM30_OrbMins10_ActMins60_ExitTRAILING"
   },
   {
     "windowIndex": 9,
     "session": "london",
     "inSample": {
-      "netR": 32.26618999945891,
-      "trades": 50,
-      "maxDrawdown": 4.057291666666354
+      "netR": 35.30145582153567,
+      "trades": 44,
+      "maxDrawdown": 3
     },
     "outOfSample": {
-      "netR": -0.7849518924861234,
-      "trades": 12
+      "netR": -2.118285225819508,
+      "trades": 11
     },
-    "params": "london_0%_MinSL15_MaxSL50_Body4_Trig1.5_Step2_FC8_StartH3_StartM30_OrbMins10_ActMins180_ExitTRAILING"
+    "params": "london_0%_MinSL15_MaxSL30_Body4_Trig1.5_Step2_FC8_StartH3_StartM30_OrbMins10_ActMins60_ExitTRAILING"
+  },
+  {
+    "windowIndex": 9,
+    "session": "london",
+    "inSample": {
+      "netR": 34.6023407772879,
+      "trades": 45,
+      "maxDrawdown": 3
+    },
+    "outOfSample": {
+      "netR": -2.118285225819508,
+      "trades": 11
+    },
+    "params": "london_0%_MinSL15_MaxSL150_Body4_Trig1.5_Step1_FC8_StartH3_StartM30_OrbMins10_ActMins60_ExitTRAILING"
   },
   {
     "windowIndex": 10,
     "session": "london",
     "inSample": {
-      "netR": 34.04657780664932,
-      "trades": 50,
-      "maxDrawdown": 4
+      "netR": 32.64579711709806,
+      "trades": 46,
+      "maxDrawdown": 4.131305003771722
     },
     "outOfSample": {
-      "netR": -1.706631854384829,
-      "trades": 18
+      "netR": -3.895688523654932,
+      "trades": 11
+    },
+    "params": "london_0%_MinSL15_MaxSL30_Body4_Trig1.5_Step0.5_FC8_StartH3_StartM30_OrbMins10_ActMins60_ExitTRAILING"
+  },
+  {
+    "windowIndex": 10,
+    "session": "london",
+    "inSample": {
+      "netR": 32.64579711709806,
+      "trades": 46,
+      "maxDrawdown": 4.131305003771722
+    },
+    "outOfSample": {
+      "netR": -3.895688523654932,
+      "trades": 11
     }
   },
   {
     "windowIndex": 10,
     "session": "london",
     "inSample": {
-      "netR": 34.04657780664932,
-      "trades": 50,
-      "maxDrawdown": 4
+      "netR": 32.230735858092046,
+      "trades": 46,
+      "maxDrawdown": 4.128865979381459
     },
     "outOfSample": {
-      "netR": -1.2725001178578563,
-      "trades": 16
-    }
-  },
-  {
-    "windowIndex": 10,
-    "session": "london",
-    "inSample": {
-      "netR": 34.04657780664932,
-      "trades": 50,
-      "maxDrawdown": 4
+      "netR": -3.895688523654932,
+      "trades": 11
     },
-    "outOfSample": {
-      "netR": -1.706631854384829,
-      "trades": 18
-    }
+    "params": "london_0%_MinSL15_MaxSL30_Body4_Trig1.5_Step2_FC8_StartH3_StartM30_OrbMins10_ActMins60_ExitTRAILING"
   },
   {
     "windowIndex": 11,
     "session": "london",
     "inSample": {
-      "netR": 37.048,
-      "trades": 32,
+      "netR": 37.648000000000025,
+      "trades": 31,
+      "maxDrawdown": 3
+    },
+    "outOfSample": {
+      "netR": 4.811999999999898,
+      "trades": 4
+    },
+    "params": "london_60%_MinSL25_MaxSL30_Body4_Trig3_Step0.5_FC24_StartH3_StartM0_OrbMins10_ActMins120_ExitTRAILING"
+  },
+  {
+    "windowIndex": 11,
+    "session": "london",
+    "inSample": {
+      "netR": 37.648000000000025,
+      "trades": 31,
       "maxDrawdown": 3
     },
     "outOfSample": {
@@ -1051,8 +1106,8 @@
     "windowIndex": 11,
     "session": "london",
     "inSample": {
-      "netR": 37.048,
-      "trades": 32,
+      "netR": 37.648000000000025,
+      "trades": 31,
       "maxDrawdown": 3
     },
     "outOfSample": {
@@ -1062,130 +1117,200 @@
     "params": "london_60%_MinSL25_MaxSL100_Body4_Trig3_Step0.5_FC24_StartH3_StartM0_OrbMins10_ActMins120_ExitTRAILING"
   },
   {
-    "windowIndex": 11,
-    "session": "london",
-    "inSample": {
-      "netR": 37.048,
-      "trades": 32,
-      "maxDrawdown": 3
-    },
-    "outOfSample": {
-      "netR": 3.811999999999898,
-      "trades": 5
-    },
-    "params": "london_60%_MinSL25_MaxSL70_Body4_Trig3_Step0.5_FC24_StartH3_StartM0_OrbMins10_ActMins120_ExitTRAILING"
-  },
-  {
     "windowIndex": 12,
     "session": "london",
     "inSample": {
-      "netR": 40.471999999999866,
+      "netR": 40.07199999999989,
       "trades": 29,
-      "maxDrawdown": 2.2479999999999336
+      "maxDrawdown": 3.2479999999999336
     },
     "outOfSample": {
-      "netR": 7.791999999999916,
-      "trades": 10
+      "netR": 8.791999999999916,
+      "trades": 9
     },
-    "params": "london_60%_MinSL25_MaxSL30_Body4_Trig3_Step0.5_FC24_StartH3_StartM0_OrbMins10_ActMins180_ExitTRAILING"
+    "params": "london_60%_MinSL25_MaxSL150_Body4_Trig3_Step0.5_FC24_StartH3_StartM0_OrbMins10_ActMins180_ExitTRAILING"
   },
   {
     "windowIndex": 12,
     "session": "london",
     "inSample": {
-      "netR": 41.471999999999866,
-      "trades": 28,
-      "maxDrawdown": 2.2479999999999336
+      "netR": 40.07199999999989,
+      "trades": 29,
+      "maxDrawdown": 3.2479999999999336
     },
     "outOfSample": {
-      "netR": 7.791999999999916,
-      "trades": 10
+      "netR": 8.791999999999916,
+      "trades": 9
     },
-    "params": "london_60%_MinSL25_MaxSL30_Body4_Trig3_Step0.5_FC24_StartH3_StartM0_OrbMins10_ActMins120_ExitTRAILING"
+    "params": "london_60%_MinSL25_MaxSL70_Body4_Trig3_Step0.5_FC24_StartH3_StartM0_OrbMins10_ActMins180_ExitTRAILING"
+  },
+  {
+    "windowIndex": 12,
+    "session": "london",
+    "inSample": {
+      "netR": 40.07199999999989,
+      "trades": 29,
+      "maxDrawdown": 3.2479999999999336
+    },
+    "outOfSample": {
+      "netR": 8.791999999999916,
+      "trades": 9
+    },
+    "params": "london_60%_MinSL25_MaxSL100_Body4_Trig3_Step0.5_FC24_StartH3_StartM0_OrbMins10_ActMins180_ExitTRAILING"
   },
   {
     "windowIndex": 13,
     "session": "london",
     "inSample": {
-      "netR": 28.442995700152164,
-      "trades": 37,
-      "maxDrawdown": 4.913304346208122
+      "netR": 25.132000000000062,
+      "trades": 26,
+      "maxDrawdown": 2.05600000000004
     },
     "outOfSample": {
-      "netR": 5.87025452976688,
-      "trades": 8
+      "netR": 0.2919999999999163,
+      "trades": 3
     },
-    "params": "london_0%_MinSL20_MaxSL30_Body5_Trig3_Step1.5_FC24_StartH3_StartM30_OrbMins10_ActMins60_ExitTRAILING"
+    "params": "london_30%_MinSL25_MaxSL30_Body4_Trig3_Step2_FC24_StartH3_StartM0_OrbMins10_ActMins60_ExitTRAILING"
   },
   {
     "windowIndex": 13,
     "session": "london",
     "inSample": {
-      "netR": 28.442995700152164,
-      "trades": 37,
-      "maxDrawdown": 4.913304346208122
+      "netR": 25.132000000000062,
+      "trades": 26,
+      "maxDrawdown": 2.05600000000004
     },
     "outOfSample": {
-      "netR": 5.87025452976688,
-      "trades": 8
+      "netR": 0.2919999999999163,
+      "trades": 3
     },
-    "params": "london_0%_MinSL20_MaxSL70_Body5_Trig3_Step1.5_FC24_StartH3_StartM30_OrbMins10_ActMins60_ExitTRAILING"
+    "params": "london_30%_MinSL25_MaxSL30_Body4_Trig3_Step0.5_FC24_StartH3_StartM0_OrbMins10_ActMins60_ExitTRAILING"
   },
   {
     "windowIndex": 13,
     "session": "london",
     "inSample": {
-      "netR": 28.442995700152164,
-      "trades": 37,
-      "maxDrawdown": 4.913304346208122
+      "netR": 28.52666666666549,
+      "trades": 26,
+      "maxDrawdown": 4
     },
     "outOfSample": {
-      "netR": 5.87025452976688,
-      "trades": 8
+      "netR": -0.8466666666666982,
+      "trades": 3
     },
-    "params": "london_0%_MinSL20_MaxSL60_Body5_Trig3_Step1.5_FC24_StartH3_StartM30_OrbMins10_ActMins60_ExitTRAILING"
+    "params": "london_30%_MinSL15_MaxSL30_Body4_Trig3_Step0.5_FC24_StartH3_StartM0_OrbMins10_ActMins60_ExitTRAILING"
+  },
+  {
+    "windowIndex": 14,
+    "session": "london",
+    "inSample": {
+      "netR": 22.7960662641403,
+      "trades": 36,
+      "maxDrawdown": 5.3899466081187235
+    },
+    "outOfSample": {
+      "netR": -2.6954545454545107,
+      "trades": 4
+    },
+    "params": "london_0%_MinSL20_MaxSL100_Body5_Trig3_Step1.5_FC24_StartH3_StartM30_OrbMins10_ActMins180_ExitTRAILING"
+  },
+  {
+    "windowIndex": 14,
+    "session": "london",
+    "inSample": {
+      "netR": 22.7960662641403,
+      "trades": 36,
+      "maxDrawdown": 5.3899466081187235
+    },
+    "outOfSample": {
+      "netR": -2.6954545454545107,
+      "trades": 4
+    },
+    "params": "london_0%_MinSL20_MaxSL40_Body5_Trig3_Step1.5_FC24_StartH3_StartM30_OrbMins10_ActMins180_ExitTRAILING"
+  },
+  {
+    "windowIndex": 14,
+    "session": "london",
+    "inSample": {
+      "netR": 22.58544043695183,
+      "trades": 34,
+      "maxDrawdown": 5.3899466081187235
+    },
+    "outOfSample": {
+      "netR": -2.6954545454545107,
+      "trades": 4
+    },
+    "params": "london_0%_MinSL20_MaxSL30_Body5_Trig3_Step1.5_FC24_StartH3_StartM30_OrbMins10_ActMins120_ExitTRAILING"
   },
   {
     "windowIndex": 0,
     "session": "ny",
     "inSample": {
-      "netR": 15.181561233613417,
-      "trades": 44,
+      "netR": 14.790535592587746,
+      "trades": 45,
       "maxDrawdown": 3.0068998514265854
     },
     "outOfSample": {
       "netR": -5.460563759421692,
       "trades": 11
     },
-    "params": "NY_Forex_0%_MinSL15_MaxSL50_Body5_Trig1_Step2_FC8_StartH9_StartM30_OrbMins10_ActMins60_ExitTRAILING"
+    "params": "NY_Forex_0%_MinSL15_MaxSL100_Body5_Trig1_Step2_FC8_StartH9_StartM30_OrbMins10_ActMins180_ExitTRAILING"
   },
   {
     "windowIndex": 0,
     "session": "ny",
     "inSample": {
-      "netR": 15.181561233613417,
-      "trades": 44,
+      "netR": 14.790535592587746,
+      "trades": 45,
       "maxDrawdown": 3.0068998514265854
     },
     "outOfSample": {
       "netR": -5.460563759421692,
       "trades": 11
     },
-    "params": "NY_Forex_0%_MinSL15_MaxSL150_Body5_Trig1_Step2_FC8_StartH9_StartM30_OrbMins10_ActMins60_ExitTRAILING"
+    "params": "NY_Forex_0%_MinSL15_MaxSL50_Body5_Trig1_Step2_FC8_StartH9_StartM30_OrbMins10_ActMins180_ExitTRAILING"
   },
   {
     "windowIndex": 0,
     "session": "ny",
     "inSample": {
-      "netR": 15.181561233613417,
-      "trades": 44,
+      "netR": 14.790535592587746,
+      "trades": 45,
       "maxDrawdown": 3.0068998514265854
     },
     "outOfSample": {
       "netR": -5.460563759421692,
       "trades": 11
     },
-    "params": "NY_Forex_0%_MinSL15_MaxSL80_Body5_Trig1_Step2_FC8_StartH9_StartM30_OrbMins10_ActMins60_ExitTRAILING"
+    "params": "NY_Forex_0%_MinSL15_MaxSL80_Body5_Trig1_Step2_FC8_StartH9_StartM30_OrbMins10_ActMins180_ExitTRAILING"
+  },
+  {
+    "windowIndex": 1,
+    "session": "ny",
+    "inSample": {
+      "netR": 21.425249613342668,
+      "trades": 44,
+      "maxDrawdown": 2.5431235431235493
+    },
+    "outOfSample": {
+      "netR": -3.7501575148407307,
+      "trades": 14
+    },
+    "params": "NY_Forex_0%_MinSL40_MaxSL80_Body4_Trig1_Step2_FC24_StartH9_StartM30_OrbMins10_ActMins180_ExitTRAILING"
+  },
+  {
+    "windowIndex": 1,
+    "session": "ny",
+    "inSample": {
+      "netR": 21.425249613342668,
+      "trades": 44,
+      "maxDrawdown": 2.5431235431235493
+    },
+    "outOfSample": {
+      "netR": -3.7501575148407307,
+      "trades": 14
+    },
+    "params": "NY_Forex_0%_MinSL40_MaxSL50_Body4_Trig1_Step2_FC24_StartH9_StartM30_OrbMins10_ActMins180_ExitTRAILING"
   },
   {
     "windowIndex": 1,
@@ -1202,32 +1327,32 @@
     "params": "NY_Forex_0%_MinSL40_MaxSL50_Body4_Trig1_Step2_FC24_StartH9_StartM30_OrbMins10_ActMins120_ExitTRAILING"
   },
   {
-    "windowIndex": 1,
+    "windowIndex": 2,
     "session": "ny",
     "inSample": {
-      "netR": 21.425249613342668,
-      "trades": 44,
-      "maxDrawdown": 2.5431235431235493
+      "netR": 30.820479773906158,
+      "trades": 46,
+      "maxDrawdown": 7.4739336492891795
     },
     "outOfSample": {
-      "netR": -3.318561423635498,
-      "trades": 13
+      "netR": -5.120530913634228,
+      "trades": 10
     },
-    "params": "NY_Forex_0%_MinSL40_MaxSL150_Body4_Trig1_Step2_FC24_StartH9_StartM30_OrbMins10_ActMins120_ExitTRAILING"
+    "params": "NY_Forex_0%_MinSL15_MaxSL60_Body4_Trig3_Step1.5_FC24_StartH9_StartM0_OrbMins10_ActMins180_ExitTRAILING"
   },
   {
-    "windowIndex": 1,
+    "windowIndex": 2,
     "session": "ny",
     "inSample": {
-      "netR": 21.425249613342668,
-      "trades": 44,
-      "maxDrawdown": 2.5431235431235493
+      "netR": 30.820479773906158,
+      "trades": 46,
+      "maxDrawdown": 7.4739336492891795
     },
     "outOfSample": {
-      "netR": -3.7501575148407307,
-      "trades": 14
+      "netR": -5.120530913634228,
+      "trades": 10
     },
-    "params": "NY_Forex_0%_MinSL40_MaxSL60_Body4_Trig1_Step2_FC24_StartH9_StartM30_OrbMins10_ActMins180_ExitTRAILING"
+    "params": "NY_Forex_0%_MinSL15_MaxSL150_Body4_Trig3_Step1.5_FC24_StartH9_StartM0_OrbMins10_ActMins180_ExitTRAILING"
   },
   {
     "windowIndex": 2,
@@ -1244,32 +1369,18 @@
     "params": "NY_Forex_0%_MinSL15_MaxSL40_Body4_Trig3_Step1.5_FC24_StartH9_StartM0_OrbMins10_ActMins180_ExitTRAILING"
   },
   {
-    "windowIndex": 2,
+    "windowIndex": 3,
     "session": "ny",
     "inSample": {
-      "netR": 30.820479773906158,
-      "trades": 46,
-      "maxDrawdown": 7.4739336492891795
+      "netR": 19.999999999999268,
+      "trades": 16,
+      "maxDrawdown": 3.1933333333334915
     },
     "outOfSample": {
-      "netR": -5.120530913634228,
-      "trades": 10
+      "netR": -8.046666666666887,
+      "trades": 13
     },
-    "params": "NY_Forex_0%_MinSL15_MaxSL100_Body4_Trig3_Step1.5_FC24_StartH9_StartM0_OrbMins10_ActMins180_ExitTRAILING"
-  },
-  {
-    "windowIndex": 2,
-    "session": "ny",
-    "inSample": {
-      "netR": 30.820479773906158,
-      "trades": 46,
-      "maxDrawdown": 7.4739336492891795
-    },
-    "outOfSample": {
-      "netR": -5.120530913634228,
-      "trades": 10
-    },
-    "params": "NY_Forex_0%_MinSL15_MaxSL70_Body4_Trig3_Step1.5_FC24_StartH9_StartM0_OrbMins10_ActMins180_ExitTRAILING"
+    "params": "NY_Forex_30%_MinSL15_MaxSL80_Body5_Trig2_Step2_FC16_StartH9_StartM45_OrbMins15_ActMins60_ExitTRAILING"
   },
   {
     "windowIndex": 3,
@@ -1283,21 +1394,7 @@
       "netR": -8.046666666666887,
       "trades": 13
     },
-    "params": "NY_Forex_30%_MinSL15_MaxSL60_Body5_Trig2_Step2_FC16_StartH9_StartM45_OrbMins15_ActMins180_ExitTRAILING"
-  },
-  {
-    "windowIndex": 3,
-    "session": "ny",
-    "inSample": {
-      "netR": 19.999999999999268,
-      "trades": 16,
-      "maxDrawdown": 3.1933333333334915
-    },
-    "outOfSample": {
-      "netR": -4.046666666666887,
-      "trades": 9
-    },
-    "params": "NY_Forex_30%_MinSL15_MaxSL30_Body5_Trig2_Step2_FC16_StartH9_StartM45_OrbMins15_ActMins180_ExitTRAILING"
+    "params": "NY_Forex_30%_MinSL15_MaxSL100_Body5_Trig2_Step2_FC16_StartH9_StartM45_OrbMins15_ActMins120_ExitTRAILING"
   },
   {
     "windowIndex": 3,
@@ -1311,21 +1408,7 @@
       "netR": -8.046666666666887,
       "trades": 13
     },
-    "params": "NY_Forex_30%_MinSL15_MaxSL100_Body5_Trig2_Step2_FC16_StartH9_StartM45_OrbMins15_ActMins60_ExitTRAILING"
-  },
-  {
-    "windowIndex": 4,
-    "session": "ny",
-    "inSample": {
-      "netR": 25.726013029247486,
-      "trades": 58,
-      "maxDrawdown": 7.007450708592462
-    },
-    "outOfSample": {
-      "netR": 13.190639944464708,
-      "trades": 19
-    },
-    "params": "NY_Forex_0%_MinSL20_MaxSL30_Body5_Trig3_Step0.5_FC24_StartH9_StartM45_OrbMins10_ActMins120_ExitTRAILING"
+    "params": "NY_Forex_30%_MinSL15_MaxSL50_Body5_Trig2_Step2_FC16_StartH9_StartM45_OrbMins15_ActMins180_ExitTRAILING"
   },
   {
     "windowIndex": 4,
@@ -1350,9 +1433,24 @@
       "maxDrawdown": 7.007450708592462
     },
     "outOfSample": {
-      "netR": 12.190639944464708,
-      "trades": 20
-    }
+      "netR": 13.190639944464708,
+      "trades": 19
+    },
+    "params": "NY_Forex_0%_MinSL20_MaxSL30_Body5_Trig3_Step0.5_FC24_StartH9_StartM45_OrbMins10_ActMins120_ExitTRAILING"
+  },
+  {
+    "windowIndex": 4,
+    "session": "ny",
+    "inSample": {
+      "netR": 25.726013029247486,
+      "trades": 58,
+      "maxDrawdown": 7.007450708592462
+    },
+    "outOfSample": {
+      "netR": 13.190639944464708,
+      "trades": 19
+    },
+    "params": "NY_Forex_0%_MinSL20_MaxSL30_Body5_Trig3_Step0.5_FC24_StartH9_StartM45_OrbMins10_ActMins60_ExitTRAILING"
   },
   {
     "windowIndex": 5,
@@ -1399,68 +1497,43 @@
     "windowIndex": 6,
     "session": "ny",
     "inSample": {
-      "netR": 30.940498920388922,
-      "trades": 54,
-      "maxDrawdown": 5.227611940298534
+      "netR": 31.049182679689164,
+      "trades": 57,
+      "maxDrawdown": 9.508982035928184
     },
     "outOfSample": {
-      "netR": -0.582578348147512,
-      "trades": 10
-    }
+      "netR": -2.4708036408034215,
+      "trades": 13
+    },
+    "params": "NY_Forex_0%_MinSL20_MaxSL70_Body5_Trig3_Step0.5_FC24_StartH9_StartM45_OrbMins10_ActMins120_ExitTRAILING"
   },
   {
     "windowIndex": 6,
     "session": "ny",
     "inSample": {
-      "netR": 30.940498920388922,
-      "trades": 54,
-      "maxDrawdown": 5.227611940298534
+      "netR": 31.049182679689164,
+      "trades": 57,
+      "maxDrawdown": 9.508982035928184
     },
     "outOfSample": {
-      "netR": -0.582578348147512,
-      "trades": 10
-    }
+      "netR": -2.4708036408034215,
+      "trades": 13
+    },
+    "params": "NY_Forex_0%_MinSL20_MaxSL150_Body5_Trig3_Step0.5_FC24_StartH9_StartM45_OrbMins10_ActMins120_ExitTRAILING"
   },
   {
     "windowIndex": 6,
     "session": "ny",
     "inSample": {
-      "netR": 30.940498920388922,
-      "trades": 54,
-      "maxDrawdown": 5.227611940298534
+      "netR": 31.049182679689164,
+      "trades": 57,
+      "maxDrawdown": 9.508982035928184
     },
     "outOfSample": {
-      "netR": -0.582578348147512,
-      "trades": 10
-    }
-  },
-  {
-    "windowIndex": 7,
-    "session": "ny",
-    "inSample": {
-      "netR": 32.05333333333463,
-      "trades": 40,
-      "maxDrawdown": 3
+      "netR": -2.4708036408034215,
+      "trades": 13
     },
-    "outOfSample": {
-      "netR": 0.3866666666662244,
-      "trades": 14
-    },
-    "params": "NY_Forex_60%_MinSL15_MaxSL30_Body4_Trig1_Step0.5_FC16_StartH9_StartM0_OrbMins10_ActMins180_ExitTRAILING"
-  },
-  {
-    "windowIndex": 7,
-    "session": "ny",
-    "inSample": {
-      "netR": 32.05333333333463,
-      "trades": 40,
-      "maxDrawdown": 3
-    },
-    "outOfSample": {
-      "netR": 0.3866666666662244,
-      "trades": 14
-    },
-    "params": "NY_Forex_60%_MinSL15_MaxSL30_Body4_Trig1_Step0.5_FC24_StartH9_StartM0_OrbMins10_ActMins180_ExitTRAILING"
+    "params": "NY_Forex_0%_MinSL20_MaxSL50_Body5_Trig3_Step0.5_FC24_StartH9_StartM45_OrbMins10_ActMins120_ExitTRAILING"
   },
   {
     "windowIndex": 7,
@@ -1474,7 +1547,35 @@
       "netR": -0.6133333333337752,
       "trades": 15
     },
-    "params": "NY_Forex_60%_MinSL15_MaxSL150_Body4_Trig1_Step0.5_FC16_StartH9_StartM0_OrbMins10_ActMins180_ExitTRAILING"
+    "params": "NY_Forex_60%_MinSL15_MaxSL150_Body4_Trig1_Step0.5_FC24_StartH9_StartM0_OrbMins10_ActMins120_ExitTRAILING"
+  },
+  {
+    "windowIndex": 7,
+    "session": "ny",
+    "inSample": {
+      "netR": 30.053333333334628,
+      "trades": 42,
+      "maxDrawdown": 4
+    },
+    "outOfSample": {
+      "netR": -0.6133333333337752,
+      "trades": 15
+    },
+    "params": "NY_Forex_60%_MinSL15_MaxSL150_Body4_Trig1_Step0.5_FC24_StartH9_StartM0_OrbMins10_ActMins180_ExitTRAILING"
+  },
+  {
+    "windowIndex": 7,
+    "session": "ny",
+    "inSample": {
+      "netR": 30.053333333334628,
+      "trades": 42,
+      "maxDrawdown": 4
+    },
+    "outOfSample": {
+      "netR": -0.6133333333337752,
+      "trades": 15
+    },
+    "params": "NY_Forex_60%_MinSL15_MaxSL50_Body4_Trig1_Step0.5_FC16_StartH9_StartM0_OrbMins10_ActMins120_ExitTRAILING"
   },
   {
     "windowIndex": 8,
@@ -1488,7 +1589,7 @@
       "netR": -6,
       "trades": 8
     },
-    "params": "NY_Forex_60%_MinSL25_MaxSL150_Body5_Trig1_Step1_FC16_StartH9_StartM45_OrbMins10_ActMins180_ExitTRAILING"
+    "params": "NY_Forex_60%_MinSL25_MaxSL80_Body5_Trig1_Step1_FC16_StartH9_StartM45_OrbMins10_ActMins180_ExitTRAILING"
   },
   {
     "windowIndex": 8,
@@ -1502,7 +1603,7 @@
       "netR": -6,
       "trades": 8
     },
-    "params": "NY_Forex_60%_MinSL25_MaxSL60_Body5_Trig1_Step1_FC16_StartH9_StartM45_OrbMins10_ActMins180_ExitTRAILING"
+    "params": "NY_Forex_60%_MinSL25_MaxSL100_Body5_Trig1_Step1_FC16_StartH9_StartM45_OrbMins10_ActMins120_ExitTRAILING"
   },
   {
     "windowIndex": 8,
@@ -1516,49 +1617,63 @@
       "netR": -6,
       "trades": 8
     },
-    "params": "NY_Forex_60%_MinSL25_MaxSL80_Body5_Trig1_Step1_FC16_StartH9_StartM45_OrbMins10_ActMins60_ExitTRAILING"
+    "params": "NY_Forex_60%_MinSL25_MaxSL100_Body5_Trig1_Step1_FC16_StartH9_StartM45_OrbMins10_ActMins180_ExitTRAILING"
   },
   {
     "windowIndex": 9,
     "session": "ny",
     "inSample": {
-      "netR": 30.72666666666518,
-      "trades": 28,
-      "maxDrawdown": 4
+      "netR": 25.537966206633026,
+      "trades": 31,
+      "maxDrawdown": 2.275862068965532
     },
     "outOfSample": {
-      "netR": 0.5466666666664137,
+      "netR": -1.0005312732431837,
       "trades": 6
     },
-    "params": "NY_Forex_30%_MinSL15_MaxSL70_Body5_Trig2_Step1.5_FC12_StartH8_StartM30_OrbMins10_ActMins180_ExitTRAILING"
+    "params": "NY_Forex_0%_MinSL20_MaxSL150_Body6_Trig1_Step1.5_FC24_StartH8_StartM30_OrbMins10_ActMins180_ExitTRAILING"
   },
   {
     "windowIndex": 9,
     "session": "ny",
     "inSample": {
-      "netR": 30.72666666666518,
-      "trades": 28,
-      "maxDrawdown": 4
+      "netR": 25.537966206633026,
+      "trades": 31,
+      "maxDrawdown": 2.275862068965532
     },
     "outOfSample": {
-      "netR": 0.5466666666664137,
+      "netR": -1.0005312732431837,
       "trades": 6
     },
-    "params": "NY_Forex_30%_MinSL15_MaxSL150_Body5_Trig2_Step1.5_FC12_StartH8_StartM30_OrbMins10_ActMins180_ExitTRAILING"
+    "params": "NY_Forex_0%_MinSL20_MaxSL100_Body6_Trig1_Step1.5_FC24_StartH8_StartM30_OrbMins10_ActMins180_ExitTRAILING"
   },
   {
     "windowIndex": 9,
     "session": "ny",
     "inSample": {
-      "netR": 30.72666666666518,
-      "trades": 28,
-      "maxDrawdown": 4
+      "netR": 25.537966206633026,
+      "trades": 30,
+      "maxDrawdown": 2.275862068965532
     },
     "outOfSample": {
-      "netR": 0.5466666666664137,
+      "netR": -1.0005312732431837,
       "trades": 6
     },
-    "params": "NY_Forex_30%_MinSL15_MaxSL50_Body5_Trig2_Step1.5_FC12_StartH8_StartM30_OrbMins10_ActMins180_ExitTRAILING"
+    "params": "NY_Forex_0%_MinSL20_MaxSL60_Body6_Trig1_Step1.5_FC24_StartH8_StartM30_OrbMins10_ActMins120_ExitTRAILING"
+  },
+  {
+    "windowIndex": 10,
+    "session": "ny",
+    "inSample": {
+      "netR": 18.93652985871484,
+      "trades": 51,
+      "maxDrawdown": 3.498220640569521
+    },
+    "outOfSample": {
+      "netR": 8.584692714349812,
+      "trades": 11
+    },
+    "params": "NY_Forex_0%_MinSL25_MaxSL80_Body4_Trig1_Step0.5_FC24_StartH9_StartM30_OrbMins10_ActMins120_ExitTRAILING"
   },
   {
     "windowIndex": 10,
@@ -1586,63 +1701,49 @@
       "netR": 8.584692714349812,
       "trades": 11
     },
-    "params": "NY_Forex_0%_MinSL25_MaxSL100_Body4_Trig1_Step0.5_FC24_StartH9_StartM30_OrbMins10_ActMins120_ExitTRAILING"
-  },
-  {
-    "windowIndex": 10,
-    "session": "ny",
-    "inSample": {
-      "netR": 18.93652985871484,
-      "trades": 51,
-      "maxDrawdown": 3.498220640569521
-    },
-    "outOfSample": {
-      "netR": 8.584692714349812,
-      "trades": 11
-    },
-    "params": "NY_Forex_0%_MinSL25_MaxSL150_Body4_Trig1_Step0.5_FC24_StartH9_StartM30_OrbMins10_ActMins120_ExitTRAILING"
+    "params": "NY_Forex_0%_MinSL25_MaxSL70_Body4_Trig1_Step0.5_FC24_StartH9_StartM30_OrbMins10_ActMins120_ExitTRAILING"
   },
   {
     "windowIndex": 11,
     "session": "ny",
     "inSample": {
-      "netR": 26.442503641944185,
-      "trades": 48,
-      "maxDrawdown": 7.546181010207782
+      "netR": 28.442503641944185,
+      "trades": 46,
+      "maxDrawdown": 6.546181010207782
     },
     "outOfSample": {
       "netR": -6.088985979137027,
       "trades": 18
     },
-    "params": "NY_Forex_0%_MinSL15_MaxSL40_Body4_Trig1.5_Step1.5_FC24_StartH9_StartM45_OrbMins10_ActMins120_ExitTRAILING"
+    "params": "NY_Forex_0%_MinSL15_MaxSL50_Body4_Trig1.5_Step1.5_FC24_StartH9_StartM45_OrbMins10_ActMins60_ExitTRAILING"
   },
   {
     "windowIndex": 11,
     "session": "ny",
     "inSample": {
-      "netR": 26.442503641944185,
-      "trades": 48,
-      "maxDrawdown": 7.546181010207782
+      "netR": 28.442503641944185,
+      "trades": 46,
+      "maxDrawdown": 6.546181010207782
     },
     "outOfSample": {
       "netR": -6.088985979137027,
       "trades": 18
     },
-    "params": "NY_Forex_0%_MinSL15_MaxSL50_Body4_Trig1.5_Step1.5_FC24_StartH9_StartM45_OrbMins10_ActMins180_ExitTRAILING"
+    "params": "NY_Forex_0%_MinSL15_MaxSL60_Body4_Trig1.5_Step1.5_FC24_StartH9_StartM45_OrbMins10_ActMins60_ExitTRAILING"
   },
   {
     "windowIndex": 11,
     "session": "ny",
     "inSample": {
-      "netR": 26.442503641944185,
-      "trades": 48,
-      "maxDrawdown": 7.546181010207782
+      "netR": 28.442503641944185,
+      "trades": 46,
+      "maxDrawdown": 6.546181010207782
     },
     "outOfSample": {
       "netR": -6.088985979137027,
       "trades": 18
     },
-    "params": "NY_Forex_0%_MinSL15_MaxSL80_Body4_Trig1.5_Step1.5_FC24_StartH9_StartM45_OrbMins10_ActMins180_ExitTRAILING"
+    "params": "NY_Forex_0%_MinSL15_MaxSL70_Body4_Trig1.5_Step1.5_FC24_StartH9_StartM45_OrbMins10_ActMins60_ExitTRAILING"
   },
   {
     "windowIndex": 12,
@@ -1656,7 +1757,7 @@
       "netR": -14.237137156200708,
       "trades": 19
     },
-    "params": "NY_Forex_0%_MinSL15_MaxSL60_Body4_Trig3_Step1_FC24_StartH9_StartM45_OrbMins10_ActMins60_ExitTRAILING"
+    "params": "NY_Forex_0%_MinSL15_MaxSL50_Body4_Trig3_Step1_FC24_StartH9_StartM45_OrbMins10_ActMins60_ExitTRAILING"
   },
   {
     "windowIndex": 12,
@@ -1670,7 +1771,7 @@
       "netR": -14.237137156200708,
       "trades": 19
     },
-    "params": "NY_Forex_0%_MinSL15_MaxSL70_Body4_Trig3_Step1_FC24_StartH9_StartM45_OrbMins10_ActMins60_ExitTRAILING"
+    "params": "NY_Forex_0%_MinSL15_MaxSL150_Body4_Trig3_Step1_FC24_StartH9_StartM45_OrbMins10_ActMins60_ExitTRAILING"
   },
   {
     "windowIndex": 12,
@@ -1684,7 +1785,7 @@
       "netR": -14.237137156200708,
       "trades": 19
     },
-    "params": "NY_Forex_0%_MinSL15_MaxSL80_Body4_Trig3_Step1_FC24_StartH9_StartM45_OrbMins10_ActMins60_ExitTRAILING"
+    "params": "NY_Forex_0%_MinSL15_MaxSL40_Body4_Trig3_Step1_FC24_StartH9_StartM45_OrbMins10_ActMins60_ExitTRAILING"
   },
   {
     "windowIndex": 13,
@@ -1727,5 +1828,47 @@
       "trades": 8
     },
     "params": "NY_Forex_60%_MinSL15_MaxSL50_Body4_Trig3_Step0.5_FC24_StartH10_StartM0_OrbMins10_ActMins60_ExitTRAILING"
+  },
+  {
+    "windowIndex": 14,
+    "session": "ny",
+    "inSample": {
+      "netR": 47.20000000000074,
+      "trades": 24,
+      "maxDrawdown": 3.313333333333304
+    },
+    "outOfSample": {
+      "netR": -2,
+      "trades": 2
+    },
+    "params": "NY_Forex_60%_MinSL15_MaxSL40_Body4_Trig3_Step0.5_FC16_StartH10_StartM0_OrbMins10_ActMins60_ExitTRAILING"
+  },
+  {
+    "windowIndex": 14,
+    "session": "ny",
+    "inSample": {
+      "netR": 47.20000000000074,
+      "trades": 24,
+      "maxDrawdown": 3.313333333333304
+    },
+    "outOfSample": {
+      "netR": -2,
+      "trades": 2
+    },
+    "params": "NY_Forex_60%_MinSL15_MaxSL50_Body4_Trig3_Step0.5_FC16_StartH10_StartM0_OrbMins10_ActMins120_ExitTRAILING"
+  },
+  {
+    "windowIndex": 14,
+    "session": "ny",
+    "inSample": {
+      "netR": 47.20000000000074,
+      "trades": 24,
+      "maxDrawdown": 3.313333333333304
+    },
+    "outOfSample": {
+      "netR": -2,
+      "trades": 2
+    },
+    "params": "NY_Forex_60%_MinSL15_MaxSL150_Body4_Trig3_Step0.5_FC16_StartH10_StartM0_OrbMins10_ActMins180_ExitTRAILING"
   }
 ]

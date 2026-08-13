@@ -20,8 +20,13 @@ const profileLocks = new Set<number>();
 export function deleteProfileTradeState(profileId: number) {
   positionState.delete(profileId);
   profileLocks.delete(profileId);
+  lastPollTimes.delete(profileId);
+  emptyProfileState.delete(profileId);
   globalTradeGate.clearProfile(profileId);
 }
+
+const lastPollTimes = new Map<number, number>();
+const emptyProfileState = new Map<number, boolean>();
 
 async function withRetry<T>(
   operation: () => Promise<T>,
@@ -66,7 +71,8 @@ async function withRetry<T>(
 export async function monitorOpenTrades(currentSession: string) {
   const activeProfiles = (await db
     .prepare(
-      `SELECT tp.id, u.metaapi_token, tp.metaapi_account_id 
+      `SELECT tp.id, u.metaapi_token, tp.metaapi_account_id,
+              EXISTS (SELECT 1 FROM bot_trade_states WHERE profile_id = tp.id AND status = 'OPEN') as has_bot_trade
      FROM trading_profiles tp
      JOIN users u ON u.id = tp.user_id
      WHERE (tp.automation_active = 1 
@@ -81,14 +87,38 @@ export async function monitorOpenTrades(currentSession: string) {
 
   if (activeProfiles.length === 0) return;
 
-  await Promise.allSettled(
-    activeProfiles.map(async (profile) => {
-      if (profileLocks.has(profile.id)) return;
-      profileLocks.add(profile.id);
+  const now = Date.now();
 
-      try {
-        const customMap = profile.broker_symbol_map ? JSON.parse(profile.broker_symbol_map) : {};
-        let rawToken: string;
+  // Process profiles in chunks of 10 to prevent DB connection pool exhaustion (max: 50)
+  // and MetaAPI rate limit bursts.
+  const chunkSize = 10;
+  for (let i = 0; i < activeProfiles.length; i += chunkSize) {
+    const chunk = activeProfiles.slice(i, i + chunkSize);
+    
+    await Promise.allSettled(
+      chunk.map(async (profile) => {
+        if (profileLocks.has(profile.id)) return;
+
+        const hasBotTrade = profile.has_bot_trade === 1;
+        const lastPoll = lastPollTimes.get(profile.id) || 0;
+        const isEmpty = emptyProfileState.get(profile.id) ?? true;
+
+        // Deterministic jitter between 50s and 70s based on profile ID
+        // This permanently breaks any synchronized thundering herds.
+        const jitterMs = (profile.id % 20) * 1000;
+        const throttleMs = 50000 + jitterMs;
+
+        // Adaptive Polling Throttle: If no bot trades and it was empty last time, poll based on jittered interval
+        if (!hasBotTrade && isEmpty && (now - lastPoll < throttleMs)) {
+          return;
+        }
+        
+        profileLocks.add(profile.id);
+        lastPollTimes.set(profile.id, now);
+
+        try {
+          const customMap = profile.broker_symbol_map ? JSON.parse(profile.broker_symbol_map) : {};
+          let rawToken: string;
         try {
           rawToken = isEncrypted(profile.metaapi_token)
             ? decrypt(profile.metaapi_token)
@@ -103,77 +133,8 @@ export async function monitorOpenTrades(currentSession: string) {
           true,
         );
         let allPositions = await connection.getPositions();
+        emptyProfileState.set(profile.id, allPositions.length === 0);
 
-        // --- MARGIN DEFENDER EMERGENCY ACTIONS ---
-        try {
-          const accountInfo = await connection.getAccountInformation();
-          if (accountInfo.marginLevel && accountInfo.marginLevel < 150) {
-            console.warn(
-              `[TradeManager] 🚨 MARGIN DEFENDER TRIGGERED: Profile ${profile.id} margin level is ${accountInfo.marginLevel.toFixed(1)}%!`,
-            );
-
-            // Disable automation
-            await db
-              .prepare(
-                "UPDATE trading_profiles SET automation_active = 0, ai_sniper_active = 0 WHERE id = ?",
-              )
-              .run(profile.id);
-            await addBotLog(
-              profile.id,
-              "SYSTEM",
-              "ALL",
-              "MARGIN_CALL_HALT",
-              `MARGIN DEFENDER ACTIVE: Margin level fell to ${accountInfo.marginLevel.toFixed(1)}%. Automation disabled.`,
-            );
-
-            // Broadcast to UI
-            const { getIO } = await import("../core/socket.js");
-            const io = getIO();
-            if (io) {
-              io.to(`profile_${profile.id}`).emit("margin_defender:alert", {
-                profileId: profile.id,
-                marginLevel: accountInfo.marginLevel,
-                message: `Emergency halt: Margin level is ${accountInfo.marginLevel.toFixed(1)}%. Automation disabled.`,
-              });
-            }
-
-            // If drops below 110%, close the largest losing trade first to free up margin
-            if (accountInfo.marginLevel < 110 && allPositions.length > 0) {
-              console.error(
-                `[TradeManager] 💀 MARGIN CRITICAL (< 110%). Initiating structured liquidation to free margin.`,
-              );
-
-              // Sort positions by floating profit ascending (largest loss first)
-              const sortedPositions = [...allPositions].sort(
-                (a: any, b: any) => (a.profit || 0) - (b.profit || 0),
-              );
-              const targetPos = sortedPositions[0]; // Largest loss
-
-              console.log(
-                `[TradeManager] Force closing largest losing position ${targetPos.symbol} (${targetPos.id}) profit: ${targetPos.profit}`,
-              );
-              await connection.closePosition(targetPos.id);
-
-              await addBotLog(
-                profile.id,
-                targetPos.bot_id || "SYSTEM",
-                targetPos.symbol,
-                "MARGIN_LIQUIDATION_CLOSE",
-                `MARGIN DEFENDER LIQUIDATION: Closed ${targetPos.symbol} (${targetPos.id}) to free margin. Profit: ${targetPos.profit}`,
-              );
-
-              // Filter it out of local array so we don't process it further in this tick
-              allPositions = allPositions.filter(
-                (p: any) => p.id !== targetPos.id,
-              );
-            }
-          }
-        } catch (marginErr: any) {
-          console.error(
-            `[TradeManager] Error in Margin Defender checks:`,
-            marginErr.message,
-          );
-        }
 
         const openDbTrades = (await db
           .prepare(
@@ -496,8 +457,10 @@ export async function monitorOpenTrades(currentSession: string) {
             } else {
               // Check history orders just in case it closed already
               try {
+                const fallbackTime = stuck.created_at ? new Date(stuck.created_at).getTime() : Date.now();
+                const startTimeMs = Math.min(Date.now() - 24 * 60 * 60 * 1000, fallbackTime - 24 * 60 * 60 * 1000);
                 const rawHistoryOrders = await connection.getHistoryOrdersByTimeRange(
-                  new Date(Date.now() - 24 * 60 * 60 * 1000),
+                  new Date(startTimeMs),
                   new Date(),
                 );
                 const historyOrders = Array.isArray(rawHistoryOrders)
@@ -565,8 +528,10 @@ export async function monitorOpenTrades(currentSession: string) {
             } else {
               // Check history orders just in case it closed already
               try {
+                const fallbackTime = pending.created_at ? new Date(pending.created_at).getTime() : Date.now();
+                const startTimeMs = Math.min(Date.now() - 24 * 60 * 60 * 1000, fallbackTime - 24 * 60 * 60 * 1000);
                 const rawHistoryOrders = await connection.getHistoryOrdersByTimeRange(
-                  new Date(Date.now() - 24 * 60 * 60 * 1000),
+                  new Date(startTimeMs),
                   new Date(),
                 );
                 const historyOrders = Array.isArray(rawHistoryOrders)
@@ -627,39 +592,45 @@ export async function monitorOpenTrades(currentSession: string) {
           if (!currentPosIds.has(id)) {
             // Position closed! Was it a loss? Query the deal history
             try {
-              // Check History Orders to guarantee the trade is truly closed (Ghost Trade prevention)
-              const rawHistoryOrders = await connection.getHistoryOrdersByTimeRange(
-                new Date(Date.now() - 24 * 60 * 60 * 1000),
-                new Date(),
-              );
-              const historyOrders = Array.isArray(rawHistoryOrders)
-                ? rawHistoryOrders
-                : (rawHistoryOrders as any)?.historyOrders || (rawHistoryOrders as any)?.items || [];
-              const matchedHistoryOrder = historyOrders.find(
-                (o: any) => o.positionId === id || o.id === id,
-              );
-
-              if (!matchedHistoryOrder) {
-                console.warn(
-                  `[TradeManager] 👻 GHOST TRADE DETECTED! Position ${id} vanished from getPositions() but isn't in historyOrders! Delaying DB close...`,
-                );
-                continue; // Do not close in DB yet!
-              }
-
-              const historyResponse = await connection.getDealsByPosition(id);
-              const deals = historyResponse?.deals || [];
+              // Check deals directly first
+              const historyResponse = await connection.getDealsByPosition(id).catch(() => null);
+              const deals = Array.isArray(historyResponse) ? historyResponse : (historyResponse?.deals || []);
               const closingDeal = deals.find(
                 (d: any) =>
                   d.entryType === "DEAL_ENTRY_OUT" ||
                   d.entryType === "DEAL_ENTRY_INOUT",
               );
 
+              // If no closing deal, it might be a cancelled limit order or a ghost trade.
+              // Check History Orders to guarantee the trade is truly closed
+              let matchedHistoryOrder = null;
+              if (!closingDeal) {
+                const fallbackTime = Number(dbTrade.open_time || 0) > 0 ? Number(dbTrade.open_time) : (dbTrade.created_at ? new Date(dbTrade.created_at).getTime() : Date.now());
+                const startTimeMs = Math.min(Date.now() - 24 * 60 * 60 * 1000, fallbackTime - 24 * 60 * 60 * 1000);
+                const rawHistoryOrders = await connection.getHistoryOrdersByTimeRange(
+                  new Date(startTimeMs),
+                  new Date(),
+                ).catch(() => []);
+                const historyOrders = Array.isArray(rawHistoryOrders)
+                  ? rawHistoryOrders
+                  : (rawHistoryOrders as any)?.historyOrders || (rawHistoryOrders as any)?.items || [];
+                matchedHistoryOrder = historyOrders.find(
+                  (o: any) => o.positionId === id || o.id === id,
+                );
+
+                if (!matchedHistoryOrder && !closingDeal) {
+                  console.warn(
+                    `[TradeManager] 👻 GHOST TRADE DETECTED! Position ${id} vanished from getPositions() but isn't in historyOrders or deals! Delaying DB close...`,
+                  );
+                  continue; // Do not close in DB yet!
+                }
+              }
+
+              const profileState = positionState.get(profile.id);
+              const state = profileState?.get(id);
+              const spec = getSymbolSpec(dbTrade.broker_symbol);
+
               if (closingDeal) {
-                const profileState = positionState.get(profile.id);
-                const state = profileState?.get(id);
-
-                const spec = getSymbolSpec(dbTrade.broker_symbol);
-
                 if (closingDeal.profit < 0) {
                   const sessionStr = state ? state.session : currentSession;
                   console.log(
@@ -774,7 +745,6 @@ export async function monitorOpenTrades(currentSession: string) {
                 "mage",
               ];
 
-              const spec = getSymbolSpec(dbTrade.broker_symbol);
               const pnlPips = closingDeal
                 ? dbTrade.direction === "BUY"
                   ? (closingDeal.price - dbTrade.entry_price) / spec.pipSize
@@ -785,8 +755,11 @@ export async function monitorOpenTrades(currentSession: string) {
                 try {
                   const { LiveOrchestrator } =
                     await import("../trading/index.js");
-                  const orch = LiveOrchestrator.getInstance(profile.id);
-                  if (orch) orch.onTradeClosed(dbTrade.broker_symbol, pnlPips, id);
+                  const orch = LiveOrchestrator.getInstance(profile.id.toString());
+                  if (orch) {
+                    orch.onTradeClosed(dbTrade.broker_symbol, pnlPips, id);
+                    orch.clearActiveTrade(id);
+                  }
                 } catch (orchErr: any) {
                   console.warn(
                     `[TradeManager] Could not notify DiscretionaryTrader orchestrator for ${id}:`,
@@ -821,8 +794,9 @@ export async function monitorOpenTrades(currentSession: string) {
       } finally {
         profileLocks.delete(profile.id);
       }
-    }),
+    })
   );
+  }
 }
 
 export async function cleanClosedTrades() {

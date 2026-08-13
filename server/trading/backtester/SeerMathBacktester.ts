@@ -18,6 +18,9 @@ import { loadCsv } from './loadCsv.js';
 import { aggregateCandles } from '../market/CandleAggregator.js';
 import { buildEmaArray } from '../market/Indicators.js';
 import { DailyContextTracker } from '../market/DailyContextTracker.js';
+import { HTFContextTracker } from '../market/HTFContextTracker.js';
+
+import { evaluateStacyBurkeSetup } from './math_core/SeerMathCore.js';
 import { isNewsForceClose } from "../market/historicalNews.js";
 import { isSeerRolloverHalt } from "../market/MathFilters.js";
 import type { VisionDecision } from '../ai/VisionEvaluator.js';
@@ -181,7 +184,7 @@ export async function runMathBacktest(
       else if (pair === 'XAUUSD') orbStartHour = 8;
     }
 
-    const isNY     = c.estHour >= (orbStartHour < 8 ? orbStartHour : 8) && c.estHour < 11; // (NY open)
+    const isNY     = c.estHour >= (orbStartHour < 8 ? orbStartHour : 8) && c.estHour < 13; // (NY open)
 
     let sessions = config.sessions;
       if (!sessions) {
@@ -238,15 +241,32 @@ export async function runMathBacktest(
     }
 
     // 2. Evaluate Stacy Burke "Four Heads"
+    let mathResult: { setupType: string; direction: 'BUY' | 'SELL'; isMage: boolean } | null = null;
     if (!extremeFilter && !triggerSetup && inWindow && !sessionTradeTaken && prevDay) {
-      let setupType: string | null = null;
-      if (prevDay.isFirstRedDay) setupType = 'FRD';
-      else if (prevDay.isFirstGreenDay) setupType = 'FGD';
-      else if (prevDay.isDay3BreakoutLongs) setupType = 'DAY3_LONG';
-      else if (prevDay.isDay3BreakoutShorts) setupType = 'DAY3_SHORT';
-      else if (prevDay.isInsideDay) setupType = 'INSIDE_DAY';
-      else if (prevDay.isTrendingLong) setupType = 'LHF_LONG';
-      else if (prevDay.isTrendingShort) setupType = 'LHF_SHORT';
+      const ema20 = emaArr[i];
+      const prevC = m5Candles[i - 1];
+      if (ema20 && prevC) {
+        // Coven macro bias logic is calculated earlier
+        let safeCovenSetup = covenSetup || 'NONE';
+        mathResult = evaluateStacyBurkeSetup(c, prevC, ema20, prevDay, safeCovenSetup, config, pipSize, pair, false, day3High, day3Low);
+        if (!mathResult) {
+          // If no Coven macro setup match, we also need to check pure price action setups like INSIDE_DAY and LHF
+          const setupsToTest = [];
+          if (prevDay.isInsideDay) setupsToTest.push('INSIDE_DAY');
+          if (prevDay.isTrendingLong) setupsToTest.push('LHF_LONG');
+          if (prevDay.isTrendingShort) setupsToTest.push('LHF_SHORT');
+          
+          for (const s of setupsToTest) {
+            mathResult = evaluateStacyBurkeSetup(c, prevC, ema20, prevDay, s, config, pipSize, pair, false, day3High, day3Low);
+            if (mathResult) break;
+          }
+        }
+      }
+    }
+
+    if (mathResult) {
+      let setupType = mathResult.setupType;
+      let direction = mathResult.direction;
 
       if (setupType) {
         let banned = false;
@@ -583,7 +603,10 @@ export async function runMathBacktest(
         record.mfePips = highestProfitPips;
         console.log(`   [SKIPPED] Hypothetical: ${outcome} | ${blendedPips > 0 ? '+' : ''}${blendedPips.toFixed(1)} pips (MFE: +${highestProfitPips.toFixed(1)})`);
       } else {
-        record.outcome = outcome;
+        record.entry = entry;
+        record.stopLoss = sl;
+        record.takeProfit = tp;
+        record.outcome = outcome as any;
         record.pips = blendedPips;
         record.mfePips = highestProfitPips;
         record.rMultiple = rMultiple;

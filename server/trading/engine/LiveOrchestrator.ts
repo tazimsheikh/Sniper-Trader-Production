@@ -2,9 +2,14 @@ var __defProp = Object.defineProperty;
 var __name = (target, value) =>
   __defProp(target, "name", { value, configurable: true });
 
-import { logger } from "../../utils/logger.js";
+import { logger, ProfileLogger, registerProfileName } from "../../utils/logger.js";
 import dbModule from "../../core/db.js";
 import { addBotLog as dbAddBotLog } from "../../core/db.js";
+import {
+  loadCachedM5CandlesLocal,
+  saveM5CandlesToCacheLocal,
+  pruneOldM5CandlesLocal,
+} from "../../core/candleDb.js";
 const db: any = new Proxy({}, {
   get(_target, prop) {
     const activeDb = (global as any).__SIM_DB__ || dbModule;
@@ -80,8 +85,31 @@ export function getFixedEstDate(date = new Date()) {
   if ((global as any).__SIM_TIME_PROVIDER__) {
     return (global as any).__SIM_TIME_PROVIDER__(date);
   }
-  const estStr = date.toLocaleString("en-US", { timeZone: "America/New_York" });
-  return new Date(estStr + " UTC");
+
+  // Explicitly calculate New York time (EST/EDT) to avoid ICU timezone data bugs on Linux VMs.
+  // US DST starts: Second Sunday in March at 2:00 AM EST.
+  // US DST ends: First Sunday in November at 2:00 AM EDT.
+  
+  const y = date.getUTCFullYear();
+  
+  // Find Second Sunday in March
+  const marchFirst = new Date(Date.UTC(y, 2, 1));
+  const daysToFirstSunday = (7 - marchFirst.getUTCDay()) % 7;
+  const secondSundayMarch = new Date(Date.UTC(y, 2, 1 + daysToFirstSunday + 7, 7, 0, 0)); // 2:00 AM EST = 7:00 AM UTC
+  
+  // Find First Sunday in November
+  const novFirst = new Date(Date.UTC(y, 10, 1));
+  const daysToFirstSunNov = (7 - novFirst.getUTCDay()) % 7;
+  const firstSundayNov = new Date(Date.UTC(y, 10, 1 + daysToFirstSunNov, 6, 0, 0)); // 2:00 AM EDT = 6:00 AM UTC
+  
+  const t = date.getTime();
+  const isDST = t >= secondSundayMarch.getTime() && t < firstSundayNov.getTime();
+  
+  const offsetHours = isDST ? -4 : -5;
+  
+  // We want to return a Date object where getUTCHours() returns the NY local hour.
+  // So we ADD the offset to the UTC time.
+  return new Date(t + offsetHours * 60 * 60 * 1000);
 }
 __name(getFixedEstDate, "getFixedEstDate");
 const _allPairKeys = new Set([
@@ -128,6 +156,7 @@ export class LiveOrchestrator {
   evaluator: any;
   loggerInited?: boolean;
   cachedEquity: number = 0;
+  plog: ProfileLogger;
 
   constructor(profileId, token, accountId) {
     this.running = false;
@@ -139,6 +168,7 @@ export class LiveOrchestrator {
     this.lastChatterMs = new Map();
     this.recentEyeFeed = [];
     this.profileId = profileId;
+    this.plog = new ProfileLogger(Number(profileId)); // temporary — name updated in start()
     this.token = token;
     this.accountId = safeDecryptAccountId(accountId);
     this.customMap = null;
@@ -178,6 +208,15 @@ export class LiveOrchestrator {
         sessionLow: Infinity,
       });
     });
+
+    // Janitor interval: Prune SQLite M5 candle cache daily to prevent infinite growth
+    if (!(global as any).isSimulator) {
+      setInterval(() => {
+        this.pruneOldM5Candles(60).catch((err: any) => {
+          logger.error(`[DiscretionaryTrader] 🧹 Daily prune error: ${err.message}`);
+        });
+      }, 24 * 60 * 60 * 1000);
+    }
   }
   static {
     __name(this, "LiveOrchestrator");
@@ -205,13 +244,14 @@ export class LiveOrchestrator {
     this.instances = new Map();
   }
   static getInstance(profileId) {
-    return LiveOrchestrator.instances.get(profileId) || null;
+    return LiveOrchestrator.instances.get(profileId.toString()) || null;
   }
   static create(profileId, token, accountId) {
-    let existing = LiveOrchestrator.instances.get(profileId);
+    const idStr = profileId.toString();
+    let existing = LiveOrchestrator.instances.get(idStr);
     if (existing) existing.stop();
-    const newOrch = new LiveOrchestrator(profileId, token, accountId);
-    LiveOrchestrator.instances.set(profileId, newOrch);
+    const newOrch = new LiveOrchestrator(idStr, token, accountId);
+    LiveOrchestrator.instances.set(idStr, newOrch);
     return newOrch;
   }
   async start() {
@@ -261,16 +301,26 @@ export class LiveOrchestrator {
       logger.error("[DiscretionaryTrader] Failed to load pair configs:", err);
     }
 
+    // ── Register profile name for clean log output ─────────────────
+    try {
+      const profRow = dbModule.prepare("SELECT profile_name FROM trading_profiles WHERE id = ?").get(this.profileId) as any;
+      if (profRow?.profile_name) {
+        registerProfileName(Number(this.profileId), profRow.profile_name);
+        this.plog = new ProfileLogger(Number(this.profileId));
+        this.plog.info(`🚀 LiveOrchestrator starting for account: ${profRow.profile_name}`);
+      }
+    } catch (_) {}
+
     try {
       const conn = await getSharedConnection(this.token, this.accountId);
       const accInfo = await conn.getAccountInformation();
       if (accInfo && accInfo.equity > 0) {
         this.cachedEquity = accInfo.equity;
-        console.log(`[DiscretionaryTrader] 💰 Primed account equity for profile ${this.profileId}: $${this.cachedEquity.toFixed(2)} (Balance: $${accInfo.balance.toFixed(2)})`);
+        this.plog.info(`💰 Primed account equity: $${this.cachedEquity.toFixed(2)} (Balance: $${accInfo.balance.toFixed(2)})`);
         logger.info(`[DiscretionaryTrader] 💰 Primed account equity: $${this.cachedEquity.toFixed(2)}`);
       }
     } catch (e: any) {
-      console.warn(`[DiscretionaryTrader] ⚠️ Could not prime initial account equity for profile ${this.profileId}: ${e.message}`);
+      this.plog.warn(`⚠️ Could not prime initial account equity: ${e.message}`);
     }
     try {
       const dbModule: any = await import("../../core/db.js");
@@ -281,10 +331,65 @@ export class LiveOrchestrator {
           "SELECT * FROM bot_trade_states WHERE (profile_id = ? OR profile_id = ?) AND status IN ('OPEN', 'PLACING', 'PENDING_VERIFICATION') AND bot_id NOT LIKE 'THE_WITCH%'",
         )
         .all(this.profileId, pidNum);
-      console.log(`[DiscretionaryTrader] 🔍 Startup DB Trade Check for Profile ${this.profileId}: Found ${openTrades.length} DB trades in open/placing status.`);
+      this.plog.info(`🔍 Startup DB Trade Check: Found ${openTrades.length} DB trades in open/placing status.`);
+
+      // Load broker symbol alias map (e.g. { "GER40": "DX40", "US30": "US30" })
+      // Used as fallback when broker_symbol stored in DB doesn't match internal pair keys.
+      let customMap: Record<string, string> = {};
+      try {
+        const profileRow = await db2.prepare("SELECT broker_symbol_map FROM trading_profiles WHERE id = ?").get(this.profileId);
+        if (profileRow?.broker_symbol_map) customMap = JSON.parse(profileRow.broker_symbol_map);
+      } catch (_e) {}
+
+      // ── GHOST PURGE: Cross-reference DB open rows against live broker positions ──
+      // Any trade that is OPEN in the DB but no longer exists on the broker
+      // (i.e. closed via SL/TP while we were offline) must be marked CLOSED now.
+      // Without this, every restart resurrects zombie trades indefinitely.
+      let liveBrokerPositionIds = new Set<string>();
+      try {
+        const conn = await getSharedConnection(this.token, this.accountId);
+        const livePositions = await conn.getPositions();
+        for (const p of livePositions) {
+          liveBrokerPositionIds.add(p.id);
+        }
+        this.plog.info(`🔍 Ghost Purge: ${livePositions.length} live broker positions fetched.`);
+      } catch (ghostPurgeErr: any) {
+        this.plog.warn(`⚠️ Ghost Purge broker fetch failed (non-fatal): ${ghostPurgeErr.message}. All DB open trades will be re-attached.`);
+      }
+
       for (const t of openTrades) {
+        // Skip PLACING rows with no broker order ID — orphan scanner handles these
+        if (!t.meta_order_id) {
+          this.plog.warn(`⚠️ Skipping zombie PLACING row ${t.id} (${t.broker_symbol}) — meta_order_id is null. Orphan scanner will recover.`);
+          continue;
+        }
+
+        // Ghost Purge: if the broker has no live position with this ID, it was closed while we were offline
+        if (liveBrokerPositionIds.size > 0 && !liveBrokerPositionIds.has(t.meta_order_id)) {
+          this.plog.warn(`👻 Ghost trade: DB row ${t.id} (${t.broker_symbol} ${t.direction}) absent from broker. Marking CLOSED.`);
+          try {
+            await db2.prepare("UPDATE bot_trade_states SET status = 'CLOSED' WHERE id = ? AND status != 'CLOSED'").run(t.id);
+          } catch (dbCloseErr: any) {
+            this.plog.error(`Failed to mark ghost trade ${t.id} CLOSED: ${dbCloseErr.message}`);
+          }
+          try { globalTradeGate.release(this.profileId, t.meta_order_id); } catch (_) {}
+          continue; // Skip re-attaching this ghost to memory
+        }
+
         const symbol = t.broker_symbol;
-        const baseSymbol = PairConfigManager.getBaseSymbol(symbol);
+        
+        // Reverse customMap lookup to get original session pairs
+        let baseSymbol = PairConfigManager.getBaseSymbol(symbol);
+        if (customMap) {
+          for (const [k, v] of Object.entries(customMap)) {
+            if (v === symbol) {
+              baseSymbol = PairConfigManager.getBaseSymbol(k);
+              logger.info(`[DiscretionaryTrader] 🗺️ Alias resolved: broker symbol "${symbol}" -> internal base "${baseSymbol}" via customMap`);
+              break;
+            }
+          }
+        }
+
         const matchingPairs = Array.from(this.states.keys()).filter(
           (k) => PairConfigManager.getBaseSymbol(k) === baseSymbol || k === symbol,
         );
@@ -302,7 +407,7 @@ export class LiveOrchestrator {
               direction: t.direction,
               entryPrice: t.entry_price,
               slPrice: t.sl_price,
-              originalSl: t.sl_price,
+              originalSl: t.original_sl || t.sl_price,
               tpPrice: t.tp_price,
               riskPips: t.initial_risk_pips,
               highestPrice: t.highest_price || t.entry_price,
@@ -332,11 +437,10 @@ export class LiveOrchestrator {
           t.direction,
           "DISC",
         );
-        console.log(`[DiscretionaryTrader] 🔄 Re-attached DB trade ${t.meta_order_id} (${t.bot_id} ${t.direction} ${symbol}) to active memory.`);
-        logger.info(`[DiscretionaryTrader] 🔄 Re-attached DB trade ${t.meta_order_id} to ${symbol} (Session-Pairs: ${matchingPairs.join(", ")})`,);
+        this.plog.info(`🔄 Re-attached ${t.bot_id} ${t.direction} ${symbol} (order: ${t.meta_order_id})`);
       }
     } catch (err: any) {
-      console.error("[DiscretionaryTrader] ❌ Failed to re-attach open trades from DB:", err.message);
+      this.plog.error(`❌ Failed to re-attach open trades from DB: ${err.message}`);
       logger.error("[DiscretionaryTrader] Failed to re-attach open trades:", err.message);
     }
     await this.warmup();
@@ -349,7 +453,7 @@ export class LiveOrchestrator {
         async () => (await getSharedConnection(this.token, this.accountId)).getPositions(),
         `OrphanScan:startup`,
       );
-      console.log(`[DiscretionaryTrader] 🌐 Startup MetaAPI Broker Position Scan for Profile ${this.profileId}: Found ${allPositions.length} live broker positions.`);
+      this.plog.info(`🌐 Broker Position Scan: ${allPositions.length} live positions found.`);
 
       const db2 = (await import("../../core/db.js")).default;
       const pidNum = Number(this.profileId);
@@ -364,10 +468,10 @@ export class LiveOrchestrator {
       );
 
       for (const pos of allPositions) {
-        console.log(`[DiscretionaryTrader] 📊 Live Broker Position: ID=${pos.id} | Symbol=${pos.symbol} | Dir=${pos.type} | Lots=${pos.volume} | Entry=${pos.openPrice} | SL=${pos.sl ?? pos.stopLoss}`);
+        this.plog.verbose(`📊 Broker pos: ${pos.symbol} ${pos.type} Entry=${pos.openPrice} SL=${pos.sl ?? pos.stopLoss} Lots=${pos.volume}`);
         // Skip if already tracked in DB
         if (knownOrderIds.has(pos.id)) {
-          console.log(`[DiscretionaryTrader] ℹ️ Broker position ${pos.id} (${pos.symbol}) is already tracked in DB.`);
+          this.plog.verbose(`ℹ️ Position ${pos.id} (${pos.symbol}) already tracked in DB.`);
           continue;
         }
 
@@ -440,9 +544,9 @@ export class LiveOrchestrator {
         try {
           const result = await db2.prepare(`
             INSERT INTO bot_trade_states
-              (user_id, profile_id, bot_id, broker_symbol, direction, entry_price, sl_price, tp_price,
+              (user_id, profile_id, bot_id, broker_symbol, direction, entry_price, sl_price, original_sl, tp_price,
                lots, open_time, meta_order_id, t1_hit, highest_price, lowest_price, initial_risk_pips, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 'OPEN')
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 'OPEN')
           `).run(
             actualUserId,
             this.profileId,
@@ -450,6 +554,7 @@ export class LiveOrchestrator {
             pos.symbol,
             direction,
             pos.openPrice,
+            actualPosSL || pos.openPrice,
             actualPosSL || pos.openPrice,
             pos.takeProfit || null,
             pos.volume,
@@ -628,57 +733,18 @@ export class LiveOrchestrator {
   }
 
   async loadCachedM5Candles(symbol: string, days: number = 30): Promise<any[]> {
-    try {
-      const cutoffTs = Date.now() - days * 86400 * 1000;
-      const rows = await db.prepare(
-        "SELECT symbol, timestamp, open, high, low, close, tick_volume FROM m5_candles_cache WHERE symbol = ? AND timestamp >= ? ORDER BY timestamp ASC"
-      ).all(symbol, cutoffTs);
-      if (!rows || !Array.isArray(rows)) return [];
-      return rows.map((r: any) => ({
-        time: new Date(Number(r.timestamp)).toISOString(),
-        timestamp: Number(r.timestamp),
-        open: Number(r.open),
-        high: Number(r.high),
-        low: Number(r.low),
-        close: Number(r.close),
-        tickVolume: Number(r.tick_volume || 1),
-      }));
-    } catch (e: any) {
-      logger.warn(`[DiscretionaryTrader] Could not load cached candles from DB for ${symbol}: ${e.message}`);
-      return [];
-    }
+    // Fast path: read from local SQLite (sub-ms, no network hop)
+    return loadCachedM5CandlesLocal(this.profileId, symbol, days);
   }
 
   async saveM5CandlesToCache(symbol: string, candles: any[]): Promise<void> {
-    if (!candles || candles.length === 0) return;
-    try {
-      const BATCH_SIZE = 50;
-      for (let i = 0; i < candles.length; i += BATCH_SIZE) {
-        const batch = candles.slice(i, i + BATCH_SIZE);
-        const placeholders: string[] = [];
-        const params: any[] = [];
-
-        for (const c of batch) {
-          const ts = typeof c.timestamp === "number" ? c.timestamp : new Date(c.time).getTime();
-          placeholders.push("(?, ?, ?, ?, ?, ?, ?)");
-          params.push(symbol, ts, c.open, c.high, c.low, c.close, c.tickVolume || 1);
-        }
-
-        const sql = `INSERT INTO m5_candles_cache (symbol, timestamp, open, high, low, close, tick_volume) VALUES ${placeholders.join(", ")} ON CONFLICT (symbol, timestamp) DO NOTHING`;
-        await db.prepare(sql).run(...params);
-      }
-    } catch (e: any) {
-      logger.warn(`[DiscretionaryTrader] Error persisting M5 candles to cache for ${symbol}: ${e.message}`);
-    }
+    // Write to local SQLite — single transaction, no network cost
+    saveM5CandlesToCacheLocal(this.profileId, symbol, candles);
   }
 
   async pruneOldM5Candles(daysToRetain: number = 60): Promise<void> {
-    try {
-      const cutoffTs = Date.now() - daysToRetain * 86400 * 1000;
-      await db.prepare("DELETE FROM m5_candles_cache WHERE timestamp < ?").run(cutoffTs);
-    } catch (e: any) {
-      // Non-fatal
-    }
+    // Synchronous local SQLite prune — no Supabase call needed
+    pruneOldM5CandlesLocal(daysToRetain);
   }
 
   async warmup() {
@@ -696,7 +762,7 @@ export class LiveOrchestrator {
           logger.info(`[LiveOrchestrator] 🔍 Profile ${this.profileId} has empty symbol map. Auto-discovering broker symbols...`);
           try {
             const { discoverBrokerSymbols } = await import("../../utils/discoverSymbols.js");
-            loadedMap = await discoverBrokerSymbols(this.profileId, this.token, this.accountId);
+            loadedMap = await discoverBrokerSymbols(Number(this.profileId), this.token, this.accountId);
           } catch (e: any) {
             logger.warn(`[LiveOrchestrator] Auto symbol discovery skipped/failed for profile ${this.profileId}: ${e.message}`);
           }
@@ -704,198 +770,206 @@ export class LiveOrchestrator {
         this.customMap = loadedMap;
       }
       
-      for (const cfg of DISCRETIONARY_TRADER_PAIRS) {
-        const sessionPair = cfg.pair;
-        const symbol = PairConfigManager.getBaseSymbol(sessionPair);
-        const brokerSym = this.customMap[symbol] || symbol;
-        const state = this.states.get(sessionPair);
-        if (!state) continue;
-        const mapCandles = __name((c) => {
-          const d = new Date(c.time);
-          const estDate = getFixedEstDate(d);
-          const yyyy = estDate.getUTCFullYear();
-          const mm = String(estDate.getUTCMonth() + 1).padStart(2, "0");
-          const dd = String(estDate.getUTCDate()).padStart(2, "0");
-          return {
-            timestamp: d.getTime(),
-            open: c.open,
-            high: c.high,
-            low: c.low,
-            close: c.close,
-            tickVolume: c.tickVolume || 1,
-            dateStr: `${yyyy}-${mm}-${dd}`,
-            estHour: estDate.getUTCHours(),
-            estMinute: estDate.getUTCMinutes(),
-          };
-        }, "mapCandles");
-        try {
-          // 1. Load 30 days of cached M5 candles from local DB
-          const dbCandles = await this.loadCachedM5Candles(symbol, 30);
-          let rawM5: any[] = [];
-          const nowMs = Date.now();
-          const targetCutoff = nowMs - 30 * 86400 * 1000;
+      const fetchCandlesWithRetry = async (brokerSym: string, fetchStartTime: Date | undefined, fetchCount: number, maxRetries = 3) => {
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+          try {
+            const chunk: any[] = await Promise.race([
+              account.getHistoricalCandles(brokerSym, "5m", fetchStartTime, fetchCount),
+              new Promise((_, reject) =>
+                setTimeout(() => reject(new Error("MetaApi getHistoricalCandles timeout (30s)")), 3e4)
+              ),
+            ]) as any[];
+            return chunk;
+          } catch (err: any) {
+            if (attempt === maxRetries) throw err;
+            const delayMs = Math.pow(2, attempt) * 1000 + Math.random() * 1000;
+            logger.warn(`[DiscretionaryTrader] Hydration timeout for ${brokerSym}. Retrying attempt ${attempt + 1}/${maxRetries} in ${Math.round(delayMs / 1000)}s...`);
+            await new Promise(r => setTimeout(r, delayMs));
+          }
+        }
+        return [];
+      };
 
-          if (dbCandles.length > 0) {
-            const latestCachedTs = dbCandles[dbCandles.length - 1].timestamp;
-            const msGap = nowMs - latestCachedTs;
-            logger.info(`[DiscretionaryTrader] 💾 Loaded ${dbCandles.length} M5 candles from local DB cache for ${symbol} (0 MetaApi calls).`);
-            rawM5 = [...dbCandles];
+      // ── Parallelised warmup: all pairs hydrate simultaneously ──────────────
+      await Promise.all(
+        DISCRETIONARY_TRADER_PAIRS.map(async (cfg) => {
+          const sessionPair = cfg.pair;
+          const symbol = PairConfigManager.getBaseSymbol(sessionPair);
+          const brokerSym = this.customMap[symbol] || symbol;
 
-            // If gap is more than 5 minutes, fetch missing delta candles from MetaApi
-            if (msGap > 5 * 60 * 1000) {
-              const expectedMissing = Math.ceil(msGap / (5 * 60 * 1000));
-              const fetchCount = Math.min(1000, Math.max(10, Math.ceil(expectedMissing * 1.10)));
-              const deltaCandles: any[] = await Promise.race([
-                account.getHistoricalCandles(brokerSym, "5m", new Date(latestCachedTs + 1), fetchCount),
-                new Promise((_, reject) =>
-                  setTimeout(
-                    () => reject(new Error("MetaApi getHistoricalCandles timeout (30s)")),
-                    3e4,
-                  ),
-                ),
-              ]);
-              if (deltaCandles && deltaCandles.length > 0) {
-                logger.info(`[DiscretionaryTrader] ⚡ Fetched ${deltaCandles.length} missing gap candles from MetaApi for ${symbol}. Saving to DB cache...`);
-                await this.saveM5CandlesToCache(symbol, deltaCandles);
-                for (const dc of deltaCandles) {
-                  const dcTs = new Date(dc.time).getTime();
-                  if (!rawM5.some((existing) => existing.timestamp === dcTs)) {
-                    rawM5.push({
-                      time: dc.time,
-                      timestamp: dcTs,
-                      open: dc.open,
-                      high: dc.high,
-                      low: dc.low,
-                      close: dc.close,
-                      tickVolume: dc.tickVolume || 1,
-                    });
+          const state = this.states.get(sessionPair);
+          if (!state) return;
+          const mapCandles = __name((c) => {
+            const d = new Date(c.time);
+            const estDate = getFixedEstDate(d);
+            const yyyy = estDate.getUTCFullYear();
+            const mm = String(estDate.getUTCMonth() + 1).padStart(2, "0");
+            const dd = String(estDate.getUTCDate()).padStart(2, "0");
+            return {
+              timestamp: d.getTime(),
+              open: c.open,
+              high: c.high,
+              low: c.low,
+              close: c.close,
+              tickVolume: c.tickVolume || 1,
+              dateStr: `${yyyy}-${mm}-${dd}`,
+              estHour: estDate.getUTCHours(),
+              estMinute: estDate.getUTCMinutes(),
+            };
+          }, "mapCandles");
+          try {
+            // 1. Load 30 days of cached M5 candles from local SQLite (instant, no network)
+            const dbCandles = await this.loadCachedM5Candles(symbol, 30);
+            let rawM5: any[] = [];
+            const nowMs = Date.now();
+            const targetCutoff = nowMs - 30 * 86400 * 1000;
+
+            if (dbCandles.length > 0) {
+              const latestCachedTs = dbCandles[dbCandles.length - 1].timestamp;
+              const msGap = nowMs - latestCachedTs;
+              logger.info(`[DiscretionaryTrader] 💾 Loaded ${dbCandles.length} M5 candles from local DB cache for ${symbol} (0 MetaApi calls).`);
+              rawM5 = [...dbCandles];
+
+              // If gap is more than 5 minutes, fetch missing delta candles from MetaApi
+              if (msGap > 5 * 60 * 1000) {
+                const expectedMissing = Math.ceil(msGap / (5 * 60 * 1000));
+                const fetchCount = Math.min(1000, Math.max(10, Math.ceil(expectedMissing * 1.10)));
+                const deltaCandles: any[] = await fetchCandlesWithRetry(brokerSym, new Date(latestCachedTs + 1), fetchCount);
+                if (deltaCandles && deltaCandles.length > 0) {
+                  logger.info(`[DiscretionaryTrader] ⚡ Fetched ${deltaCandles.length} missing gap candles from MetaApi for ${symbol}. Saving to local cache...`);
+                  await this.saveM5CandlesToCache(symbol, deltaCandles);
+                  for (const dc of deltaCandles) {
+                    const dcTs = new Date(dc.time).getTime();
+                    if (!rawM5.some((existing) => existing.timestamp === dcTs)) {
+                      rawM5.push({
+                        time: dc.time,
+                        timestamp: dcTs,
+                        open: dc.open,
+                        high: dc.high,
+                        low: dc.low,
+                        close: dc.close,
+                        tickVolume: dc.tickVolume || 1,
+                      });
+                    }
                   }
                 }
               }
-            }
-          } else {
-            // Cold start: DB cache is empty. Fetch 30 days from MetaApi once to seed DB.
-            logger.info(`[DiscretionaryTrader] ❄️ Cold start for ${symbol}: Fetching 30 days of M5 candles from MetaApi...`);
-            let fetchStartTime: Date | undefined = undefined;
-            const MAX_CANDLES = 8640;
-            const CHUNK_SIZE = 1000;
-            let fetchedChunks = 0;
-
-            while (rawM5.length < MAX_CANDLES) {
-              const fetchCount = Math.min(CHUNK_SIZE, MAX_CANDLES - rawM5.length);
-              const chunk: any[] = await Promise.race([
-                account.getHistoricalCandles(brokerSym, "5m", fetchStartTime, fetchCount),
-                new Promise((_, reject) =>
-                  setTimeout(
-                    () => reject(new Error("MetaApi getHistoricalCandles timeout (30s)")),
-                    3e4,
-                  ),
-                ),
-              ]);
-
-              if (!chunk || chunk.length === 0) break;
-              fetchedChunks++;
-              chunk.sort((a: any, b: any) => new Date(a.time).getTime() - new Date(b.time).getTime());
-
-              const newCandles = chunk.filter((c: any) => {
-                const ts = new Date(c.time).getTime();
-                return !rawM5.some((existing) => existing.timestamp === ts);
-              });
-              if (newCandles.length === 0) break;
-
-              rawM5 = [...newCandles, ...rawM5];
-              const oldestTime = new Date(rawM5[0].time).getTime();
-              if (oldestTime <= targetCutoff) break;
-              fetchStartTime = new Date(oldestTime - 1);
-            }
-
-            if (rawM5.length > 0) {
-              logger.info(`[DiscretionaryTrader] 💾 Persisting ${rawM5.length} backfilled M5 candles to DB cache for ${symbol} (${fetchedChunks} MetaApi calls).`);
-              await this.saveM5CandlesToCache(symbol, rawM5);
-            }
-          }
-
-          const mapped: any[] = rawM5
-            .map(mapCandles)
-            .sort((a: any, b: any) => a.timestamp - b.timestamp);
-          const alpha = 2 / (20 + 1);
-          let prevEma = mapped[0]?.close || null;
-          state.emaArr = [];
-          state.m5Buffer = [];
-          state.dailyTracker = new DailyContextTracker();
-
-          for (let i = 0; i < mapped.length; i++) {
-            const c = mapped[i];
-            state.dailyTracker.processCandle(c);
-            state.m5Buffer.push(c);
-            state.lastEstHour = c.estHour ?? -1;
-            if (i === 0) {
-              state.emaArr.push(prevEma);
             } else {
-              const ema = (c.close - prevEma) * alpha + prevEma;
-              state.emaArr.push(ema);
-              prevEma = ema;
-            }
+              // Cold start: DB cache is empty. Fetch 30 days from MetaApi once to seed local cache.
+              logger.info(`[DiscretionaryTrader] ❄️ Cold start for ${symbol}: Fetching 30 days of M5 candles from MetaApi...`);
+              let fetchStartTime: Date | undefined = undefined;
+              const MAX_CANDLES = 8640;
+              const CHUNK_SIZE = 1000;
+              let fetchedChunks = 0;
 
-            if (PairConfigManager.isOrbEnabled(symbol)) {
-              if (!state.orbState) {
-                state.orbState = {
-                  orHigh: -Infinity,
-                  orLow: Infinity,
-                  orBuilt: false,
-                  breakoutDir: null,
-                  limitPrice: 0,
-                  slPrice: 0,
-                  tpPrice: 0,
-                  limitOrderId: null,
-                  visionApproved: false,
-                  fired: false,
-                  currentDateStr: "",
-                };
+              while (rawM5.length < MAX_CANDLES) {
+                const fetchCount = Math.min(CHUNK_SIZE, MAX_CANDLES - rawM5.length);
+                const chunk: any[] = await fetchCandlesWithRetry(brokerSym, fetchStartTime, fetchCount);
+
+                if (!chunk || chunk.length === 0) break;
+                fetchedChunks++;
+                chunk.sort((a: any, b: any) => new Date(a.time).getTime() - new Date(b.time).getTime());
+
+                const newCandles = chunk.filter((c: any) => {
+                  const ts = new Date(c.time).getTime();
+                  return !rawM5.some((existing) => existing.timestamp === ts);
+                });
+                if (newCandles.length === 0) break;
+
+                rawM5 = [...newCandles, ...rawM5];
+                const oldestTime = new Date(rawM5[0].time).getTime();
+                if (oldestTime <= targetCutoff) break;
+                fetchStartTime = new Date(oldestTime - 1);
               }
-              const os = state.orbState;
-              const dateStr = c.dateStr;
-              if (os.currentDateStr !== dateStr) {
-                os.orHigh = -Infinity;
-                os.orLow = Infinity;
-                os.orBuilt = false;
-                os.breakoutDir = null;
-                os.limitPrice = 0;
-                os.slPrice = 0;
-                os.tpPrice = 0;
-                os.limitOrderId = null;
-                os.visionApproved = false;
-                os.fired = false;
-                os.currentDateStr = dateStr;
-              }
-              const orbTime = PairConfigManager.getOrbTime(symbol);
-              const startMins = orbTime.hour * 60 + orbTime.min;
-              const currentMins = c.estHour * 60 + c.estMinute;
-              if (currentMins >= startMins && currentMins < startMins + 15) {
-                os.orHigh = Math.max(os.orHigh, c.high);
-                os.orLow = Math.min(os.orLow, c.low);
-              } else if (currentMins >= startMins + 15 && !os.orBuilt) {
-                os.orBuilt = true;
+
+              if (rawM5.length > 0) {
+                logger.info(`[DiscretionaryTrader] 💾 Persisting ${rawM5.length} backfilled M5 candles to local cache for ${symbol} (${fetchedChunks} MetaApi calls).`);
+                await this.saveM5CandlesToCache(symbol, rawM5);
               }
             }
 
-            if (state.m5Buffer.length > 50e3) {
-              state.m5Buffer.shift();
-              if (state.emaArr.length > 0) state.emaArr.shift();
+            const mapped: any[] = rawM5
+              .map(mapCandles)
+              .sort((a: any, b: any) => a.timestamp - b.timestamp);
+            const alpha = 2 / (20 + 1);
+            let prevEma = mapped[0]?.close || null;
+            state.emaArr = [];
+            state.m5Buffer = [];
+            state.dailyTracker = new DailyContextTracker();
+
+            for (let i = 0; i < mapped.length; i++) {
+              const c = mapped[i];
+              state.dailyTracker.processCandle(c);
+              state.m5Buffer.push(c);
+              state.lastEstHour = c.estHour ?? -1;
+              if (i === 0) {
+                state.emaArr.push(prevEma);
+              } else {
+                const ema = (c.close - prevEma) * alpha + prevEma;
+                state.emaArr.push(ema);
+                prevEma = ema;
+              }
+
+              if (PairConfigManager.isOrbEnabled(symbol)) {
+                if (!state.orbState) {
+                  state.orbState = {
+                    orHigh: -Infinity,
+                    orLow: Infinity,
+                    orBuilt: false,
+                    breakoutDir: null,
+                    limitPrice: 0,
+                    slPrice: 0,
+                    tpPrice: 0,
+                    limitOrderId: null,
+                    visionApproved: false,
+                    fired: false,
+                    currentDateStr: "",
+                  };
+                }
+                const os = state.orbState;
+                const dateStr = c.dateStr;
+                if (os.currentDateStr !== dateStr) {
+                  os.orHigh = -Infinity;
+                  os.orLow = Infinity;
+                  os.orBuilt = false;
+                  os.breakoutDir = null;
+                  os.limitPrice = 0;
+                  os.slPrice = 0;
+                  os.tpPrice = 0;
+                  os.limitOrderId = null;
+                  os.visionApproved = false;
+                  os.fired = false;
+                  os.currentDateStr = dateStr;
+                }
+                const orbTime = PairConfigManager.getOrbTime(symbol);
+                const startMins = orbTime.hour * 60 + orbTime.min;
+                const currentMins = c.estHour * 60 + c.estMinute;
+                if (currentMins >= startMins && currentMins < startMins + 15) {
+                  os.orHigh = Math.max(os.orHigh, c.high);
+                  os.orLow = Math.min(os.orLow, c.low);
+                } else if (currentMins >= startMins + 15 && !os.orBuilt) {
+                  os.orBuilt = true;
+                }
+              }
+
+              if (state.m5Buffer.length > 50e3) {
+                state.m5Buffer.shift();
+                if (state.emaArr.length > 0) state.emaArr.shift();
+              }
+            }
+            this.warmupORBStatesForPair(sessionPair);
+            await this.warmupSeerStateForPair(sessionPair);
+          } catch (e: any) {
+            const today = new Date();
+            const isWeekend = today.getDay() === 0 || today.getDay() === 6;
+            if (isWeekend) {
+              logger.warn(`[DiscretionaryTrader] [Weekend Warning] Hydration failed/timed out for ${symbol} (Normal broker downtime on Saturday/Sunday): ${e.message}`);
+            } else {
+              logger.error(`[DiscretionaryTrader] Hydration failed for ${symbol}:`, e.message);
             }
           }
-          this.warmupORBStatesForPair(sessionPair);
-          await this.warmupSeerStateForPair(sessionPair);
-        } catch (e) {
-          const today = new Date();
-          const isWeekend = today.getDay() === 0 || today.getDay() === 6; // 0 = Sunday, 6 = Saturday
-          if (isWeekend) {
-            logger.warn(`[DiscretionaryTrader] [Weekend Warning] Hydration failed/timed out for ${symbol} (Normal broker downtime on Saturday/Sunday): ${e.message}`);
-          } else {
-            logger.error(`[DiscretionaryTrader] Hydration failed for ${symbol}:`, e.message);
-          }
-        }
-      }
+        })
+      );
       logger.info(`[DiscretionaryTrader] 🔮 Seer Hydration Completed. Daily Context Tracker primed.`);
       logger.info(`[DiscretionaryTrader] 🔮 Mage Hydration Completed. Session ORB mathematically reconstructed.`);
       logger.info(`[DiscretionaryTrader] 🔮 Sage Hydration Completed. Reversal state context primed.`);
@@ -931,7 +1005,7 @@ export class LiveOrchestrator {
       
       if (existingSeerTrade) {
         seerTradeTaken = true;
-        console.log(`[DiscretionaryTrader] 🔒 Lockout for Seer ${symbol}: DB trade ${existingSeerTrade.id} found (status: ${existingSeerTrade.status}, open_time: ${existingSeerTrade.open_time}).`);
+        this.plog.verbose(`🔒 Seer lockout on ${symbol}: DB trade #${existingSeerTrade.id} already ${existingSeerTrade.status}.`);
       }
     } catch (e) {}
 
@@ -979,7 +1053,18 @@ export class LiveOrchestrator {
       }
       const windowEnd = new Date(windowStart.getTime() + config.orbMinutes * 60 * 1000);
 
-      const orbCandles = state.m5Buffer.filter((c: any) => c.timestamp >= windowStart.getTime() && c.timestamp <= windowEnd.getTime());
+      const yyyy = windowStart.getUTCFullYear();
+      const mm = String(windowStart.getUTCMonth() + 1).padStart(2, "0");
+      const dd = String(windowStart.getUTCDate()).padStart(2, "0");
+      const sessionDateStr = `${yyyy}-${mm}-${dd}`;
+      const startMins = config.orbStartHour * 60 + config.orbStartMin;
+      const endMins = startMins + config.orbMinutes;
+
+      const orbCandles = state.m5Buffer.filter((c: any) => {
+        if (c.dateStr !== sessionDateStr) return false;
+        const cMins = c.estHour * 60 + c.estMinute;
+        return cMins >= startMins && cMins <= endMins;
+      });
 
       if (orbCandles.length > 0) {
         let maxHigh = -Infinity;
@@ -988,11 +1073,6 @@ export class LiveOrchestrator {
           if (c.high > maxHigh) maxHigh = c.high;
           if (c.low < minLow) minLow = c.low;
         }
-
-        const yyyy = windowStart.getUTCFullYear();
-        const mm = String(windowStart.getUTCMonth() + 1).padStart(2, "0");
-        const dd = String(windowStart.getUTCDate()).padStart(2, "0");
-        const sessionDateStr = `${yyyy}-${mm}-${dd}`;
 
         if (!state.orbStates[sig]) {
           state.orbStates[sig] = {
@@ -1019,6 +1099,16 @@ export class LiveOrchestrator {
         os.currentOrbDateStr = sessionDateStr;
 
         logger.info(`[DiscretionaryTrader] 🔮 ORB reconstructed for ${symbol} (${sig}): High: ${maxHigh.toFixed(5)}, Low: ${minLow.toFixed(5)}, Date: ${sessionDateStr}`);
+        this.addEyeFeedEvent({
+          type: "EVAL_RESULT",
+          bot_id: item.botId,
+          data: {
+            symbol,
+            decision: "SCANNING",
+            setupType: "ORB Breakout",
+            reasoning: `Historical ORB Reconstructed (High: ${maxHigh.toFixed(5)}, Low: ${minLow.toFixed(5)})`,
+          },
+        });
 
         if (isBeforeTodaySession) {
           // Current time is before today's session start — do NOT lock out today's upcoming session!
@@ -1041,7 +1131,7 @@ export class LiveOrchestrator {
             ).get(this.profileId, Number(this.profileId), symbol, symbol, windowStart.getTime());
             if (existingTrade) {
               tradeTaken = true;
-              console.log(`[DiscretionaryTrader] 🔒 Lockout for ${symbol} (${sig}): DB trade ${existingTrade.id} found (status: ${existingTrade.status}, open_time: ${existingTrade.open_time}).`);
+              this.plog.verbose(`🔒 Mage lockout on ${symbol} (${sig}): DB trade #${existingTrade.id} already ${existingTrade.status}.`);
             }
           } catch (e) {}
 
@@ -1084,7 +1174,18 @@ export class LiveOrchestrator {
       }
       const windowEnd = new Date(windowStart.getTime() + config.orbMinutes * 60 * 1000);
 
-      const orbCandles = state.m5Buffer.filter((c: any) => c.timestamp >= windowStart.getTime() && c.timestamp <= windowEnd.getTime());
+      const yyyy = windowStart.getUTCFullYear();
+      const mm = String(windowStart.getUTCMonth() + 1).padStart(2, "0");
+      const dd = String(windowStart.getUTCDate()).padStart(2, "0");
+      const sessionDateStr = `${yyyy}-${mm}-${dd}`;
+      const startMins = config.orbStartHour * 60 + config.orbStartMin;
+      const endMins = startMins + config.orbMinutes;
+
+      const orbCandles = state.m5Buffer.filter((c: any) => {
+        if (c.dateStr !== sessionDateStr) return false;
+        const cMins = c.estHour * 60 + c.estMinute;
+        return cMins >= startMins && cMins <= endMins;
+      });
 
       if (orbCandles.length > 0) {
         let maxHigh = -Infinity;
@@ -1093,11 +1194,6 @@ export class LiveOrchestrator {
           if (c.high > maxHigh) maxHigh = c.high;
           if (c.low < minLow) minLow = c.low;
         }
-
-        const yyyy = windowStart.getUTCFullYear();
-        const mm = String(windowStart.getUTCMonth() + 1).padStart(2, "0");
-        const dd = String(windowStart.getUTCDate()).padStart(2, "0");
-        const sessionDateStr = `${yyyy}-${mm}-${dd}`;
 
         if (!state.sageStates[sig]) {
           state.sageStates[sig] = {
@@ -1151,7 +1247,7 @@ export class LiveOrchestrator {
             ).get(this.profileId, Number(this.profileId), symbol, symbol, windowStart.getTime());
             if (existingSageTrade) {
               sageTradeTaken = true;
-              console.log(`[DiscretionaryTrader] 🔒 Lockout for Sage ${symbol} (${sig}): DB trade ${existingSageTrade.id} found (status: ${existingSageTrade.status}, open_time: ${existingSageTrade.open_time}).`);
+              this.plog.verbose(`🔒 Sage lockout on ${symbol} (${sig}): DB trade #${existingSageTrade.id} already ${existingSageTrade.status}.`);
             }
           } catch (e) {}
 
@@ -1442,6 +1538,48 @@ export class LiveOrchestrator {
       lastUpdated: new Date().toISOString(),
     };
   }
+  clearActiveTrade(metaOrderId) {
+    for (const [sp, state] of this.states.entries()) {
+      if (state && state.activeTrades && state.activeTrades.length > 0) {
+        const initialCount = state.activeTrades.length;
+        state.activeTrades = state.activeTrades.filter(t => t.metaOrderId !== metaOrderId);
+        if (state.activeTrades.length < initialCount) {
+          try {
+            logger.info(`[DiscretionaryTrader] 🗑️ Cleared ghost trade ${metaOrderId} for ${sp} from Orchestrator memory.`);
+          } catch(e) {}
+        }
+      }
+    }
+  }
+
+  onBrokerPositionClosed(metaOrderId: string) {
+    let found = false;
+    for (const [sp, state] of this.states.entries()) {
+      if (state?.activeTrades) {
+        const idx = state.activeTrades.findIndex((t: any) => t.metaOrderId === metaOrderId);
+        if (idx !== -1) {
+          const trade = state.activeTrades[idx];
+          state.activeTrades.splice(idx, 1);
+          found = true;
+          logger.info(`[DiscretionaryTrader] 🧹 Broker closed position ${metaOrderId} on ${sp}. Removing from active tracking.`);
+          // Mark CLOSED in DB — fire-and-forget, non-blocking
+          if (trade.dbId) {
+            try {
+              db.prepare("UPDATE bot_trade_states SET status = 'CLOSED' WHERE id = ? AND status != 'CLOSED'").run(trade.dbId);
+            } catch (e: any) {
+              logger.error(`[DiscretionaryTrader] Failed to mark trade ${metaOrderId} as CLOSED in DB:`, e.message);
+            }
+          }
+          // Release the GlobalTradeGate slot so the bot can take new trades
+          try {
+            globalTradeGate.release(this.profileId, metaOrderId);
+          } catch (_) {}
+        }
+      }
+    }
+    if (found) this.broadcastStatus();
+  }
+
   broadcastStatus(botId?: string) {
     const io = getIO();
     if (io) {
@@ -1483,13 +1621,29 @@ export class LiveOrchestrator {
           const slDiff = Math.abs(posSL - trade.slPrice);
           const tpDiff = Math.abs(posTP - trade.tpPrice);
           
+          const isTradeManagerEmergencySl = Math.abs(Math.abs(posSL - trade.entryPrice) - 50 * pipSize) < (pipSize * 2) || posSL === 0;
+
           // If difference is more than 0.5 pips, consider it a manual modification by the user
           if (slDiff > pipSize * 0.5 || tpDiff > pipSize * 0.5) {
-            if (!trade.manuallyModified) {
-              logger.warn(`[DiscretionaryTrader] ✋ Manual modification detected on ${sp} for trade ${pos.id}. Detaching trailing bot logic.`);
-              trade.manuallyModified = true;
+            if (isTradeManagerEmergencySl && slDiff > pipSize * 0.5) {
+              if (!trade.isVirtualSlMode) {
+                try {
+                  logger.warn(`[DiscretionaryTrader] 🛡️ TradeManager emergency SL detected for trade ${pos.id}. Broker stripped last SL. Engaging Virtual SL Fallback Mode.`);
+                } catch(e) {}
+                trade.isVirtualSlMode = true;
+              }
+              // Do NOT detach, and do NOT overwrite trade.slPrice (keep our tight internal trailing SL)
+            } else {
+              if (!trade.manuallyModified) {
+                try {
+                  logger.warn(`[DiscretionaryTrader] ✋ Manual modification detected on ${sp} for trade ${pos.id}. Detaching trailing bot logic.`);
+                } catch(e) {}
+                trade.manuallyModified = true;
+              }
+              // Sync internal state to the manual modification so UI shows actual
+              trade.slPrice = posSL;
+              trade.tpPrice = posTP;
             }
-            // Sync internal state to the manual modification so UI shows actual
             trade.slPrice = posSL;
             trade.tpPrice = posTP;
           }
@@ -1530,7 +1684,7 @@ export class LiveOrchestrator {
       }
       import("../../utils/logger.js").then(({ logger }) => {
         logger.error(`[CRITICAL] Orchestrator Engine crashed on tick for ${symbol}. Tick Data: O:${open} H:${high} L:${low} C:${close}. Error: ${err.message}`, err);
-      }).catch(console.error);
+      }).catch((e: any) => this.plog.error(`Logger import failed: ${e?.message}`));
     }
   }
 
@@ -1566,15 +1720,17 @@ export class LiveOrchestrator {
       if (!this.apiLockouts.has(symbol) || Date.now() >= this.apiLockouts.get(symbol)) {
         const periodMs = 5 * 60 * 1e3;
         if (state.m1PeriodStart === 0) {
-          if (timestampMs === currentM5Start) {
-            state.m1PeriodStart = currentM5Start;
-            state.m1AccumOpen = open;
-            state.m1AccumHigh = high;
-            state.m1AccumLow = low;
-            state.m1AccumClose = close;
-            state.m1AccumVol = vol;
-            state.m1AccumCount = 1;
-          }
+          // Initialize accumulator on the very first tick received after startup,
+          // regardless of whether it lands exactly on a 5-min boundary.
+          // Previously this required timestampMs === currentM5Start (almost impossible mid-session),
+          // which caused the M5 buffer to NEVER receive new live candles after a restart.
+          state.m1PeriodStart = currentM5Start;
+          state.m1AccumOpen = open;
+          state.m1AccumHigh = high;
+          state.m1AccumLow = low;
+          state.m1AccumClose = close;
+          state.m1AccumVol = vol;
+          state.m1AccumCount = 1;
         } else if (currentM5Start > state.m1PeriodStart) {
           const m5Candle = {
             open: state.m1AccumOpen,
@@ -1617,6 +1773,54 @@ export class LiveOrchestrator {
       estHour: sageEstDate.getUTCHours(),
       estMin: sageEstDate.getUTCMinutes(),
     };
+
+    if (state.activeTrades) {
+      for (const trade of state.activeTrades) {
+        if (trade.isVirtualSlMode) {
+          const isHit = trade.direction === "BUY" ? (close <= trade.slPrice) : (close >= trade.slPrice);
+          if (isHit) {
+            import('../../utils/logger.js').then(({ logger }) => {
+              logger.warn(`[DiscretionaryTrader] 💥 Virtual SL Hit for trade ${trade.metaOrderId} at ${close}! Closing market position.`);
+            }).catch(() => {});
+            try {
+              import('../../trading/broker/metaApiHandler.js').then(({ getSharedConnection }) => {
+                 getSharedConnection(this.token, this.accountId).then(conn => {
+                     conn.closePosition(trade.metaOrderId).catch(() => {});
+                 });
+              });
+              this.clearActiveTrade(trade.metaOrderId);
+            } catch(e) {}
+          }
+        }
+      }
+    }
+
+    // ── Watermark Persistence (every 5 minutes per trade) ────────────────────────
+    // Persists trade.highestPrice & trade.lowestPrice to the DB so server restarts
+    // don't lose the high-water mark, which would cause the trailing engine to
+    // clamp the SL aggressively against the current price on the first tick.
+    if (state.activeTrades) {
+      const WATERMARK_PERSIST_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+      for (const trade of state.activeTrades) {
+        if (trade.isVirtualSlMode) continue; // Virtual mode trades don't need this
+        const now = Date.now();
+        if (!trade._lastWatermarkPersistAt || now - trade._lastWatermarkPersistAt >= WATERMARK_PERSIST_INTERVAL_MS) {
+          const newHighest = trade.direction === "BUY"
+            ? Math.max(trade.highestPrice || trade.entryPrice, high)
+            : (trade.highestPrice || trade.entryPrice);
+          const newLowest = trade.direction === "SELL"
+            ? Math.min(trade.lowestPrice || trade.entryPrice, low)
+            : (trade.lowestPrice || trade.entryPrice);
+          trade.highestPrice = newHighest;
+          trade.lowestPrice = newLowest;
+          trade._lastWatermarkPersistAt = now;
+          // Fire-and-forget async DB write — does NOT block the tick loop
+          db.prepare(
+            "UPDATE bot_trade_states SET highest_price = ?, lowest_price = ? WHERE id = ?"
+          ).run(newHighest, newLowest, trade.dbId).catch?.(() => {});
+        }
+      }
+    }
 
     if (
       this.activeBots.has("sage") &&
@@ -1713,9 +1917,9 @@ export class LiveOrchestrator {
           const actualUserId = tp ? tp.user_id : 0;
           const insertTrade = await db.prepare(`
             INSERT INTO bot_trade_states
-              (user_id, profile_id, bot_id, broker_symbol, direction, entry_price, sl_price, tp_price,
+              (user_id, profile_id, bot_id, broker_symbol, direction, entry_price, sl_price, original_sl, tp_price,
                lots, open_time, meta_order_id, t1_hit, highest_price, lowest_price, initial_risk_pips, status)
-            VALUES (?, ?, 'MAGE', ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 'OPEN')
+            VALUES (?, ?, 'MAGE', ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 'OPEN')
           `);
           const openTimeVal = pos.time
             ? new Date(pos.time).getTime()
@@ -1726,6 +1930,7 @@ export class LiveOrchestrator {
             symbol,
             os.breakoutDir,
             pos.openPrice,
+            os.slPrice,
             os.slPrice,
             os.tpPrice,
             pos.volume,
@@ -1800,7 +2005,10 @@ export class LiveOrchestrator {
       }
     }
     state.emaArr.push(ema);
-    if (state.m5Buffer.length < 14) return;
+    // Minimum 1 candle needed (not 14) — the old guard of 14 blocked MageEngine for
+    // 70 minutes on forex pairs whose warmup failed due to missing broker symbol mapping.
+    // 1 candle is sufficient: EMA warm-up happens naturally over time.
+    if (state.m5Buffer.length < 1) return;
     if (state.m5Buffer.length > 50e3) {
       state.m5Buffer.shift();
       state.emaArr.shift();

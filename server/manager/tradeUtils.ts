@@ -32,10 +32,24 @@ export async function logToDiary(
   status: string,
   openTimeInput: any,
 ): Promise<void> {
-  const numericOpenTime =
-    typeof openTimeInput === "number" && !isNaN(openTimeInput)
-      ? Math.floor(openTimeInput)
-      : new Date(openTimeInput || Date.now()).getTime();
+  let numericOpenTime = Date.now();
+  if (typeof openTimeInput === "number" && !isNaN(openTimeInput)) {
+    numericOpenTime = Math.floor(openTimeInput);
+  } else if (typeof openTimeInput === "string") {
+    if (openTimeInput !== "NaN" && openTimeInput !== "null") {
+      // Try to parse as integer first (e.g. "1786345626210")
+      const asInt = parseInt(openTimeInput, 10);
+      if (!isNaN(asInt) && asInt > 0) {
+        numericOpenTime = asInt;
+      } else {
+        // Fallback to Date parse
+        const parsed = new Date(openTimeInput).getTime();
+        if (!isNaN(parsed)) {
+          numericOpenTime = parsed;
+        }
+      }
+    }
+  }
 
   const existing = await db
     .prepare(

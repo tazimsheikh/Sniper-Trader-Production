@@ -167,7 +167,7 @@ const SimulationProvider = {
         price,
         opts.stopLoss,
         opts.takeProfit,
-        { clientId: opts.clientId, botId: opts.botId }
+        { clientId: opts.clientId }
       );
     } else {
       return (global as any).__SIM_MOCK_ACCOUNT__?.createLimitSellOrder(
@@ -176,7 +176,7 @@ const SimulationProvider = {
         price,
         opts.stopLoss,
         opts.takeProfit,
-        { clientId: opts.clientId, botId: opts.botId }
+        { clientId: opts.clientId }
       );
     }
   },

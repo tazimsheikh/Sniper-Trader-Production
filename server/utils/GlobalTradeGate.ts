@@ -82,15 +82,7 @@ class GlobalTradeGate {
       };
     }
 
-    // 🚫 Rule 5: Strict Anti-Hedging (Prop Firm Compliance) 🚫🚫🚫🚫🚫🚫🚫🚫
-    for (const [id, t] of trades.entries()) {
-      if (t.pair === pair && t.direction !== direction) {
-        return {
-          approved: false,
-          reason: `Anti-Hedging Block: Cannot open ${direction} on ${pair} because trade ${id} is currently ${t.direction}`,
-        };
-      }
-    }
+    // dYs Rule 4 & 5 Removed per user request.
 
     // 🚫 Rule 6: Currency Exposure Cap (DESIGN-7: Max 3 positions per currency) 🚫
     const MAX_CURRENCY_EXPOSURE = 3;
@@ -130,18 +122,15 @@ class GlobalTradeGate {
     traderType: TraderType,
     placeOrderFn: () => Promise<void>,
   ): Promise<{ approved: boolean; reason?: string }> {
-    // Wait for any in-progress lock for this profile
-    while (this.locks.has(profileId)) {
-      await this.locks.get(profileId);
-    }
-
     let resolveLock!: () => void;
-    this.locks.set(
-      profileId,
-      new Promise((r) => {
-        resolveLock = r;
-      }),
-    );
+    const newLock = new Promise<void>((r) => {
+      resolveLock = r;
+    });
+
+    const previousLock = this.locks.get(profileId) || Promise.resolve();
+    this.locks.set(profileId, previousLock.then(() => newLock).catch(() => newLock));
+
+    await previousLock;
 
     try {
       const check = this.canTrade(profileId, pair, direction, traderType);
@@ -156,7 +145,9 @@ class GlobalTradeGate {
       this.register(profileId, tradeId, pair, direction, traderType);
       return { approved: true };
     } finally {
-      this.locks.delete(profileId);
+      if (this.locks.get(profileId) === newLock) {
+        this.locks.delete(profileId);
+      }
       resolveLock();
     }
   }

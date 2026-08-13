@@ -61,9 +61,20 @@ import { HTFContextTracker } from "../market/HTFContextTracker.js";
 import { getShortHash } from "../../core/crypto.js";
 
 function getFixedEstDate(date = /* @__PURE__ */ new Date()) {
-  if (global.__SIM_TIME_PROVIDER__) return global.__SIM_TIME_PROVIDER__(date);
-  const estStr = date.toLocaleString("en-US", { timeZone: "America/New_York" });
-  return new Date(estStr + " UTC");
+  if ((global as any).__SIM_TIME_PROVIDER__) {
+    return (global as any).__SIM_TIME_PROVIDER__(date);
+  }
+  const y = date.getUTCFullYear();
+  const marchFirst = new Date(Date.UTC(y, 2, 1));
+  const daysToFirstSunday = (7 - marchFirst.getUTCDay()) % 7;
+  const secondSundayMarch = new Date(Date.UTC(y, 2, 1 + daysToFirstSunday + 7, 7, 0, 0));
+  const novFirst = new Date(Date.UTC(y, 10, 1));
+  const daysToFirstSunNov = (7 - novFirst.getUTCDay()) % 7;
+  const firstSundayNov = new Date(Date.UTC(y, 10, 1 + daysToFirstSunNov, 6, 0, 0));
+  const t = date.getTime();
+  const isDST = t >= secondSundayMarch.getTime() && t < firstSundayNov.getTime();
+  const offsetHours = isDST ? -4 : -5;
+  return new Date(t + offsetHours * 60 * 60 * 1000);
 }
 async function runMageBot(orch: any, symbol: string, state: any, c: any) {
   const mageConfigs = PairConfigManager.getMageConfigs(symbol);
@@ -306,7 +317,12 @@ export async function _runMageBotForConfig(orch: any, symbol: string, state: any
   }
   if (!os.orBuilt || os.orHigh === -Infinity || os.currentOrbDateStr !== dateStr) return;
 
-  const thisConfigActive = (state.activeTrades ?? []).some((t: any) => t.clientId === sig);
+  const thisConfigActive = (state.activeTrades ?? []).some((t: any) => {
+    if (t.clientId === sig) return true;
+    if (orch.sigMap && orch.sigMap[t.clientId] === sig) return true;
+    if (t.clientId?.startsWith("M_" + getShortHash(sig))) return true;
+    return false;
+  });
   if (thisConfigActive) return;
 
   // 🚫 Check Rollover Circuit Breaker + Pair-Specific Toxic Hours (No entry allowed)
@@ -758,10 +774,17 @@ async function placeMageLimitOrder(orch: any, symbol: string, state: any, c: any
       "ALGO",
     );
     if (!check.approved) {
-      logger.info(`[DiscretionaryTrader] â›” Global Trade Gate blocked Mage on ${symbol}: ${check.reason}`);
+      logger.info(`[DiscretionaryTrader] ⛔ Global Trade Gate blocked Mage on ${symbol}: ${check.reason}`);
       return;
     }
     
+    // Pre-register immediately to close the race window between canTrade() and the
+    // async broker call. A second concurrent candle event hitting canTrade() for the
+    // same pair+direction will now be blocked by Rule 4 (duplicate block).
+    // Key format: PRE_{sig} — swapped to real orderId on broker confirmation.
+    const preRegKey = `PRE_${sig}`;
+    globalTradeGate.register(orch.profileId, preRegKey, symbol, os.breakoutDir, "ALGO");
+
     enqueueMetaApiRequest(
       async () => {
         const conn = await getSharedConnection(token, accId);
@@ -782,12 +805,12 @@ async function placeMageLimitOrder(orch: any, symbol: string, state: any, c: any
           const actualUserId = tp ? tp.user_id : 0;
           await db.prepare(`
             INSERT INTO bot_trade_states
-              (user_id, profile_id, bot_id, broker_symbol, direction, entry_price, sl_price, tp_price,
+              (user_id, profile_id, bot_id, broker_symbol, direction, entry_price, sl_price, original_sl, tp_price,
                lots, open_time, meta_order_id, t1_hit, highest_price, lowest_price, initial_risk_pips, status, client_id, manages_own_trailing)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, ?, ?, ?, 'PLACING', ?, 1)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, ?, ?, ?, 'PLACING', ?, 1)
           `).run(
             actualUserId, orch.profileId, botId.toUpperCase(), brokerSymbol, os.breakoutDir,
-            pEntry, pSl, pTp, calculatedVolume, Date.now(),
+            pEntry, pSl, pSl, pTp, calculatedVolume, Date.now(),
             pEntry, pEntry, Math.abs(pEntry - pSl) / pipSize, shortClientId
           );
         } catch (dbErr: any) {
@@ -817,24 +840,33 @@ async function placeMageLimitOrder(orch: any, symbol: string, state: any, c: any
             }
           } catch (err: any) {
             if (isBrokerPriceOrStopsError(err)) {
-              logger.info(`[MageEngine] âš ï¸ Broker rejected limit order on ${brokerSymbol} (${err.message}). Executing Smart Market Fallback...`);
+              logger.info(`[MageEngine] ⚠️ Broker rejected limit order on ${brokerSymbol} (${err.message}). Executing Smart Market Fallback...`);
 
               // --- Smart Fallback Safety Checks ---
-              const isBuy = os.breakoutDir === "BUY";
-              const hitSl = isBuy ? (currentPrice <= pSl) : (currentPrice >= pSl);
-              const hitTp = isBuy ? (currentPrice >= pTp) : (currentPrice <= pTp);
+              const elapsed = Date.now() - (os.limitPlacedAt || Date.now()); // Fallback start time approximation
+              if (elapsed > 2500) {
+                logger.info(`[MageEngine] 🛑 Smart Market Fallback Aborted: Broker took ${elapsed}ms to reject limit order, market may have moved.`);
+                globalTradeGate.release(orch.profileId, preRegKey);
+                return;
+              }
+
+              const latestPrice = isBuy ? c.close + spreadPts : c.close;
+              const hitSl = isBuy ? (latestPrice <= pSl) : (latestPrice >= pSl);
+              const hitTp = isBuy ? (latestPrice >= pTp) : (latestPrice <= pTp);
               if (hitSl || hitTp) {
-                logger.info(`[MageEngine] ðŸ›‘ Smart Market Fallback Aborted: Price already hit ${hitSl ? 'Stop Loss' : 'Take Profit'}!`);
-                return { abortedFallback: true };
+                logger.info(`[MageEngine] 🛑 Smart Market Fallback Aborted: Live price already hit ${hitSl ? 'Stop Loss' : 'Take Profit'}!`);
+                globalTradeGate.release(orch.profileId, preRegKey);
+                return;
               }
               
               const totalDist = Math.abs(pTp - pEntry);
-              const currentDist = isBuy ? (currentPrice - pEntry) : (pEntry - currentPrice);
+              const currentDist = isBuy ? (latestPrice - pEntry) : (pEntry - latestPrice);
               const pctTowardsTp = currentDist / totalDist;
               
               if (pctTowardsTp >= 0.10) {
-                 logger.info(`[MageEngine] ðŸ›‘ Smart Market Fallback Aborted: Price slipped ${Math.round(pctTowardsTp * 100)}% towards TP (Threshold: 10%)`);
-                 return { abortedFallback: true };
+                 logger.info(`[MageEngine] 🛑 Smart Market Fallback Aborted: Live price slipped ${Math.round(pctTowardsTp * 100)}% towards TP (Threshold: 10%)`);
+                 globalTradeGate.release(orch.profileId, preRegKey);
+                 return;
               }
               // ------------------------------------
 
@@ -842,14 +874,14 @@ async function placeMageLimitOrder(orch: any, symbol: string, state: any, c: any
               const stopsLevelPts = liveSpec?.stopsLevel || (staticSpec as any).stopsLevel || 0;
               const safePrices = calculateStopsLevelSafePrices(
                 os.breakoutDir as "BUY" | "SELL",
-                currentPrice,
+                latestPrice,
                 pSl,
                 pTp,
                 stopsLevelPts,
                 liveSpec?.tickSize || staticSpec.tickSize || 0.00001,
                 liveSpec?.digits || staticSpec.digits || 5
               );
-              logger.info(`[MageEngine] ðŸ›¡ï¸ Smart Market Fallback Prices: Entry=${currentPrice}, SL=${safePrices.pSl}, TP=${safePrices.pTp} (stopsLevel=${stopsLevelPts}pts)`);
+              logger.info(`[MageEngine] 🛡️ Smart Market Fallback Prices: Entry=${latestPrice}, SL=${safePrices.pSl}, TP=${safePrices.pTp} (stopsLevel=${stopsLevelPts}pts)`);
               res = os.breakoutDir === "BUY"
                 ? await conn.createMarketBuyOrder(brokerSymbol, calculatedVolume, safePrices.pSl, safePrices.pTp, { clientId: shortClientId })
                 : await conn.createMarketSellOrder(brokerSymbol, calculatedVolume, safePrices.pSl, safePrices.pTp, { clientId: shortClientId });
@@ -867,6 +899,8 @@ async function placeMageLimitOrder(orch: any, symbol: string, state: any, c: any
         os.tradeTakenDate = os.currentDateStr;
         os.tradeTakenOnOrbDay = os.currentDateStr;
         os.mageTradeTakenToday = true;
+        // Swap pre-registration to real broker order ID
+        globalTradeGate.release(orch.profileId, preRegKey);
         globalTradeGate.register(
           orch.profileId,
           res.orderId,
@@ -874,7 +908,7 @@ async function placeMageLimitOrder(orch: any, symbol: string, state: any, c: any
           os.breakoutDir,
           "ALGO",
         );
-        logger.info(`[DiscretionaryTrader] ðŸš€ ${os.breakoutDir} LIMIT PLACED on ${brokerSymbol} via Mage at ${os.limitPrice} at ${new Date(c.timestamp).toISOString()}`);
+        logger.info(`[DiscretionaryTrader] 🚀 ${os.breakoutDir} LIMIT PLACED on ${brokerSymbol} via Mage at ${os.limitPrice} at ${new Date(c.timestamp).toISOString()}`);
         orch.addEyeFeedEvent({
           type: "TRADE_ENTERED",
           bot_id: botId,
@@ -903,6 +937,8 @@ Risk: ${riskPct.toFixed(2)}%`;
       orch.profileId
     ).catch((err) => {
       logger.error(`[PLACE_LIMIT_MAGE] ERROR:`, err);
+      // Release the pre-registration lock so future retries/setups can proceed
+      globalTradeGate.release(orch.profileId, preRegKey);
       // Reset fired flag so the day is not permanently locked on broker failure
       os.fired = false;
       os.mageTradeTakenToday = false;
@@ -1013,7 +1049,7 @@ export async function checkMageLimitFill(orch: any, sessionPair: string, state: 
             state.activeTrades.push(newTradeRec);
           }
           if (!state.activeTrade) state.activeTrade = newTradeRec;
-          logger.info(`[DiscretionaryTrader] âœ… Mage Limit Filled on ${baseSymbol} (Config: ${sig}) at ${pos.openPrice}`);
+          logger.info(`[DiscretionaryTrader] ✅ Mage Limit Filled on ${baseSymbol} (Config: ${sig}) at ${pos.openPrice}`);
         }
       } catch (e) {
         logger.error(`[DiscretionaryTrader] Error checking Mage limit for ${sig}:`, e);
@@ -1038,18 +1074,28 @@ export async function evaluateMageTrailingOnTick(
       // Check if it's a pending limit order with no active trade attached
       if (os && os.limitOrderId && (!state.activeTrades || !state.activeTrades.find((t: any) => t.clientId === sig || t.metaOrderId === os.limitOrderId))) {
         let tpSwept = false;
+        let slSwept = false;
+        
+        // M-4 PARITY: Check TP sweeps using candle extremes
         if (os.breakoutDir === "SELL" && c.low <= os.tpPrice) {
           tpSwept = true;
         } else if (os.breakoutDir === "BUY" && c.high >= os.tpPrice) {
           tpSwept = true;
         }
+        
+        // MISSING FILL SL SWEEP: Check SL sweeps using live ticks (c.close) to avoid polluting from pre-breakout wicks
+        if (os.breakoutDir === "SELL" && c.close >= os.slPrice) {
+          slSwept = true;
+        } else if (os.breakoutDir === "BUY" && c.close <= os.slPrice) {
+          slSwept = true;
+        }
 
-        if (tpSwept) {
+        if (tpSwept || slSwept) {
           try {
             const conn = await getSharedConnection(orch.profileId);
             const cancelPromise = enqueueMetaApiRequest(
               async () => await conn.cancelOrder(os.limitOrderId),
-              `CancelTPSweptMageLimitOrder:${sessionPair}:${sig}`
+              `CancelSweptMageLimitOrder:${sessionPair}:${sig}`
             );
             if (orch.pendingPromises) orch.pendingPromises.push(cancelPromise);
           } catch (_e) { /* ignore cancel errors */ }
@@ -1058,7 +1104,7 @@ export async function evaluateMageTrailingOnTick(
           os.fired = true;
           os.mageTradeTakenToday = true;
           if (!(global as any).testParitySuppressLogging) {
-            logger.info(`[MageEngine] ${sessionPair} Cancelled pending limit order — TP boundary swept before fill.`);
+            logger.info(`[MageEngine] ${sessionPair} Cancelled pending limit order — ${tpSwept ? 'TP' : 'SL'} boundary swept before fill.`);
           }
         }
       }
@@ -1071,6 +1117,7 @@ export async function evaluateMageTrailingOnTick(
   }
   const mageTrades = allTracked.filter((t: any) => {
     const id = t.botId?.toUpperCase() || "";
+    if (targetBotId.toUpperCase() !== "BLACKSWAN" && id === "DISCRETIONARY_TRADER") return true;
     return id.startsWith(targetBotId.toUpperCase());
   });
   if (mageTrades.length === 0) return;
@@ -1154,10 +1201,11 @@ export async function evaluateMageTrailingOnTick(
         if (state.activeTrades) {
           state.activeTrades = state.activeTrades.filter((t: any) => t.metaOrderId !== trade.metaOrderId);
         }
+        continue;
       } catch (e: any) {
         const errMsg = e?.message || e?.toString() || "";
         if (errMsg.includes("Position not found") || errMsg.includes("Order not found")) {
-          console.log(`[MageEngine] â„¹ï¸ Position ${trade.metaOrderId} (${baseSymbol}) already closed on broker. Marking as CLOSED in DB.`);
+          console.log(`[MageEngine] â„¹ï¸  Position ${trade.metaOrderId} (${baseSymbol}) already closed on broker. Marking as CLOSED in DB.`);
           await db
             .prepare("UPDATE bot_trade_states SET status = 'CLOSED' WHERE id = ?")
             .run(trade.dbId);
@@ -1174,19 +1222,21 @@ export async function evaluateMageTrailingOnTick(
       }
     }
 
+    const brokerDigits = getSymbolSpec(baseSymbol.split("_")[0]).digits || 5;
     const spread = OPTIMIZER_CONFIG[baseSymbol.replace(".Daily", "")]?.spread; 
     const spreadPts = spread !== undefined ? spread * pipSize : 0;
     const highestReached = isBuy ? c.high : c.low + spreadPts;
-    const floatingPips = isBuy
-      ? (highestReached - trade.entryPrice) / pipSize
-      : (trade.entryPrice - highestReached) / pipSize;
-    const currentR = Number((floatingPips / riskPips).toFixed(5));
+    const actualRisk = Math.abs(trade.entryPrice - originalSl);
+
+    const currentR = isBuy
+      ? (highestReached - trade.entryPrice) / actualRisk
+      : (trade.entryPrice - highestReached) / actualRisk;
+
     const tTrig = config.trailingSlTrigger;
 
     const clog = (global as any).__ORIGINAL_LOG__ || console.log;
-    if (baseSymbol === "XAUUSD") {
-      clog(`[DEBUG MAGE TRAIL TICK] ts=${new Date(c.timestamp).toISOString()} isBuy=${isBuy} entry=${trade.entryPrice} sl=${trade.slPrice} c.high=${c.high} c.low=${c.low} riskPips=${riskPips} currentR=${currentR.toFixed(3)} tTrig=${tTrig} step=${config.trailingSlStep}`);
-    }
+    const botLabel = trade.botId === "discretionary_trader" ? "MANUAL" : "MAGE";
+    clog(`📈 Trailing Eval (${botLabel}) ${baseSymbol}: FloatingR=${currentR >= 0 ? "+" : ""}${currentR.toFixed(2)}R | BreakEvenTrigger=${tTrig}R | Step=${config.trailingSlStep}R | CurrentSL=${trade.slPrice} | Entry=${trade.entryPrice}`);
 
     if (trade.lastTrailingLevel === undefined) trade.lastTrailingLevel = -1;
     let mageShouldUpdate = false;
@@ -1210,7 +1260,7 @@ export async function evaluateMageTrailingOnTick(
         const rLevelToLock = numSteps * tStep;
         if (rLevelToLock > trade.lastTrailingLevel) {
           trade.lastTrailingLevel = rLevelToLock;
-          const proposedSL = trade.entryPrice + rLevelToLock * riskPips * pipSize;
+          const proposedSL = Number((trade.entryPrice + rLevelToLock * actualRisk).toFixed(brokerDigits));
           if (proposedSL > trade.slPrice && proposedSL > mageNewSl) {
             mageNewSl = proposedSL;
             mageShouldUpdate = true;
@@ -1228,7 +1278,7 @@ export async function evaluateMageTrailingOnTick(
         const rLevelToLock = numSteps * tStep;
         if (rLevelToLock > trade.lastTrailingLevel) {
           trade.lastTrailingLevel = rLevelToLock;
-          const proposedSL = trade.entryPrice - rLevelToLock * riskPips * pipSize;
+          const proposedSL = Number((trade.entryPrice - rLevelToLock * actualRisk).toFixed(brokerDigits));
           if (proposedSL < trade.slPrice && proposedSL < mageNewSl) {
             mageNewSl = proposedSL;
             mageShouldUpdate = true;
@@ -1251,11 +1301,13 @@ export async function evaluateMageTrailingOnTick(
       trade.slPrice = roundedSl;
       (trade as any).lastSentSlPrice = roundedSl;
       try {
-        await enqueueMetaApiRequest(async () => {
-          const conn = await getSharedConnection(orch.token, orch.accountId);
-          await conn.modifyPosition(trade.metaOrderId, { stopLoss: roundedSl });
-        }, `TrailMAGE:${sessionPair}`, undefined, undefined, orch.profileId);
-        logger.info(`[DiscretionaryTrader] ðŸ›¡ï¸ MAGE Continuous 0.5R Trail: ${sessionPair} SL updated to ${roundedSl}`);
+        if (!trade.isVirtualSlMode) {
+          await enqueueMetaApiRequest(async () => {
+            const conn = await getSharedConnection(orch.token, orch.accountId);
+            await conn.modifyPosition(trade.metaOrderId, roundedSl, trade.tpPrice || null);
+          }, `TrailMAGE:${sessionPair}`, undefined, undefined, orch.profileId);
+        }
+        logger.info(`[DiscretionaryTrader] ðŸ›¡ï¸  MAGE Continuous 0.5R Trail: ${sessionPair} SL updated to ${roundedSl}`);
         orch.addEyeFeedEvent({
           type: "TRAILING_SL",
           bot_id: trade.botId || targetBotId,
@@ -1264,16 +1316,24 @@ export async function evaluateMageTrailingOnTick(
             decision: "TRAIL",
             setupType: "ORB Breakout",
             sl: roundedSl,
-            reasoning: `ðŸ›¡ï¸ MAGE Continuous Trail SL updated to ${roundedSl}`
+            reasoning: `ðŸ›¡ï¸  MAGE Continuous Trail SL updated to ${roundedSl}`
           }
         });
 
         const updateStmt = db.prepare(
-          "UPDATE bot_trade_states SET sl_price = ? WHERE id = ?",
+          "UPDATE bot_trade_states SET sl_price = ?, highest_price = ?, lowest_price = ? WHERE id = ?",
         );
-        updateStmt.run(roundedSl, trade.dbId);
+        const newHighest = trade.direction === "BUY"
+          ? Math.max(trade.highestPrice || trade.entryPrice, c.high)
+          : (trade.highestPrice || trade.entryPrice);
+        const newLowest = trade.direction === "SELL"
+          ? Math.min(trade.lowestPrice || trade.entryPrice, c.low)
+          : (trade.lowestPrice || trade.entryPrice);
+        trade.highestPrice = newHighest;
+        trade.lowestPrice = newLowest;
+        updateStmt.run(roundedSl, newHighest, newLowest, trade.dbId);
       } catch (err: any) {
-        logger.error(`[DiscretionaryTrader] âš ï¸ Failed to update MAGE 0.5R Trail for ${sessionPair}:`, err.message);
+        logger.error(`[DiscretionaryTrader] âš ï¸  Failed to update MAGE 0.5R Trail for ${sessionPair}:`, err.message);
       }
     }
   }

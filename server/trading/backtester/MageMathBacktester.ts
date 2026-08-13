@@ -77,7 +77,7 @@ export async function runMathBacktest(
 
     console.log(`🔱 Mage Math Backtest — ${pair}`);
     const startD = startDate
-      ? new Date(new Date(startDate).getTime() - 15 * 24 * 60 * 60 * 1000)
+      ? new Date(new Date(startDate).getTime() - 30 * 24 * 60 * 60 * 1000)
       : undefined;
     const endD = endDate ? new Date(new Date(endDate).getTime() + 86400000 - 1) : undefined;
 

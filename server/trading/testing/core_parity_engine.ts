@@ -1,5 +1,6 @@
 import { runMathBacktest } from "../backtester/MageMathBacktester.js";
 import { runSageMathBacktest } from "../backtester/SageMathBacktester.js";
+import { runMathBacktest as runSeerMathBacktest } from "../backtester/SeerMathBacktester.js";
 import { runShadowBacktest } from "../backtester/OrchestratorShadowBacktester.js";
 import { PairConfigManager } from "../config/PairConfig.js";
 
@@ -38,6 +39,10 @@ async function main() {
         const configs = PairConfigManager.getSageConfigs(pair);
         const res = await runSageMathBacktest(pair, startDate, endDate, false, undefined, configs, true);
         t1Taken = res.records.filter((r: any) => r.outcome !== "SKIPPED" && r.outcome !== "NO_TRADE");
+    } else if (bot === "SEER") {
+        const configs = PairConfigManager.getSeerConfigs(pair);
+        const res = await runSeerMathBacktest(pair, startDate, endDate, false);
+        t1Taken = res.records.filter((r: any) => r.outcome !== "SKIPPED" && r.outcome !== "NO_TRADE");
     }
 
     const targetStartMs = new Date(startDate).getTime();
@@ -56,7 +61,8 @@ async function main() {
 
     const t2Config = { 
         enableMage: bot === "MAGE", 
-        enableSage: bot === "SAGE" 
+        enableSage: bot === "SAGE",
+        enableSeer: bot === "SEER"
     };
 
     const tier2Full = await runShadowBacktest(pair, startDate, endDate, t2Config);

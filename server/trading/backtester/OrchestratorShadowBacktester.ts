@@ -138,7 +138,8 @@ export async function runShadowBacktest(pair: string, startDate?: string, endDat
   orch.activeBots.clear();
   if (options.enableMage) orch.activeBots.add('mage');
   if (options.enableSage) orch.activeBots.add('sage');
-  orch.activeBots.delete('seer');
+  if (options.enableSeer) orch.activeBots.add('seer');
+  else orch.activeBots.delete('seer');
 
   // Ensure pair state has bots enabled
   const normalizedPair = pair.replace('.Daily', '');
@@ -156,7 +157,7 @@ export async function runShadowBacktest(pair: string, startDate?: string, endDat
     if (state) {
       state.botConfigs.set('mage', { enabled: !!options.enableMage, risk: 10 });
       state.botConfigs.set('sage', { enabled: !!options.enableSage, risk: 10 });
-      state.botConfigs.set('seer', { enabled: false, risk: 0 });
+      state.botConfigs.set('seer', { enabled: !!options.enableSeer, risk: 10 });
     }
   }
 

@@ -1,12 +1,39 @@
 import db from "../core/db.js";
 import { getSharedConnection } from "../trading/broker/metaApiHandler.js";
 
-const INDICES = [
+const PAIRS_TO_DISCOVER = [
+  // Indices
   { base: "GER40", pattern: /^(GER|DAX|DE)[34]0/i },
   { base: "US30", pattern: /^(US|DJ|WS|DOW)[34]0/i },
   { base: "NAS100", pattern: /^(NAS|US100|USTEC|NDX|NQ)/i },
   { base: "SPX500", pattern: /^(US500|SP500|SPX|S&P)/i },
   { base: "JPN225", pattern: /^(JPN|JP|NIKKEI)225/i },
+  // Crypto
+  { base: "BTCUSD", pattern: /^(BTCUSD|BITCOIN)/i },
+  { base: "ETHUSD", pattern: /^(ETHUSD|ETHEREUM)/i },
+  // Commodities
+  { base: "XAUUSD", pattern: /^(XAUUSD|GOLD)/i },
+  { base: "XTIUSD", pattern: /^(XTIUSD|USOIL|WTI)/i },
+  // Majors & Minors
+  { base: "EURUSD", pattern: /^EURUSD/i },
+  { base: "GBPUSD", pattern: /^GBPUSD/i },
+  { base: "USDCAD", pattern: /^USDCAD/i },
+  { base: "USDJPY", pattern: /^USDJPY/i },
+  { base: "AUDUSD", pattern: /^AUDUSD/i },
+  { base: "NZDUSD", pattern: /^NZDUSD/i },
+  { base: "USDCHF", pattern: /^USDCHF/i },
+  // Crosses
+  { base: "EURNZD", pattern: /^EURNZD/i },
+  { base: "EURAUD", pattern: /^EURAUD/i },
+  { base: "EURCAD", pattern: /^EURCAD/i },
+  { base: "EURJPY", pattern: /^EURJPY/i },
+  { base: "GBPJPY", pattern: /^GBPJPY/i },
+  { base: "GBPAUD", pattern: /^GBPAUD/i },
+  { base: "GBPCAD", pattern: /^GBPCAD/i },
+  { base: "GBPNZD", pattern: /^GBPNZD/i },
+  { base: "AUDJPY", pattern: /^AUDJPY/i },
+  { base: "CADJPY", pattern: /^CADJPY/i },
+  { base: "CHFJPY", pattern: /^CHFJPY/i },
 ];
 
 export async function discoverBrokerSymbols(profileId: number, token: string, accountId: string) {
@@ -21,48 +48,75 @@ export async function discoverBrokerSymbols(profileId: number, token: string, ac
         throw e;
       }
     }
-    console.log(`[AutoDiscover] Fetching all symbols for profile ${profileId}...`);
-    let symbolsRaw: any[] = [];
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        symbolsRaw = await conn.getSymbols();
-        break;
-      } catch (e: any) {
-        if (attempt < 3 && (e.message?.includes("rateLimiting") || e.message?.includes("500 cpu credits"))) {
-          console.warn(`[AutoDiscover] MetaAPI rate limited on attempt ${attempt}. Retrying in 1.5s...`);
-          await new Promise(r => setTimeout(r, 1500));
-        } else {
-          throw e;
-        }
-      }
-    }
-    console.log(`[AutoDiscover] Fetched ${symbolsRaw.length} symbols.`);
-    const symbols = symbolsRaw.map(s => typeof s === 'string' ? s : s.symbol);
+    console.log(`[AutoDiscover] Commencing suffix-probing discovery for profile ${profileId}...`);
     
+    let SUFFIXES = ['.m', '.a', '.ecn', '.p', 'c', 'x', '_m', '.pro', '.raw', '.cash', '.Daily', '.daily', ''];
+    const INDEX_ALIASES: Record<string, string[]> = {
+      "GER40": ["GER40", "DAX40", "DE40", "GER30", "DE30", "GDAXI", "DAX30", "DAX", ".DE40", ".GER40"],
+      "US30": ["US30", "DJ30", "WS30", "DOW30", ".US30"],
+      "NAS100": ["NAS100", "US100", "USTEC", "NDX", "NQ100", ".NAS100"],
+      "SPX500": ["SPX500", "US500", "SP500", "SPX", ".SPX500"],
+      "JPN225": ["JPN225", "JP225", "NIKKEI225", ".JPN225"],
+      "XAUUSD": ["XAUUSD", "GOLD"],
+      "XTIUSD": ["XTIUSD", "USOIL", "WTI"],
+      "BTCUSD": ["BTCUSD", "BITCOIN"],
+      "ETHUSD": ["ETHUSD", "ETHEREUM"],
+    };
+
     const newMap: Record<string, string> = {};
     
-    for (const { base, pattern } of INDICES) {
-      // Find all matches
-      const matches = symbols.filter(s => pattern.test(s));
-      if (matches.length === 0) {
-        console.log(`[AutoDiscover] No match found for ${base}`);
-        continue;
+    for (const { base } of PAIRS_TO_DISCOVER) {
+      const aliases = INDEX_ALIASES[base] || [base];
+      const candidates: { candidate: string, suffix: string }[] = [];
+      
+      // Build candidate list prioritizing the dynamically learned fastest suffix
+      for (const alias of aliases) {
+        for (const suffix of SUFFIXES) {
+          candidates.push({ candidate: alias + suffix, suffix });
+        }
+      }
+
+      let found = false;
+      for (const { candidate, suffix } of candidates) {
+        let attempts = 0;
+        
+        while (attempts < 3) {
+          attempts++;
+          try {
+            // Slow down slightly to stay under the 500 CPU credits per 1s limit
+            await new Promise(r => setTimeout(r, 10)); 
+            const spec = await conn.getSymbolSpecification(candidate);
+            
+            if (spec && spec.tradeMode !== 'DISABLED' && spec.tradeMode !== 'CALCULATE') {
+              newMap[base] = candidate;
+              newMap[`${base}.Daily`] = candidate;
+              console.log(`[AutoDiscover] ✅ Mapped ${base} -> ${candidate} (tradeMode: ${spec.tradeMode})`);
+              found = true;
+              
+              // Optimization: Prioritize this suffix for subsequent pairs to drop search time from 60s to <2s
+              const suffixIdx = SUFFIXES.indexOf(suffix);
+              if (suffixIdx > 0) {
+                SUFFIXES.splice(suffixIdx, 1);
+                SUFFIXES.unshift(suffix);
+              }
+            }
+            break; // Break the retry loop (either found or not disabled, move to next or exit)
+          } catch (e: any) {
+            if (e.message?.includes("rateLimiting") || e.message?.includes("cpu credits")) {
+              console.warn(`[AutoDiscover] Rate limit hit probing ${candidate}. Backing off 1s (Attempt ${attempts}/3)...`);
+              await new Promise(r => setTimeout(r, 1000));
+            } else {
+              // Symbol doesn't exist, break the retry loop and try next candidate
+              break;
+            }
+          }
+        }
+        if (found) break; // Break candidate loop if we found the symbol
       }
       
-      // If multiple matches, we prefer the one without "." suffix (like .Daily)
-      // and we prefer exact matches or shorter strings if both have no suffix
-      matches.sort((a, b) => {
-        const aHasSuffix = a.includes('.');
-        const bHasSuffix = b.includes('.');
-        if (aHasSuffix && !bHasSuffix) return 1; // b is better
-        if (!aHasSuffix && bHasSuffix) return -1; // a is better
-        return a.length - b.length; // shorter is usually the standard one
-      });
-      
-      const bestMatch = matches[0];
-      newMap[base] = bestMatch;
-      newMap[`${base}.Daily`] = bestMatch;
-      console.log(`[AutoDiscover] Mapped ${base} / ${base}.Daily -> ${bestMatch} (out of ${matches.join(', ')})`);
+      if (!found) {
+        console.log(`[AutoDiscover] ❌ No tradable match found for ${base}`);
+      }
     }
     
     if (Object.keys(newMap).length > 0) {

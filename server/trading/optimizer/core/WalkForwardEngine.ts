@@ -66,7 +66,17 @@ export class WalkForwardEngine {
           }
           break;
         } else {
-          // We have a full IS slice, but partial OOS slice. Clamp OOS to the end of data.
+          // We have a full IS slice, but partial OOS slice. 
+          // CUTOFF RULE: Drop the partial window if it has less than 14 days of data
+          const partialDuration = lastTime - currentISEnd.getTime();
+          const FOURTEEN_DAYS_MS = 14 * 24 * 60 * 60 * 1000;
+          
+          if (partialDuration < FOURTEEN_DAYS_MS) {
+            console.log(`[WFA] Dropping final partial OOS window (only ${Math.round(partialDuration/86400000)} days, < 14 days required)`);
+            break;
+          }
+          
+          // Clamp OOS to the end of data.
           currentOOSEnd.setTime(lastTime);
           isFinalPartialWindow = true;
         }

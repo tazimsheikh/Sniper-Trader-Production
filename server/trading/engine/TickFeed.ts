@@ -22,7 +22,7 @@
 import { PairConfigManager } from "../config/PairConfig.js";
 import { createHash } from "crypto";
 import db from "../../core/db.js";
-import { logger } from "../../utils/logger.js";
+import { logger, profileContext } from "../../utils/logger.js";
 import {
   safeDecryptAccountId,
   getSharedStreamingConnection,
@@ -38,13 +38,14 @@ for (const [k, v] of Object.entries(BROKER_SYMBOL_MAP)) {
   REVERSE_BROKER_MAP[v] = k;
 }
 
-const DiscretionaryTrader_PAIRS = Array.from(
-  new Set(
-    SP.map((cfg: any) =>
-      cfg.pair.split("_")[0].split(".")[0].replace(/[^A-Z0-9]/g, "").toUpperCase()
-    )
-  )
-);
+const DiscretionaryTrader_PAIRS = [
+  "AUDJPY", "AUDUSD", "BTCUSD", "CADJPY", "CHFJPY",
+  "ETHUSD", "EURAUD", "EURCAD", "EURJPY", "EURNZD",
+  "EURUSD", "GBPAUD", "GBPCAD", "GBPJPY", "GBPNZD",
+  "GBPUSD", "GER40", "JPN225", "NAS100", "NZDUSD",
+  "SPX500", "US30", "USDCAD", "USDCHF", "USDJPY",
+  "XAUUSD", "XTIUSD"
+];
 
 // ── In-memory M1 accumulator per symbol ──────────────────────────────────────
 import type { M1Acc } from "../config/types.js";
@@ -180,11 +181,20 @@ export class TickFeed {
     }
 
     const SYMBOL_FALLBACKS: Record<string, string[]> = {
-      GER40: ["DAX40", "GER40.Daily", "DE40", "GER30", "DE30", "GER40.cash", "GER30.cash", "GER40.ecn", "GER40.m", "GER40_m", "GER30_m", "DAX", "DAX30", "GDAXI", ".DE40", ".GER40", "DE40.cash", "DE30.cash"],
-      US30: ["US30.Daily", "US30.cash", "US30.ecn", "US30.m", "DJ30", "DOW30", "WS30", "US30_m", ".US30"],
+      GER40: ["DE40", "DAX40", "GER30", "DE30", "GER40.cash", "GER40.ecn", "DE40.cash", "DAX", "GDAXI", ".DE40", ".GER40", "GER40.Daily", "GER40.m"],
+      UK100: ["UK100.Daily", "FTSE100", "UK100.cash", "UK100.ecn"],
+      US30: ["US30.Daily", "DJ30", "DOWJONES", "US30.cash", "US30.ecn", "US30.m", ".US30"],
       NAS100: ["NAS100.Daily", "US100", "USTEC", "NDX100", "NAS100.cash", "NAS100.ecn", "NAS100.m", ".NAS100"],
       SPX500: ["SPX500.Daily", "US500", "SP500", "SPX500.cash", "SPX500.ecn", "SPX500.m", ".SPX500"],
       JPN225: ["JPN225.Daily", "JP225", "NIKKEI225", "JPN225.cash", "JPN225.ecn", ".JPN225"],
+      XAUUSD: ["GOLD", "XAUUSD.m", "XAUUSD.a", "XAUUSD.ecn", "XAUUSD.Daily", "XAUUSD.cash", "GOLD.m"],
+      GBPJPY: ["GBPJPY.m", "GBPJPY.a", "GBPJPY.ecn", "GBPJPY.Daily"],
+      AUDUSD: ["AUDUSD.m", "AUDUSD.a", "AUDUSD.ecn", "AUDUSD.Daily"],
+      USDJPY: ["USDJPY.m", "USDJPY.a", "USDJPY.ecn", "USDJPY.Daily"],
+      BTCUSD: ["BTCUSD.m", "BTCUSD.a", "BTCUSD.ecn", "BTCUSD.Daily"],
+      ETHUSD: ["ETHUSD.m", "ETHUSD.a", "ETHUSD.ecn", "ETHUSD.Daily"],
+      EURUSD: ["EURUSD.m", "EURUSD.a", "EURUSD.ecn", "EURUSD.Daily"],
+      GBPUSD: ["GBPUSD.m", "GBPUSD.a", "GBPUSD.ecn", "GBPUSD.Daily"],
     };
 
     let mapUpdated = false;
@@ -280,38 +290,46 @@ export class TickFeed {
        * We synthesise M1 bars from these ticks.
        */
       onSymbolPriceUpdated(_instanceIndex: string, price: any) {
-        if (!feed.running) return;
-        feed.processTick(price);
+        profileContext.run(feed.profileId, () => {
+          if (!feed.running) return;
+          feed.processTick(price);
+        });
       },
 
       onSymbolPricesUpdated(_instanceIndex: string, prices: any[]) {
-        if (!feed.running) return;
-        for (const p of prices) {
-          feed.processTick(p);
-        }
+        profileContext.run(feed.profileId, () => {
+          if (!feed.running) return;
+          for (const p of prices) {
+            feed.processTick(p);
+          }
+        });
       },
 
       onDisconnected(_instanceIndex: string) {
-        logger.info("[TickFeed] Streaming disconnected — switching to REST poll fallback.",);
-        if (feed.running && !feed.pollTimer) feed.startPollingFallback();
+        profileContext.run(feed.profileId, () => {
+          logger.info("[TickFeed] Streaming disconnected — switching to REST poll fallback.",);
+          if (feed.running && !feed.pollTimer) feed.startPollingFallback();
+        });
       },
 
       onConnected(_instanceIndex: string, _replicas: number) {
-        logger.info("[TickFeed] ✅ Streaming reconnected — stopping poll fallback.",);
-        if (feed.pollTimer) {
-          clearInterval(feed.pollTimer);
-          feed.pollTimer = null;
-        }
-
-        const orch = LiveOrchestrator.getInstance(feed.profileId);
-        if (orch) {
-          for (const pair of DiscretionaryTrader_PAIRS) {
-            orch.fillHistoryGaps(pair).catch((e) => {
-              logger.error(`[TickFeed] Failed to fill gaps for ${pair}:`,
-                e.message,);
-            });
+        profileContext.run(feed.profileId, () => {
+          logger.info("[TickFeed] ✅ Streaming reconnected — stopping poll fallback.",);
+          if (feed.pollTimer) {
+            clearInterval(feed.pollTimer);
+            feed.pollTimer = null;
           }
-        }
+
+          const orch = LiveOrchestrator.getInstance(feed.profileId);
+          if (orch) {
+            for (const pair of DiscretionaryTrader_PAIRS) {
+              orch.fillHistoryGaps(pair).catch((e) => {
+                logger.error(`[TickFeed] Failed to fill gaps for ${pair}:`,
+                  e.message,);
+              });
+            }
+          }
+        });
       },
 
       // MetaAPI SDK requires these methods to exist, otherwise it throws TypeErrors when trades happen
@@ -377,10 +395,11 @@ export class TickFeed {
     if (this.pollTimer) return;
     logger.info("[TickFeed] 📡 REST poll fallback started (60s interval)");
 
-    this.pollTimer = setInterval(async () => {
-      if (!this.running) return;
-      const orch = LiveOrchestrator.getInstance(this.profileId);
-      if (!orch || !orch.isRunning()) return;
+    this.pollTimer = setInterval(() => {
+      profileContext.run(this.profileId, async () => {
+        if (!this.running) return;
+        const orch = LiveOrchestrator.getInstance(this.profileId);
+        if (!orch || !orch.isRunning()) return;
 
       try {
         const conn = await getSharedStreamingConnection(
@@ -403,18 +422,18 @@ export class TickFeed {
             const ts = new Date(last.time).getTime();
             const periodMs = Math.floor(ts / 60_000) * 60_000;
             const lastClosed = this.lastClosedM1Minute.get(pair) ?? 0;
-            const c = this.m1State.get(pair);
-            if (c) {
-              const prevTs = Number(c.periodMs);
-              logger.verbose(`[TickFeed] ${pair} M1 closed at ${new Date(prevTs).toISOString()} O:${c.open.toFixed(5)} H:${c.high.toFixed(5)} L:${c.low.toFixed(5)} C:${c.close.toFixed(5)}`);
+
+            if (periodMs > lastClosed) {
+              this.lastClosedM1Minute.set(pair, periodMs);
+              logger.verbose(`[TickFeed] ${pair} M1 closed (fallback) at ${new Date(periodMs).toISOString()} O:${last.open.toFixed(5)} H:${last.high.toFixed(5)} L:${last.low.toFixed(5)} C:${last.close.toFixed(5)}`);
               await orch.onM1Tick(
                 pair,
-                c.open,
-                c.high,
-                c.low,
-                c.close,
-                c.vol,
-                prevTs,
+                last.open,
+                last.high,
+                last.low,
+                last.close,
+                last.tickVolume || 1,
+                periodMs,
               );
             }
           } catch (_) {}
@@ -422,6 +441,7 @@ export class TickFeed {
       } catch (err: any) {
         logger.error("[TickFeed] Poll error:", err.message);
       }
+      });
     }, 60_000);
   }
 

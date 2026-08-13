@@ -286,5 +286,7 @@ export async function runSageMathBacktest(
     netPips,
     winRate,
     skipped,
+    totalTrades: tradedRecords.length,
+    netR: tradedRecords.reduce((sum, r) => sum + (r.R || 0), 0),
   };
 }

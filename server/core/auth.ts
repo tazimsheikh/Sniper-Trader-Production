@@ -394,9 +394,23 @@ authRouter.post('/profiles', requireAuth, async (req: AuthRequest, res) => {
       INSERT INTO trading_profiles (user_id, profile_name, metaapi_account_id) VALUES (?, ?, ?)
     `).run(req.user.id, profile_name.trim(), encrypt(cleanAccountId));
 
-    
+    const profileId = result.lastInsertRowid;
 
-    res.json({ success: true, profileId: result.lastInsertRowid });
+    // Auto-discover symbols immediately on profile creation
+    const user = await db.prepare('SELECT metaapi_token FROM users WHERE id = ?').get(req.user.id) as any;
+    if (user && user.metaapi_token) {
+      try {
+        const rawToken = isEncrypted(user.metaapi_token) ? decrypt(user.metaapi_token) : user.metaapi_token;
+        // Run it completely in the background so it doesn't block the UI returning the profile ID
+        discoverBrokerSymbols(Number(profileId), rawToken, cleanAccountId).catch((err: any) => {
+          console.warn(`[AutoDiscover] Background fetch failed for new profile ${profileId}: ${err.message}`);
+        });
+      } catch (err: any) {
+        console.warn(`[AutoDiscover] Crypto error during profile creation for ${profileId}: ${err.message}`);
+      }
+    }
+
+    res.json({ success: true, profileId });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }

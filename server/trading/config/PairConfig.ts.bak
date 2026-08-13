@@ -510,4 +510,24 @@ export const SAGE_PAIR_CONFIG: Record<string, PairConfig[]> = {
   ]
 };
 
-export const SEER_PAIR_CONFIG: Record<string, PairConfig[]> = {};;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+export const SEER_PAIR_CONFIG: Record<string, PairConfig[]> = {
+  'XAUUSD': [
+    {
+      "tickSize": 0.01,
+      "pipSize": 0.1,
+      "spread": 1.5,
+      "session": "NY_Forex",
+      "delayStartMinutes": 0,
+      "cutoffHour": 13,
+      "minBodyPips": 20,
+      "pinBarWickBodyRatio": 1.5,
+      "minSlDist": 40,
+      "maxSlDist": 100,
+      "minTpDist": 40,
+      "defaultTpDist": 100,
+      "maxTpDist": 100,
+      "riskPct": 0.01,
+      "maxH1EmaSlope": 20
+    }
+  ]
+};

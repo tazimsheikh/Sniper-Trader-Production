@@ -10,9 +10,9 @@ if (!process.env.DATABASE_URL) {
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  max: 20,
+  max: 100,
   idleTimeoutMillis: 30000, // 30 seconds (prevents cloud proxy terminations)
-  connectionTimeoutMillis: 30000,
+  connectionTimeoutMillis: 5000,   // fail fast → triggers retry logic sooner
   keepAlive: true,
   keepAliveInitialDelayMillis: 10000,
   ssl:
@@ -45,7 +45,8 @@ class DbStatement {
       const res = await fn();
       const elapsed = Date.now() - startMs;
       if (elapsed > 500) {
-        logger.warn(`[SLOW QUERY] ${elapsed}ms for query: ${this.sql}`);
+        const cleanSql = this.sql.length > 100 ? `${this.sql.substring(0, 100)}...` : this.sql;
+        logger.warn(`[SLOW QUERY] ${elapsed}ms for query: ${cleanSql}`);
       }
       return res;
     } catch (err: any) {
@@ -475,6 +476,9 @@ export async function initDb() {
       END IF;
       IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_bot_trade_states_profile_id') THEN
         CREATE INDEX idx_bot_trade_states_profile_id ON bot_trade_states(profile_id);
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_bot_trade_states_profile_status') THEN
+        CREATE INDEX idx_bot_trade_states_profile_status ON bot_trade_states(profile_id, status);
       END IF;
       IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_profile_pair_configs_profile_id') THEN
         CREATE INDEX idx_profile_pair_configs_profile_id ON profile_pair_configs(profile_id);

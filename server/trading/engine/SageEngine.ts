@@ -50,11 +50,20 @@ const calculateStopsLevelSafePrices = (...args: any[]) => ((global as any).__SIM
 logger.info("[SAGE ENGINE TS LOADED!]");
 
 function getFixedEstDate(date = new Date()) {
-  if (global.__SIM_TIME_PROVIDER__) {
-    return global.__SIM_TIME_PROVIDER__(date);
+  if ((global as any).__SIM_TIME_PROVIDER__) {
+    return (global as any).__SIM_TIME_PROVIDER__(date);
   }
-  const estStr = date.toLocaleString("en-US", { timeZone: "America/New_York" });
-  return new Date(estStr + " UTC");
+  const y = date.getUTCFullYear();
+  const marchFirst = new Date(Date.UTC(y, 2, 1));
+  const daysToFirstSunday = (7 - marchFirst.getUTCDay()) % 7;
+  const secondSundayMarch = new Date(Date.UTC(y, 2, 1 + daysToFirstSunday + 7, 7, 0, 0));
+  const novFirst = new Date(Date.UTC(y, 10, 1));
+  const daysToFirstSunNov = (7 - novFirst.getUTCDay()) % 7;
+  const firstSundayNov = new Date(Date.UTC(y, 10, 1 + daysToFirstSunNov, 6, 0, 0));
+  const t = date.getTime();
+  const isDST = t >= secondSundayMarch.getTime() && t < firstSundayNov.getTime();
+  const offsetHours = isDST ? -4 : -5;
+  return new Date(t + offsetHours * 60 * 60 * 1000);
 }
 
 export async function runSageBot(orch, sessionPair, state, c) {
@@ -186,7 +195,10 @@ export async function _runSageBotForConfig(orch: any, sessionPair: string, state
       if (ss.sessionHigh === -Infinity && state.m5Buffer && state.m5Buffer.length > 0) {
         const windowStartMs = c.timestamp - (currentMins - startMins) * 60_000;
         const windowEndMs = windowStartMs + orDurationMins * 60_000;
-        const orbCandles = state.m5Buffer.filter((candle: any) => candle.timestamp >= windowStartMs && candle.timestamp <= windowEndMs);
+        // FIX: Use strictly exclusive upper bound (<) to match Tier 1 SageMathCore which uses
+        // mcMins < startMins + orbMinutes. M5 timestamps are candle-open times, so the candle
+        // that opens exactly at windowEndMs is the FIRST candle AFTER the ORB, not part of it.
+        const orbCandles = state.m5Buffer.filter((candle: any) => candle.timestamp >= windowStartMs && candle.timestamp < windowEndMs);
         if (orbCandles.length > 0) {
           let maxH = -Infinity;
           let minL = Infinity;
@@ -385,16 +397,9 @@ export async function _runSageBotForConfig(orch: any, sessionPair: string, state
   if (triggeredDir) {
     let validSweep = true;
 
-    if (triggeredDir === "BUY" && actionCandle.low > rSessionLow - sweepBuffer) {
-      validSweep = false;
-    }
     const reqSweepHigh = isForex
       ? rSessionHigh + sweepBuffer
       : rSessionHigh + sweepBuffer + spreadPts;
-    if (triggeredDir === "SELL" && actionCandle.high < reqSweepHigh) {
-      validSweep = false;
-    }
-
     const maxSweepMultiplier = config.maxSweepMultiplier ?? 3;
     const maxSweepBuffer = sweepBuffer * maxSweepMultiplier;
 
@@ -419,9 +424,29 @@ export async function _runSageBotForConfig(orch: any, sessionPair: string, state
     }
 
 
+    // WBR Filter: wickPips / bodyPips >= 1.5 (Canonical Parity Rule — restored from 9.9 STABLE)
+    // Tier 1 SageMathCore.ts enforces this at lines 301-313. Must be kept in sync.
+    {
+      const acOpen = actionCandle.open;
+      const acClose = actionCandle.close;
+      const bodyTop = Math.max(acOpen, acClose);
+      const bodyBottom = Math.min(acOpen, acClose);
+      const bodyPips = Math.max((bodyTop - bodyBottom) / pipSize, 0.1);
+      const wickPips = triggeredDir === "SELL"
+        ? (actionCandle.high - bodyTop) / pipSize
+        : (bodyBottom - actionCandle.low) / pipSize;
 
+      const wbr = wickPips / bodyPips;
+      if (wbr < 1.5) {
+        logger.info(`[SageEngine] ${sessionPair} Rejected: WBR (${wbr.toFixed(2)}) < 1.5`);
+        validSweep = false;
+      }
+    }
+
+    // FIX: Round cBodyPips to 1 decimal to match Tier 1 SageMathCore which uses
+    // parseFloat(toFixed(1)) when pre-baking cBodyPips. Raw float vs rounded can diverge at boundaries.
     if (config.maxBodyPips !== undefined) {
-      const cBodyPips = Math.abs(actionCandle.close - actionCandle.open) / pipSize;
+      const cBodyPips = parseFloat((Math.abs(actionCandle.close - actionCandle.open) / pipSize).toFixed(1));
       if (cBodyPips > config.maxBodyPips) {
         logger.info(`[SageEngine] ${sessionPair} Rejected: Candle body (${cBodyPips.toFixed(1)}) > maxBodyPips (${config.maxBodyPips}).`);
         orch.addEyeFeedEvent({
@@ -709,11 +734,15 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
     );
     if (!check.approved) {
       logger.info(`[DiscretionaryTrader] ⛔ Global Trade Gate blocked Sage on ${symbol}: ${check.reason}`);
-      return;
     }
+
+    const preRegKey = `PRE_${sig}`;
+    globalTradeGate.register(orch.profileId, preRegKey, symbol, ss.direction, "ALGO");
 
     const conn = await getSharedConnection(token, accId);
     
+    // Fallback timer
+    const attemptStart = Date.now();
     // Round all prices to exact broker decimal precision (SYMBOL_SPECS.digits)
     // This prevents hard 'Validation failed' rejections on BTCUSD (2dp), XAUUSD (2dp), etc.
     const pEntry = roundPrice(ss.limitPrice, symbol.split("_")[0]);
@@ -729,12 +758,12 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
       const actualUserId = tp ? tp.user_id : 0;
       await db.prepare(`
         INSERT INTO bot_trade_states
-          (user_id, profile_id, bot_id, broker_symbol, direction, entry_price, sl_price, tp_price,
+          (user_id, profile_id, bot_id, broker_symbol, direction, entry_price, sl_price, original_sl, tp_price,
            lots, open_time, meta_order_id, t1_hit, highest_price, lowest_price, initial_risk_pips, status, client_id, manages_own_trailing)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, ?, ?, ?, 'PLACING', ?, 1)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, ?, ?, ?, 'PLACING', ?, 1)
       `).run(
         actualUserId, orch.profileId, botId.toUpperCase(), brokerSymbol, ss.direction,
-        pEntry, pSl, pTp, lots, Date.now(),
+        pEntry, pSl, pSl, pTp, lots, Date.now(),
         pEntry, pEntry, Math.abs(pEntry - pSl) / (sageCfg.pipSize || getDynamicPipSize(symbol.split("_")[0])), shortClientId
       );
     } catch (dbErr: any) {
@@ -789,21 +818,30 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
       if (isBrokerPriceOrStopsError(err)) {
         logger.info(`[SageEngine] ⚠️ Broker rejected limit order on ${brokerSymbol} (${err.message}). Executing Smart Market Fallback...`);
 
+        const elapsed = Date.now() - attemptStart;
+        if (elapsed > 2500) {
+          logger.info(`[SageEngine] 🛑 Smart Market Fallback Aborted: Broker took ${elapsed}ms to reject, market may have moved.`);
+          globalTradeGate.release(orch.profileId, preRegKey);
+          return;
+        }
+
         const isBuy = ss.direction === "BUY";
-        const currentPrice = c.close;
-        const hitSl = isBuy ? (currentPrice <= pSl) : (currentPrice >= pSl);
-        const hitTp = isBuy ? (currentPrice >= pTp) : (currentPrice <= pTp);
+        const latestPrice = c.close;
+        const hitSl = isBuy ? (latestPrice <= pSl) : (latestPrice >= pSl);
+        const hitTp = isBuy ? (latestPrice >= pTp) : (latestPrice <= pTp);
         if (hitSl || hitTp) {
-          logger.info(`[SageEngine] 🛑 Smart Market Fallback Aborted: Price already hit ${hitSl ? 'Stop Loss' : 'Take Profit'}!`);
+          logger.info(`[SageEngine] 🛑 Smart Market Fallback Aborted: Live price already hit ${hitSl ? 'Stop Loss' : 'Take Profit'}!`);
+          globalTradeGate.release(orch.profileId, preRegKey);
           return;
         }
 
         const totalDist = Math.abs(pTp - pEntry);
-        const currentDist = isBuy ? (currentPrice - pEntry) : (pEntry - currentPrice);
+        const currentDist = isBuy ? (latestPrice - pEntry) : (pEntry - latestPrice);
         const pctTowardsTp = currentDist / totalDist;
 
         if (pctTowardsTp >= 0.10) {
-          logger.info(`[SageEngine] 🛑 Smart Market Fallback Aborted: Price slipped ${Math.round(pctTowardsTp * 100)}% towards TP (Threshold: 10%)`);
+          logger.info(`[SageEngine] 🛑 Smart Market Fallback Aborted: Live price slipped ${Math.round(pctTowardsTp * 100)}% towards TP (Threshold: 10%)`);
+          globalTradeGate.release(orch.profileId, preRegKey);
           return;
         }
 
@@ -811,18 +849,19 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
         const stopsLevelPts = liveSpec?.stopsLevel || (staticSpec as any).stopsLevel || 0;
         const safePrices = calculateStopsLevelSafePrices(
           ss.direction as "BUY" | "SELL",
-          currentPrice,
+          latestPrice,
           pSl,
           pTp,
           stopsLevelPts,
           liveSpec?.tickSize || staticSpec.tickSize || 0.00001,
           liveSpec?.digits || staticSpec.digits || 5
         );
-        logger.info(`[SageEngine] 🛡️ Smart Market Fallback Prices: Entry=${currentPrice}, SL=${safePrices.pSl}, TP=${safePrices.pTp} (stopsLevel=${stopsLevelPts}pts)`);
+        logger.info(`[SageEngine] 🛡️ Smart Market Fallback Prices: Entry=${latestPrice}, SL=${safePrices.pSl}, TP=${safePrices.pTp} (stopsLevel=${stopsLevelPts}pts)`);
         orderRes = isBuy
           ? await conn.createMarketBuyOrder(brokerSymbol, lots, safePrices.pSl, safePrices.pTp, { magic, clientId: shortClientId })
           : await conn.createMarketSellOrder(brokerSymbol, lots, safePrices.pSl, safePrices.pTp, { magic, clientId: shortClientId });
       } else {
+        globalTradeGate.release(orch.profileId, preRegKey);
         throw err;
       }
     }
@@ -830,6 +869,7 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
     if (orderRes && orderRes.orderId) {
       ss.limitOrderId = orderRes.orderId;
       ss.fired = true;
+      globalTradeGate.release(orch.profileId, preRegKey);
       globalTradeGate.register(
         orch.profileId,
         orderRes.orderId,
@@ -841,6 +881,7 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
       const summary = `Sage Limit Placed: ${ss.direction} ${baseSymbol}\nEntry: ${ss.limitPrice}\nSL: ${ss.slPrice}\nTP: ${ss.tpPrice}\nVol: ${lots}\nRisk: ${sageRisk.toFixed(2)}%`;
       addBotLog(orch.profileId, botId, brokerSymbol, "TRADE_ENTERED", summary);
     } else {
+      globalTradeGate.release(orch.profileId, preRegKey);
       logger.error(`[PLACE_LIMIT] FAILED order placement: ${JSON.stringify(orderRes)}`,);
       addBotLog(orch.profileId, botId, baseSymbol, "ERROR", `Failed to place limit: ${JSON.stringify(orderRes)}`);
     }
@@ -862,6 +903,58 @@ export async function evaluateSageTrailingOnTick(
   if (new Date(tick.timestamp).toISOString().startsWith("2025-01-03T03")) {
     logger.info(`[T3 SAGE EVAL START] time:${new Date(tick.timestamp).toISOString()}`);
   }
+
+  // SAGE PENDING ORDER SWEEP GUARD
+  if (state.sageStates) {
+    for (const sig of Object.keys(state.sageStates)) {
+      const ss = state.sageStates[sig];
+      if (ss && ss.limitOrderId && (!state.activeTrades || !state.activeTrades.find((t: any) => t.clientId === sig || t.metaOrderId === ss.limitOrderId))) {
+        let tpSwept = false;
+        let slSwept = false;
+        const c = tick; // Tick object acts as M1 candle in TickFeed
+
+        // TP Sweep using extremes
+        if (ss.direction === "SELL" && c.low <= ss.tpPrice) tpSwept = true;
+        else if (ss.direction === "BUY" && c.high >= ss.tpPrice) tpSwept = true;
+
+        // SL Sweep using live ticks (c.close)
+        if (ss.direction === "SELL" && c.close >= ss.slPrice) slSwept = true;
+        else if (ss.direction === "BUY" && c.close <= ss.slPrice) slSwept = true;
+
+        // PARITY FIX: Do NOT cancel if the limit price was also touched on the same candle.
+        // In that case checkSageLimitFill will handle the fill (and TP/SL exit on same candle).
+        // SageMathCore fills then exits in the same M1 bar — cancelling here breaks parity.
+        if (tpSwept || slSwept) {
+          const limitAlsoTouched = ss.limitPrice !== undefined && (
+            (ss.direction === "SELL" && c.high >= ss.limitPrice) ||
+            (ss.direction === "BUY"  && c.low  <= ss.limitPrice)
+          );
+          if (limitAlsoTouched) {
+            // Let checkSageLimitFill process the fill on this candle instead
+            tpSwept = false;
+            slSwept = false;
+          }
+        }
+
+        if (tpSwept || slSwept) {
+          try {
+            const conn = await getSharedConnection(orch.profileId);
+            const cancelPromise = enqueueMetaApiRequest(
+              async () => await conn.cancelOrder(ss.limitOrderId),
+              `CancelSweptSageLimitOrder:${sessionPair}:${sig}`
+            );
+            if (orch.pendingPromises) orch.pendingPromises.push(cancelPromise);
+          } catch (_e) { /* ignore cancel errors */ }
+          ss.limitOrderId = null;
+          ss.fired = true;
+          if (!(global as any).testParitySuppressLogging) {
+            logger.info(`[SageEngine] ${sessionPair} Cancelled pending limit order — ${tpSwept ? 'TP' : 'SL'} boundary swept before fill.`);
+          }
+        }
+      }
+    }
+  }
+
   if (!state.activeTrades || state.activeTrades.length === 0) return;
   for (const trade of state.activeTrades) {
     const tBotId = trade.botId?.toUpperCase() || "";
@@ -953,19 +1046,22 @@ export async function evaluateSageTrailingOnTick(
     const brokerDigits = getSymbolSpec(baseSymbol.split("_")[0]).digits || 5;
     if (!trade.originalSl) trade.originalSl = trade.slPrice;
     if (!trade.riskPips) trade.riskPips = Math.abs(trade.entryPrice - trade.originalSl) / pipSize2;
+    const actualRisk = Math.abs(trade.entryPrice - trade.originalSl);
     const originalSl = trade.originalSl;
     const riskPips = trade.riskPips;
     const optCfg = OPTIMIZER_CONFIG[baseSymbol.replace(".Daily", "")];
     const spreadPts = (optCfg?.spread || 0) * pipSize2;
     const highestReached = isBuy ? tick.high : tick.low + spreadPts;
-    let floatingPips = isBuy
-      ? (highestReached - trade.entryPrice) / pipSize2
-      : (trade.entryPrice - highestReached) / pipSize2;
-    const currentR = Number((floatingPips / riskPips).toFixed(4));
+    
+    const currentR = isBuy
+      ? (highestReached - trade.entryPrice) / actualRisk
+      : (trade.entryPrice - highestReached) / actualRisk;
+
     const tTrig = config.trailingSlTrigger!;
     const tStep = config.trailingSlStep!;
     const exitMode = config.exitMode!;
-    console.log(`[DiscretionaryTrader] 📈 Trailing Eval ${baseSymbol}: FloatingR=${currentR >= 0 ? "+" : ""}${currentR.toFixed(2)}R | BreakEvenTrigger=${tTrig}R | Step=${tStep}R | CurrentSL=${trade.slPrice} | Entry=${trade.entryPrice}`);
+    const botLabel = trade.botId === "discretionary_trader" ? "MANUAL" : "SAGE";
+    console.log(`📈 Trailing Eval (${botLabel}) ${baseSymbol}: FloatingR=${currentR >= 0 ? "+" : ""}${currentR.toFixed(2)}R | BreakEvenTrigger=${tTrig}R | Step=${tStep}R | CurrentSL=${trade.slPrice} | Entry=${trade.entryPrice}`);
     if (exitMode === "TRAILING" || exitMode === undefined) {
       if (tTrig !== undefined && tStep !== undefined) {
         let sageShouldUpdate = false;
@@ -979,8 +1075,7 @@ export async function evaluateSageTrailingOnTick(
           if (currentR >= tTrig + tStep) {
             const numSteps = Math.floor((currentR - tTrig) / tStep);
             const rLevelToLock = numSteps * tStep;
-            const proposedSL =
-              trade.entryPrice + rLevelToLock * riskPips * pipSize2;
+            const proposedSL = Number((trade.entryPrice + rLevelToLock * actualRisk).toFixed(brokerDigits));
             if (proposedSL > trade.slPrice && proposedSL > sageNewSl) {
               sageNewSl = proposedSL;
               sageShouldUpdate = true;
@@ -994,8 +1089,7 @@ export async function evaluateSageTrailingOnTick(
           if (currentR >= tTrig + tStep) {
             const numSteps = Math.floor((currentR - tTrig) / tStep);
             const rLevelToLock = numSteps * tStep;
-            const proposedSL =
-              trade.entryPrice - rLevelToLock * riskPips * pipSize2;
+            const proposedSL = Number((trade.entryPrice - rLevelToLock * actualRisk).toFixed(brokerDigits));
             if (proposedSL < trade.slPrice && proposedSL < sageNewSl) {
               sageNewSl = proposedSL;
               sageShouldUpdate = true;
@@ -1007,22 +1101,34 @@ export async function evaluateSageTrailingOnTick(
           const roundedSl = roundPrice(sageNewSl, baseSymbol);
 
           trade.slPrice = roundedSl;
-          db.prepare("UPDATE bot_trade_states SET sl_price = ? WHERE id = ?").run(
+          const sageHighest = trade.direction === "BUY"
+            ? Math.max(trade.highestPrice || trade.entryPrice, tick.high)
+            : (trade.highestPrice || trade.entryPrice);
+          const sageLowest = trade.direction === "SELL"
+            ? Math.min(trade.lowestPrice || trade.entryPrice, tick.low)
+            : (trade.lowestPrice || trade.entryPrice);
+          trade.highestPrice = sageHighest;
+          trade.lowestPrice = sageLowest;
+          db.prepare("UPDATE bot_trade_states SET sl_price = ?, highest_price = ?, lowest_price = ? WHERE id = ?").run(
             roundedSl,
+            sageHighest,
+            sageLowest,
             trade.dbId,
           );
           try {
-            await enqueueMetaApiRequest(
-              async () =>
-                (
-                  await getSharedConnection(orch.token, orch.accountId)
-                ).modifyPosition(
-                  trade.metaOrderId,
-                  roundedSl,
-                  trade.tpPrice || null,
-                ),
-              `TrailSL:${baseSymbol}`,
-            );
+            if (!trade.isVirtualSlMode) {
+              await enqueueMetaApiRequest(
+                async () =>
+                  (
+                    await getSharedConnection(orch.token, orch.accountId)
+                  ).modifyPosition(
+                    trade.metaOrderId,
+                    roundedSl,
+                    trade.tpPrice || null,
+                  ),
+                `TrailSL:${baseSymbol}`,
+              );
+            }
             trade.slPrice = roundedSl;
             logger.info(`[DiscretionaryTrader] 🛡️ ${baseSymbol} SAGE Trailing SL moved to ${roundedSl.toFixed(brokerDigits)}`,);
             orch.addEyeFeedEvent({
@@ -1104,9 +1210,9 @@ export async function checkSageLimitFill(orch, sessionPair, state, c, targetBotI
               const actualUserId = tp ? tp.user_id : 0;
               const insertTrade = await db.prepare(`
                 INSERT INTO bot_trade_states
-                  (user_id, profile_id, bot_id, broker_symbol, direction, entry_price, sl_price, tp_price,
+                  (user_id, profile_id, bot_id, broker_symbol, direction, entry_price, sl_price, original_sl, tp_price,
                    lots, open_time, meta_order_id, t1_hit, highest_price, lowest_price, initial_risk_pips, status, client_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 'OPEN', ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 'OPEN', ?)
               `);
               const openTimeMs = pos.time
                 ? new Date(pos.time).getTime()
@@ -1118,6 +1224,7 @@ export async function checkSageLimitFill(orch, sessionPair, state, c, targetBotI
                 baseSymbol,
                 ss.direction,
                 pos.openPrice,
+                ss.slPrice,
                 ss.slPrice,
                 ss.tpPrice || 0,
                 pos.volume,

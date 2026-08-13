@@ -1,6 +1,6 @@
 [
   {
-    "setup": "london_60%_MinSL12.5_MaxSL70_Body4_Trig1_Step0.5_FC12_StartH3_StartM15_OrbMins10_ActMins60_ExitOPPOSITE_BOUNDARY",
+    "setup": "london_60%_MinSL12.5_MaxSL40_Body4_Trig2_Step2_FC16_StartH3_StartM15_OrbMins10_ActMins180_ExitOPPOSITE_BOUNDARY",
     "dailyNetR": {
       "2025-06-24": 0.280000000000064,
       "2025-06-26": -1,
@@ -14,7 +14,7 @@
     "records": []
   },
   {
-    "setup": "london_60%_MinSL12.5_MaxSL70_Body4_Trig2_Step2_FC8_StartH3_StartM15_OrbMins10_ActMins120_ExitOPPOSITE_BOUNDARY",
+    "setup": "london_60%_MinSL12.5_MaxSL100_Body4_Trig0.5_Step1_FC8_StartH3_StartM15_OrbMins10_ActMins120_ExitOPPOSITE_BOUNDARY",
     "dailyNetR": {
       "2025-06-24": 0.280000000000064,
       "2025-06-26": -1,
@@ -28,7 +28,7 @@
     "records": []
   },
   {
-    "setup": "london_60%_MinSL12.5_MaxSL120_Body4_Trig0.5_Step1_FC12_StartH3_StartM15_OrbMins10_ActMins180_ExitOPPOSITE_BOUNDARY",
+    "setup": "london_60%_MinSL12.5_MaxSL120_Body4_Trig0.5_Step2_FC8_StartH3_StartM15_OrbMins10_ActMins180_ExitOPPOSITE_BOUNDARY",
     "dailyNetR": {
       "2025-06-24": 0.280000000000064,
       "2025-06-26": -1,
@@ -42,7 +42,7 @@
     "records": []
   },
   {
-    "setup": "NY_Forex_60%_MinSL12.5_MaxSL100_Body5_Trig1.5_Step1.5_FC24_StartH9_StartM45_OrbMins10_ActMins180_ExitTRAILING",
+    "setup": "NY_Forex_60%_MinSL12.5_MaxSL120_Body5_Trig1.5_Step1.5_FC24_StartH9_StartM45_OrbMins10_ActMins120_ExitTRAILING",
     "dailyNetR": {
       "2025-04-07": -1,
       "2025-05-05": 1.4959999999999738,
@@ -56,7 +56,7 @@
     "records": []
   },
   {
-    "setup": "NY_Forex_60%_MinSL12.5_MaxSL50_Body5_Trig1.5_Step1.5_FC24_StartH9_StartM45_OrbMins10_ActMins120_ExitTRAILING",
+    "setup": "NY_Forex_60%_MinSL12.5_MaxSL120_Body5_Trig1.5_Step1.5_FC24_StartH9_StartM45_OrbMins10_ActMins60_ExitTRAILING",
     "dailyNetR": {
       "2025-04-07": -1,
       "2025-05-05": 1.4959999999999738,
@@ -70,7 +70,7 @@
     "records": []
   },
   {
-    "setup": "NY_Forex_60%_MinSL12.5_MaxSL70_Body5_Trig1.5_Step1.5_FC24_StartH9_StartM45_OrbMins10_ActMins60_ExitTRAILING",
+    "setup": "NY_Forex_60%_MinSL12.5_MaxSL40_Body5_Trig1.5_Step1.5_FC24_StartH9_StartM45_OrbMins10_ActMins60_ExitTRAILING",
     "dailyNetR": {
       "2025-04-07": -1,
       "2025-05-05": 1.4959999999999738,
@@ -81,76 +81,40 @@
     "oosNetR": -0.5040000000000262,
     "isNetR": 25.776000000000447,
     "isMaxDd": 2,
-    "records": []
-  },
-  {
-    "setup": "asia_0%_MinSL10_MaxSL50_Body4_Trig1_Step2_FC12_StartH20_StartM45_OrbMins15_ActMins180_ExitTRAILING",
-    "dailyNetR": {
-      "2025-04-07": 2.0000000000002487,
-      "2025-04-09": 0,
-      "2025-05-01": -1,
-      "2025-05-05": 0,
-      "2025-05-07": -1,
-      "2025-05-12": -1,
-      "2025-05-13": 1.9999999999999165,
-      "2025-05-15": -1,
-      "2025-05-28": 0,
-      "2025-05-29": 0,
-      "2025-06-05": -1
-    },
-    "trades": 11,
-    "totalNetR": -0.9999999999998348,
-    "oosNetR": -0.9999999999998348,
-    "isNetR": 11.794654385161936,
-    "isMaxDd": 1,
-    "records": []
-  },
-  {
-    "setup": "asia_0%_MinSL10_MaxSL120_Body4_Trig1_Step2_FC12_StartH20_StartM45_OrbMins15_ActMins120_ExitTRAILING",
-    "dailyNetR": {
-      "2025-04-07": 2.0000000000002487,
-      "2025-04-09": 0,
-      "2025-05-01": -1,
-      "2025-05-05": 0,
-      "2025-05-07": -1,
-      "2025-05-12": -1,
-      "2025-05-13": 1.9999999999999165,
-      "2025-05-15": -1,
-      "2025-05-28": 0,
-      "2025-05-29": 0,
-      "2025-06-05": -1
-    },
-    "trades": 11,
-    "totalNetR": -0.9999999999998348,
-    "oosNetR": -0.9999999999998348,
-    "isNetR": 11.794654385161936,
-    "isMaxDd": 1,
-    "records": []
-  },
-  {
-    "setup": "asia_0%_MinSL10_MaxSL50_Body4_Trig1_Step2_FC12_StartH20_StartM45_OrbMins15_ActMins120_ExitTRAILING",
-    "dailyNetR": {
-      "2025-04-07": 2.0000000000002487,
-      "2025-04-09": 0,
-      "2025-05-01": -1,
-      "2025-05-05": 0,
-      "2025-05-07": -1,
-      "2025-05-12": -1,
-      "2025-05-13": 1.9999999999999165,
-      "2025-05-15": -1,
-      "2025-05-28": 0,
-      "2025-05-29": 0,
-      "2025-06-05": -1
-    },
-    "trades": 11,
-    "totalNetR": -0.9999999999998348,
-    "oosNetR": -0.9999999999998348,
-    "isNetR": 11.794654385161936,
-    "isMaxDd": 1,
     "records": []
   },
   {
     "setup": "NY_Forex_0%_MinSL15_MaxSL25_Body4_Trig2_Step1.5_FC8_StartH10_StartM0_OrbMins10_ActMins120_ExitTRAILING",
+    "dailyNetR": {
+      "2025-10-14": 0.5323383084577307,
+      "2025-10-20": 0.1343283582089544,
+      "2025-10-31": 0.030612244897990394,
+      "2025-11-06": -0.6538461538461304
+    },
+    "trades": 4,
+    "totalNetR": 0.043432757718545045,
+    "oosNetR": 0.043432757718545045,
+    "isNetR": 11.720861844884586,
+    "isMaxDd": 1,
+    "records": []
+  },
+  {
+    "setup": "NY_Forex_0%_MinSL15_MaxSL20_Body4_Trig2_Step1.5_FC8_StartH10_StartM0_OrbMins10_ActMins180_ExitTRAILING",
+    "dailyNetR": {
+      "2025-10-14": 0.5323383084577307,
+      "2025-10-20": 0.1343283582089544,
+      "2025-10-31": 0.030612244897990394,
+      "2025-11-06": -0.6538461538461304
+    },
+    "trades": 4,
+    "totalNetR": 0.043432757718545045,
+    "oosNetR": 0.043432757718545045,
+    "isNetR": 11.720861844884586,
+    "isMaxDd": 1,
+    "records": []
+  },
+  {
+    "setup": "NY_Forex_0%_MinSL15_MaxSL120_Body4_Trig2_Step1.5_FC8_StartH10_StartM0_OrbMins10_ActMins180_ExitTRAILING",
     "dailyNetR": {
       "2025-10-14": 0.5323383084577307,
       "2025-10-20": 0.1343283582089544,
@@ -197,49 +161,49 @@
     "records": []
   },
   {
-    "setup": "NY_Forex_0%_MinSL12.5_MaxSL25_Body4_Trig1.5_Step2_FC24_StartH9_StartM0_OrbMins10_ActMins120_ExitTRAILING",
+    "setup": "NY_Forex_0%_MinSL12.5_MaxSL100_Body4_Trig1.5_Step2_FC24_StartH9_StartM0_OrbMins10_ActMins180_ExitTRAILING",
     "dailyNetR": {
       "2026-01-29": 0,
       "2026-02-02": -1,
-      "2026-02-06": 0.39682539682539963
+      "2026-02-06": 0.4074074074073617
     },
     "trades": 3,
-    "totalNetR": -0.6031746031746004,
-    "oosNetR": -0.6031746031746004,
+    "totalNetR": -0.5925925925926383,
+    "oosNetR": -0.5925925925926383,
     "isNetR": 14.645610333677544,
     "isMaxDd": 1.5593220338982885,
     "records": []
   },
   {
-    "setup": "NY_Forex_0%_MinSL12.5_MaxSL25_Body4_Trig1.5_Step2_FC24_StartH9_StartM0_OrbMins10_ActMins60_ExitTRAILING",
-    "dailyNetR": {
-      "2026-01-29": 0,
-      "2026-02-02": -1,
-      "2026-02-06": 0.39682539682539963
-    },
-    "trades": 3,
-    "totalNetR": -0.6031746031746004,
-    "oosNetR": -0.6031746031746004,
-    "isNetR": 14.645610333677544,
-    "isMaxDd": 1.5593220338982885,
-    "records": []
-  },
-  {
-    "setup": "NY_Forex_0%_MinSL12.5_MaxSL30_Body4_Trig2_Step1.5_FC24_StartH9_StartM0_OrbMins10_ActMins180_ExitTRAILING",
+    "setup": "NY_Forex_0%_MinSL12.5_MaxSL50_Body4_Trig2_Step2_FC24_StartH9_StartM0_OrbMins10_ActMins60_ExitTRAILING",
     "dailyNetR": {
       "2026-01-29": -0.247619047619032,
       "2026-02-02": -1,
-      "2026-02-06": 0.39682539682539963
+      "2026-02-06": 0.4074074074073617
     },
     "trades": 3,
-    "totalNetR": -0.8507936507936324,
-    "oosNetR": -0.8507936507936324,
+    "totalNetR": -0.8402116402116704,
+    "oosNetR": -0.8402116402116704,
     "isNetR": 14.645610333677544,
     "isMaxDd": 1.5593220338982885,
     "records": []
   },
   {
-    "setup": "NY_Forex_60%_MinSL8_MaxSL120_Body5_Trig1_Step1.5_FC16_StartH9_StartM45_OrbMins10_ActMins180_ExitTRAILING",
+    "setup": "NY_Forex_0%_MinSL12.5_MaxSL25_Body4_Trig2_Step2_FC24_StartH9_StartM0_OrbMins10_ActMins180_ExitTRAILING",
+    "dailyNetR": {
+      "2026-01-29": -0.247619047619032,
+      "2026-02-02": -1,
+      "2026-02-06": 0.4074074074073617
+    },
+    "trades": 3,
+    "totalNetR": -0.8402116402116704,
+    "oosNetR": -0.8402116402116704,
+    "isNetR": 14.645610333677544,
+    "isMaxDd": 1.5593220338982885,
+    "records": []
+  },
+  {
+    "setup": "NY_Forex_60%_MinSL8_MaxSL20_Body5_Trig1_Step1.5_FC16_StartH9_StartM45_OrbMins10_ActMins180_ExitTRAILING",
     "dailyNetR": {
       "2025-03-05": 0,
       "2025-03-11": -1,
@@ -253,7 +217,7 @@
     "records": []
   },
   {
-    "setup": "NY_Forex_60%_MinSL8_MaxSL30_Body5_Trig1_Step1.5_FC16_StartH9_StartM45_OrbMins10_ActMins120_ExitTRAILING",
+    "setup": "NY_Forex_60%_MinSL8_MaxSL20_Body5_Trig1_Step1.5_FC16_StartH9_StartM45_OrbMins10_ActMins60_ExitTRAILING",
     "dailyNetR": {
       "2025-03-05": 0,
       "2025-03-11": -1,
@@ -267,7 +231,7 @@
     "records": []
   },
   {
-    "setup": "NY_Forex_60%_MinSL8_MaxSL120_Body5_Trig1_Step1.5_FC16_StartH9_StartM45_OrbMins10_ActMins60_ExitTRAILING",
+    "setup": "NY_Forex_60%_MinSL8_MaxSL20_Body5_Trig1_Step1.5_FC16_StartH9_StartM45_OrbMins10_ActMins60_ExitTRAILING",
     "dailyNetR": {
       "2025-03-05": 0,
       "2025-03-11": -1,
@@ -281,7 +245,7 @@
     "records": []
   },
   {
-    "setup": "NY_Forex_30%_MinSL8_MaxSL20_Body5_Trig0.5_Step2_FC16_StartH9_StartM45_OrbMins10_ActMins120_ExitTRAILING",
+    "setup": "NY_Forex_30%_MinSL8_MaxSL25_Body5_Trig0.5_Step2_FC16_StartH9_StartM45_OrbMins10_ActMins120_ExitTRAILING",
     "dailyNetR": {
       "2024-12-31": -1,
       "2025-01-14": -1,
@@ -296,7 +260,7 @@
     "records": []
   },
   {
-    "setup": "NY_Forex_30%_MinSL8_MaxSL30_Body5_Trig0.5_Step2_FC16_StartH9_StartM45_OrbMins10_ActMins120_ExitTRAILING",
+    "setup": "NY_Forex_30%_MinSL8_MaxSL40_Body5_Trig0.5_Step2_FC24_StartH9_StartM45_OrbMins10_ActMins60_ExitTRAILING",
     "dailyNetR": {
       "2024-12-31": -1,
       "2025-01-14": -1,
@@ -311,7 +275,7 @@
     "records": []
   },
   {
-    "setup": "NY_Forex_30%_MinSL8_MaxSL30_Body5_Trig0.5_Step2_FC24_StartH9_StartM45_OrbMins10_ActMins120_ExitTRAILING",
+    "setup": "NY_Forex_30%_MinSL8_MaxSL30_Body5_Trig0.5_Step2_FC16_StartH9_StartM45_OrbMins10_ActMins60_ExitTRAILING",
     "dailyNetR": {
       "2024-12-31": -1,
       "2025-01-14": -1,
@@ -326,7 +290,7 @@
     "records": []
   },
   {
-    "setup": "NY_Forex_0%_MinSL10_MaxSL100_Body5_Trig2_Step1_FC12_StartH9_StartM45_OrbMins10_ActMins180_ExitTRAILING",
+    "setup": "NY_Forex_0%_MinSL10_MaxSL20_Body5_Trig2_Step1_FC12_StartH9_StartM45_OrbMins10_ActMins180_ExitTRAILING",
     "dailyNetR": {
       "2026-02-19": -1,
       "2026-02-20": 0.3281250000000235,
@@ -342,7 +306,7 @@
     "records": []
   },
   {
-    "setup": "NY_Forex_0%_MinSL10_MaxSL120_Body5_Trig2_Step2_FC12_StartH9_StartM45_OrbMins10_ActMins180_ExitTRAILING",
+    "setup": "NY_Forex_0%_MinSL10_MaxSL25_Body5_Trig2_Step1_FC12_StartH9_StartM45_OrbMins10_ActMins180_ExitTRAILING",
     "dailyNetR": {
       "2026-02-19": -1,
       "2026-02-20": 0.3281250000000235,
@@ -353,12 +317,12 @@
     "trades": 5,
     "totalNetR": -3.6718749999999765,
     "oosNetR": -3.6718749999999765,
-    "isNetR": 10.884046565616535,
+    "isNetR": 11.332322427685542,
     "isMaxDd": 1.669064748201428,
     "records": []
   },
   {
-    "setup": "NY_Forex_0%_MinSL10_MaxSL30_Body5_Trig1.5_Step2_FC12_StartH9_StartM45_OrbMins10_ActMins60_ExitTRAILING",
+    "setup": "NY_Forex_0%_MinSL10_MaxSL25_Body5_Trig2_Step1_FC12_StartH9_StartM45_OrbMins10_ActMins120_ExitTRAILING",
     "dailyNetR": {
       "2026-02-19": -1,
       "2026-02-20": 0.3281250000000235,
@@ -369,36 +333,70 @@
     "trades": 5,
     "totalNetR": -3.6718749999999765,
     "oosNetR": -3.6718749999999765,
-    "isNetR": 10.884046565616535,
+    "isNetR": 11.332322427685542,
     "isMaxDd": 1.669064748201428,
     "records": []
   },
   {
-    "setup": "london_60%_MinSL15_MaxSL70_Body4_Trig0.5_Step2_FC24_StartH4_StartM0_OrbMins10_ActMins120_ExitTRAILING",
+    "setup": "asia_0%_MinSL10_MaxSL120_Body4_Trig1_Step2_FC12_StartH20_StartM45_OrbMins10_ActMins120_ExitTRAILING",
     "dailyNetR": {
-      "2025-08-25": 0,
-      "2025-09-09": 0,
-      "2025-10-03": -0.18666666666662424
+      "2025-04-09": 0,
+      "2025-04-18": 0.3949843260188177,
+      "2025-05-05": 0,
+      "2025-05-07": -1,
+      "2025-05-12": -1,
+      "2025-05-13": 2,
+      "2025-05-15": -1,
+      "2025-05-28": 0,
+      "2025-05-29": 0,
+      "2025-06-05": -1
     },
-    "trades": 3,
-    "totalNetR": -0.18666666666662424,
-    "oosNetR": -0.18666666666662424,
-    "isNetR": 6.15333333333353,
-    "isMaxDd": 1,
+    "trades": 10,
+    "totalNetR": -1.6050156739811823,
+    "oosNetR": -1.6050156739811823,
+    "isNetR": 14.392074686004865,
+    "isMaxDd": 2.313333333333313,
     "records": []
   },
   {
-    "setup": "london_60%_MinSL15_MaxSL100_Body4_Trig0.5_Step2_FC24_StartH4_StartM0_OrbMins10_ActMins60_ExitTRAILING",
+    "setup": "asia_0%_MinSL10_MaxSL30_Body4_Trig1_Step2_FC12_StartH20_StartM45_OrbMins10_ActMins180_ExitTRAILING",
     "dailyNetR": {
-      "2025-08-25": 0,
-      "2025-09-09": 0,
-      "2025-10-03": -0.18666666666662424
+      "2025-04-09": 0,
+      "2025-04-18": 0.3949843260188177,
+      "2025-05-05": 0,
+      "2025-05-07": -1,
+      "2025-05-12": -1,
+      "2025-05-13": 2,
+      "2025-05-15": -1,
+      "2025-05-28": 0,
+      "2025-05-29": 0,
+      "2025-06-05": -1
     },
-    "trades": 3,
-    "totalNetR": -0.18666666666662424,
-    "oosNetR": -0.18666666666662424,
-    "isNetR": 6.15333333333353,
-    "isMaxDd": 1,
+    "trades": 10,
+    "totalNetR": -1.6050156739811823,
+    "oosNetR": -1.6050156739811823,
+    "isNetR": 14.392074686004865,
+    "isMaxDd": 2.313333333333313,
+    "records": []
+  },
+  {
+    "setup": "asia_0%_MinSL10_MaxSL100_Body4_Trig1_Step2_FC12_StartH20_StartM45_OrbMins10_ActMins60_ExitTRAILING",
+    "dailyNetR": {
+      "2025-04-09": 0,
+      "2025-05-05": 0,
+      "2025-05-07": -1,
+      "2025-05-12": -1,
+      "2025-05-13": 2,
+      "2025-05-15": -1,
+      "2025-05-28": 0,
+      "2025-05-29": 0,
+      "2025-06-05": -1
+    },
+    "trades": 9,
+    "totalNetR": -2,
+    "oosNetR": -2,
+    "isNetR": 14.392074686004865,
+    "isMaxDd": 2.313333333333313,
     "records": []
   },
   {
@@ -458,20 +456,6 @@
     "records": []
   },
   {
-    "setup": "NY_Forex_60%_MinSL12.5_MaxSL20_Body4_Trig1.5_Step1.5_FC24_StartH9_StartM45_OrbMins10_ActMins180_ExitTRAILING",
-    "dailyNetR": {
-      "2025-08-07": -1,
-      "2025-08-11": -1,
-      "2025-08-15": -0.9439999999999872
-    },
-    "trades": 3,
-    "totalNetR": -2.943999999999987,
-    "oosNetR": -2.943999999999987,
-    "isNetR": 15.416000000000357,
-    "isMaxDd": 3,
-    "records": []
-  },
-  {
     "setup": "NY_Forex_0%_MinSL20_MaxSL20_Body4_Trig1_Step2_FC24_StartH9_StartM45_OrbMins10_ActMins180_ExitTRAILING",
     "dailyNetR": {
       "2025-06-09": 0.19502074688795265,
@@ -484,11 +468,11 @@
       "2025-07-18": -1,
       "2025-07-21": -1,
       "2025-07-31": -1,
-      "2025-08-06": -0.022935779816460732
+      "2025-08-06": -1
     },
     "trades": 11,
-    "totalNetR": -1.6752460359332755,
-    "oosNetR": -1.6752460359332755,
+    "totalNetR": -2.652310256116815,
+    "oosNetR": -2.652310256116815,
     "isNetR": 11.919549193959186,
     "isMaxDd": 2.507816277195813,
     "records": []
@@ -505,41 +489,40 @@
       "2025-07-18": -1,
       "2025-07-21": -1,
       "2025-07-31": -1,
-      "2025-08-06": -0.022935779816460732
+      "2025-08-06": -1
     },
     "trades": 10,
-    "totalNetR": -0.6752460359332756,
-    "oosNetR": -0.6752460359332756,
+    "totalNetR": -1.6523102561168148,
+    "oosNetR": -1.6523102561168148,
     "isNetR": 11.919549193959186,
     "isMaxDd": 2.507816277195813,
     "records": []
   },
   {
-    "setup": "NY_Forex_0%_MinSL20_MaxSL20_Body4_Trig1_Step1_FC24_StartH9_StartM45_OrbMins10_ActMins120_ExitTRAILING",
+    "setup": "NY_Forex_0%_MinSL20_MaxSL20_Body4_Trig1_Step2_FC24_StartH9_StartM45_OrbMins10_ActMins120_ExitTRAILING",
     "dailyNetR": {
       "2025-06-09": 0.19502074688795265,
       "2025-06-13": -0.5811965811965909,
       "2025-06-16": -1,
-      "2025-06-17": 1,
+      "2025-06-17": 1.035242290748934,
       "2025-06-24": 0.06106870229009607,
       "2025-07-16": -1,
       "2025-07-17": 2.6375545851527935,
       "2025-07-18": -1,
       "2025-07-21": -1,
       "2025-07-31": -1,
-      "2025-08-06": -0.022935779816460732
+      "2025-08-06": -1
     },
     "trades": 11,
-    "totalNetR": -1.7104883266822095,
-    "oosNetR": -1.7104883266822095,
-    "isNetR": 11.683700137355428,
+    "totalNetR": -2.652310256116815,
+    "oosNetR": -2.652310256116815,
+    "isNetR": 11.919549193959186,
     "isMaxDd": 2.507816277195813,
     "records": []
   },
   {
     "setup": "london_60%_MinSL8_MaxSL100_Body4_Trig0.5_Step1_FC16_StartH3_StartM15_OrbMins10_ActMins120_ExitTRAILING",
     "dailyNetR": {
-      "2025-04-07": -0.125,
       "2025-04-15": 0,
       "2025-04-16": 0.9999999999998612,
       "2025-04-23": 0,
@@ -548,9 +531,9 @@
       "2025-06-03": 0,
       "2025-06-06": 1.9999999999998612
     },
-    "trades": 8,
-    "totalNetR": 0.8749999999997224,
-    "oosNetR": 0.8749999999997224,
+    "trades": 7,
+    "totalNetR": 0.9999999999997224,
+    "oosNetR": 0.9999999999997224,
     "isNetR": 4.512499999999735,
     "isMaxDd": 1,
     "records": []
@@ -558,7 +541,6 @@
   {
     "setup": "london_60%_MinSL8_MaxSL30_Body4_Trig0.5_Step1_FC8_StartH3_StartM15_OrbMins10_ActMins120_ExitTRAILING",
     "dailyNetR": {
-      "2025-04-07": -0.125,
       "2025-04-15": 0,
       "2025-04-16": 0.9999999999998612,
       "2025-04-23": 0,
@@ -567,9 +549,9 @@
       "2025-06-03": 0,
       "2025-06-06": 1.9999999999998612
     },
-    "trades": 8,
-    "totalNetR": 0.8749999999997224,
-    "oosNetR": 0.8749999999997224,
+    "trades": 7,
+    "totalNetR": 0.9999999999997224,
+    "oosNetR": 0.9999999999997224,
     "isNetR": 4.512499999999735,
     "isMaxDd": 1,
     "records": []
@@ -577,7 +559,6 @@
   {
     "setup": "london_60%_MinSL8_MaxSL50_Body4_Trig0.5_Step0.5_FC8_StartH3_StartM15_OrbMins10_ActMins120_ExitTRAILING",
     "dailyNetR": {
-      "2025-04-07": -0.125,
       "2025-04-15": 0,
       "2025-04-16": 0.9999999999998612,
       "2025-04-23": 0.5000000000001388,
@@ -586,29 +567,15 @@
       "2025-06-03": 0,
       "2025-06-06": 1.9999999999998612
     },
-    "trades": 8,
-    "totalNetR": 1.3749999999998612,
-    "oosNetR": 1.3749999999998612,
+    "trades": 7,
+    "totalNetR": 1.4999999999998612,
+    "oosNetR": 1.4999999999998612,
     "isNetR": 4.512499999999735,
     "isMaxDd": 1,
     "records": []
   },
   {
     "setup": "NY_Forex_30%_MinSL10_MaxSL40_Body4_Trig2_Step1_FC16_StartH9_StartM30_OrbMins10_ActMins180_ExitTRAILING",
-    "dailyNetR": {
-      "2024-06-28": 0.42999999999993005,
-      "2024-07-24": 3.1700000000000035,
-      "2024-07-25": -1
-    },
-    "trades": 3,
-    "totalNetR": 2.5999999999999335,
-    "oosNetR": 2.5999999999999335,
-    "isNetR": 12.580000000000023,
-    "isMaxDd": 3,
-    "records": []
-  },
-  {
-    "setup": "NY_Forex_30%_MinSL10_MaxSL100_Body4_Trig2_Step2_FC16_StartH9_StartM30_OrbMins10_ActMins180_ExitTRAILING",
     "dailyNetR": {
       "2024-06-28": 0.42999999999993005,
       "2024-07-24": 3.1700000000000035,
@@ -636,65 +603,65 @@
     "records": []
   },
   {
-    "setup": "NY_Forex_0%_MinSL12.5_MaxSL25_Body4_Trig1_Step0.5_FC12_StartH9_StartM45_OrbMins10_ActMins60_ExitTRAILING",
+    "setup": "NY_Forex_30%_MinSL10_MaxSL100_Body4_Trig2_Step2_FC16_StartH9_StartM30_OrbMins10_ActMins180_ExitTRAILING",
     "dailyNetR": {
-      "2026-04-24": -0.26446280991735915,
-      "2026-05-05": 7.604267291953618e-14,
-      "2026-05-06": -0.019230769230752807,
-      "2026-05-19": 0.08552631578952462,
-      "2026-05-20": 0
-    },
-    "trades": 5,
-    "totalNetR": -0.19816726335851126,
-    "oosNetR": -0.19816726335851126,
-    "isNetR": 9.161388458887515,
-    "isMaxDd": 2.5670731707317076,
-    "records": []
-  },
-  {
-    "setup": "NY_Forex_0%_MinSL12.5_MaxSL30_Body4_Trig1_Step0.5_FC12_StartH9_StartM45_OrbMins10_ActMins60_ExitTRAILING",
-    "dailyNetR": {
-      "2026-04-24": -0.26446280991735915,
-      "2026-05-05": 7.604267291953618e-14,
-      "2026-05-06": -0.019230769230752807,
-      "2026-05-19": 0.08552631578952462,
-      "2026-05-20": 0
-    },
-    "trades": 5,
-    "totalNetR": -0.19816726335851126,
-    "oosNetR": -0.19816726335851126,
-    "isNetR": 9.161388458887515,
-    "isMaxDd": 2.5670731707317076,
-    "records": []
-  },
-  {
-    "setup": "NY_Forex_0%_MinSL12.5_MaxSL70_Body4_Trig1_Step0.5_FC12_StartH9_StartM45_OrbMins10_ActMins60_ExitTRAILING",
-    "dailyNetR": {
-      "2026-04-24": -0.26446280991735915,
-      "2026-05-05": 7.604267291953618e-14,
-      "2026-05-06": -0.019230769230752807,
-      "2026-05-19": 0.08552631578952462,
-      "2026-05-20": 0
-    },
-    "trades": 5,
-    "totalNetR": -0.19816726335851126,
-    "oosNetR": -0.19816726335851126,
-    "isNetR": 9.161388458887515,
-    "isMaxDd": 2.5670731707317076,
-    "records": []
-  },
-  {
-    "setup": "NY_Forex_30%_MinSL10_MaxSL40_Body4_Trig2_Step2_FC16_StartH9_StartM30_OrbMins10_ActMins180_ExitTRAILING",
-    "dailyNetR": {
-      "2024-04-25": 3.7899999999999565,
-      "2024-04-30": -1,
-      "2024-05-10": -1
+      "2024-06-28": 0.42999999999993005,
+      "2024-07-24": 3.1700000000000035,
+      "2024-07-25": -1
     },
     "trades": 3,
-    "totalNetR": 1.7899999999999565,
-    "oosNetR": 1.7899999999999565,
-    "isNetR": 14.230000000000064,
-    "isMaxDd": 4,
+    "totalNetR": 2.5999999999999335,
+    "oosNetR": 2.5999999999999335,
+    "isNetR": 12.580000000000023,
+    "isMaxDd": 3,
+    "records": []
+  },
+  {
+    "setup": "NY_Forex_0%_MinSL12.5_MaxSL100_Body4_Trig1_Step0.5_FC12_StartH9_StartM45_OrbMins10_ActMins60_ExitTRAILING",
+    "dailyNetR": {
+      "2026-04-24": -0.26446280991735915,
+      "2026-05-05": 7.604267291953618e-14,
+      "2026-05-06": -0.019230769230752807,
+      "2026-05-19": 0.08552631578952462,
+      "2026-05-20": 0
+    },
+    "trades": 5,
+    "totalNetR": -0.19816726335851126,
+    "oosNetR": -0.19816726335851126,
+    "isNetR": 10.17288271176109,
+    "isMaxDd": 2.5670731707317076,
+    "records": []
+  },
+  {
+    "setup": "NY_Forex_0%_MinSL12.5_MaxSL40_Body4_Trig1_Step0.5_FC12_StartH9_StartM45_OrbMins10_ActMins60_ExitTRAILING",
+    "dailyNetR": {
+      "2026-04-24": -0.26446280991735915,
+      "2026-05-05": 7.604267291953618e-14,
+      "2026-05-06": -0.019230769230752807,
+      "2026-05-19": 0.08552631578952462,
+      "2026-05-20": 0
+    },
+    "trades": 5,
+    "totalNetR": -0.19816726335851126,
+    "oosNetR": -0.19816726335851126,
+    "isNetR": 10.17288271176109,
+    "isMaxDd": 2.5670731707317076,
+    "records": []
+  },
+  {
+    "setup": "NY_Forex_0%_MinSL12.5_MaxSL50_Body4_Trig1_Step1.5_FC12_StartH9_StartM45_OrbMins10_ActMins60_ExitTRAILING",
+    "dailyNetR": {
+      "2026-04-24": -0.26446280991735915,
+      "2026-05-05": 7.604267291953618e-14,
+      "2026-05-06": -0.019230769230752807,
+      "2026-05-19": 0.08552631578952462,
+      "2026-05-20": 0
+    },
+    "trades": 5,
+    "totalNetR": -0.19816726335851126,
+    "oosNetR": -0.19816726335851126,
+    "isNetR": 9.94964537737187,
+    "isMaxDd": 2.5670731707317076,
     "records": []
   },
   {
@@ -726,7 +693,7 @@
     "records": []
   },
   {
-    "setup": "NY_Forex_0%_MinSL8_MaxSL50_Body4_Trig0.5_Step1.5_FC16_StartH9_StartM30_OrbMins10_ActMins180_ExitTRAILING",
+    "setup": "NY_Forex_0%_MinSL8_MaxSL70_Body4_Trig0.5_Step1.5_FC16_StartH9_StartM30_OrbMins10_ActMins180_ExitTRAILING",
     "dailyNetR": {
       "2024-10-14": 0,
       "2024-10-16": 0,
@@ -743,7 +710,7 @@
     "records": []
   },
   {
-    "setup": "NY_Forex_0%_MinSL8_MaxSL40_Body4_Trig0.5_Step1.5_FC16_StartH9_StartM30_OrbMins10_ActMins180_ExitTRAILING",
+    "setup": "NY_Forex_0%_MinSL8_MaxSL50_Body4_Trig0.5_Step1.5_FC16_StartH9_StartM30_OrbMins10_ActMins120_ExitTRAILING",
     "dailyNetR": {
       "2024-10-14": 0,
       "2024-10-16": 0,
@@ -760,7 +727,7 @@
     "records": []
   },
   {
-    "setup": "NY_Forex_0%_MinSL8_MaxSL100_Body4_Trig0.5_Step1.5_FC16_StartH9_StartM30_OrbMins10_ActMins180_ExitTRAILING",
+    "setup": "NY_Forex_0%_MinSL8_MaxSL30_Body4_Trig0.5_Step1.5_FC16_StartH9_StartM30_OrbMins10_ActMins120_ExitTRAILING",
     "dailyNetR": {
       "2024-10-14": 0,
       "2024-10-16": 0,
@@ -773,6 +740,57 @@
     "totalNetR": -1,
     "oosNetR": -1,
     "isNetR": 6.8213572616844695,
+    "isMaxDd": 2,
+    "records": []
+  },
+  {
+    "setup": "NY_Forex_0%_MinSL8_MaxSL20_Body4_Trig1_Step1.5_FC16_StartH9_StartM30_OrbMins10_ActMins60_ExitTRAILING",
+    "dailyNetR": {
+      "2024-08-08": -1,
+      "2024-08-12": 0,
+      "2024-08-21": -1,
+      "2024-08-23": 1.5408163265306538,
+      "2024-08-30": -1,
+      "2024-09-23": -1
+    },
+    "trades": 6,
+    "totalNetR": -2.4591836734693464,
+    "oosNetR": -2.4591836734693464,
+    "isNetR": 6.446006231871021,
+    "isMaxDd": 2,
+    "records": []
+  },
+  {
+    "setup": "NY_Forex_0%_MinSL8_MaxSL25_Body4_Trig1_Step1.5_FC16_StartH9_StartM30_OrbMins10_ActMins60_ExitTRAILING",
+    "dailyNetR": {
+      "2024-08-08": -1,
+      "2024-08-12": 0,
+      "2024-08-21": -1,
+      "2024-08-23": 1.5408163265306538,
+      "2024-08-30": -1,
+      "2024-09-23": -1
+    },
+    "trades": 6,
+    "totalNetR": -2.4591836734693464,
+    "oosNetR": -2.4591836734693464,
+    "isNetR": 6.446006231871021,
+    "isMaxDd": 2,
+    "records": []
+  },
+  {
+    "setup": "NY_Forex_0%_MinSL8_MaxSL20_Body4_Trig1_Step1.5_FC16_StartH9_StartM30_OrbMins10_ActMins60_ExitTRAILING",
+    "dailyNetR": {
+      "2024-08-08": -1,
+      "2024-08-12": 0,
+      "2024-08-21": -1,
+      "2024-08-23": 1.5408163265306538,
+      "2024-08-30": -1,
+      "2024-09-23": -1
+    },
+    "trades": 6,
+    "totalNetR": -2.4591836734693464,
+    "oosNetR": -2.4591836734693464,
+    "isNetR": 6.446006231871021,
     "isMaxDd": 2,
     "records": []
   },
@@ -792,86 +810,18 @@
     "records": []
   },
   {
-    "setup": "NY_Forex_0%_MinSL8_MaxSL30_Body4_Trig0.5_Step2_FC16_StartH9_StartM30_OrbMins10_ActMins120_ExitTRAILING",
+    "setup": "asia_0%_MinSL10_MaxSL100_Body4_Trig1_Step1.5_FC24_StartH20_StartM0_OrbMins10_ActMins120_ExitTRAILING",
     "dailyNetR": {
-      "2024-08-08": -1,
-      "2024-08-12": 0,
-      "2024-08-21": -1,
-      "2024-08-23": 1.5408163265306538,
-      "2024-08-30": 0,
-      "2024-09-23": -1
+      "2024-10-09": 0,
+      "2024-11-07": 2.5767441860465246,
+      "2024-11-12": 2.169014084506888,
+      "2024-11-28": -1
     },
-    "trades": 6,
-    "totalNetR": -1.4591836734693462,
-    "oosNetR": -1.4591836734693462,
-    "isNetR": 6.31305549059901,
-    "isMaxDd": 2,
-    "records": []
-  },
-  {
-    "setup": "NY_Forex_0%_MinSL8_MaxSL25_Body4_Trig0.5_Step2_FC16_StartH9_StartM30_OrbMins10_ActMins180_ExitTRAILING",
-    "dailyNetR": {
-      "2024-08-08": -1,
-      "2024-08-12": 0,
-      "2024-08-21": -1,
-      "2024-08-23": 1.5408163265306538,
-      "2024-08-30": 0,
-      "2024-09-23": -1
-    },
-    "trades": 6,
-    "totalNetR": -1.4591836734693462,
-    "oosNetR": -1.4591836734693462,
-    "isNetR": 6.31305549059901,
-    "isMaxDd": 2,
-    "records": []
-  },
-  {
-    "setup": "NY_Forex_0%_MinSL8_MaxSL25_Body4_Trig0.5_Step2_FC16_StartH9_StartM30_OrbMins10_ActMins120_ExitTRAILING",
-    "dailyNetR": {
-      "2024-08-08": -1,
-      "2024-08-12": 0,
-      "2024-08-21": -1,
-      "2024-08-23": 1.5408163265306538,
-      "2024-08-30": 0,
-      "2024-09-23": -1
-    },
-    "trades": 6,
-    "totalNetR": -1.4591836734693462,
-    "oosNetR": -1.4591836734693462,
-    "isNetR": 6.31305549059901,
-    "isMaxDd": 2,
-    "records": []
-  },
-  {
-    "setup": "asia_0%_MinSL8_MaxSL120_Body4_Trig1_Step2_FC16_StartH20_StartM30_OrbMins10_ActMins120_ExitTRAILING",
-    "dailyNetR": {
-      "2024-10-09": 1.0557103064066466,
-      "2024-10-11": -1,
-      "2024-10-16": 9.57088814332082e-14,
-      "2024-11-06": -1,
-      "2024-12-06": 1.7407407407408444
-    },
-    "trades": 5,
-    "totalNetR": 0.7964510471475867,
-    "oosNetR": 0.7964510471475867,
-    "isNetR": 9.28087629742694,
-    "isMaxDd": 3.1287801686536714,
-    "records": []
-  },
-  {
-    "setup": "asia_0%_MinSL8_MaxSL20_Body4_Trig1_Step2_FC16_StartH20_StartM30_OrbMins10_ActMins120_ExitTRAILING",
-    "dailyNetR": {
-      "2024-10-09": 1.0557103064066466,
-      "2024-10-11": -1,
-      "2024-10-16": 9.57088814332082e-14,
-      "2024-11-06": -1,
-      "2024-12-06": 1.7407407407408444
-    },
-    "trades": 5,
-    "totalNetR": 0.7964510471475867,
-    "oosNetR": 0.7964510471475867,
-    "isNetR": 9.28087629742694,
-    "isMaxDd": 3.1287801686536714,
+    "trades": 4,
+    "totalNetR": 3.745758270553413,
+    "oosNetR": 3.745758270553413,
+    "isNetR": 9.339503143526287,
+    "isMaxDd": 2.92510016946391,
     "records": []
   },
   {
@@ -884,7 +834,7 @@
     "trades": 3,
     "totalNetR": 1.0362318840579658,
     "oosNetR": 1.0362318840579658,
-    "isNetR": 9.124870485909236,
+    "isNetR": 10.424870485909306,
     "isMaxDd": 4.155069747512791,
     "records": []
   },
@@ -898,7 +848,7 @@
     "trades": 3,
     "totalNetR": 1.0362318840579658,
     "oosNetR": 1.0362318840579658,
-    "isNetR": 9.124870485909236,
+    "isNetR": 10.424870485909306,
     "isMaxDd": 4.155069747512791,
     "records": []
   },
@@ -912,8 +862,69 @@
     "trades": 3,
     "totalNetR": 1.0362318840579658,
     "oosNetR": 1.0362318840579658,
-    "isNetR": 9.124870485909236,
+    "isNetR": 10.424870485909306,
     "isMaxDd": 4.155069747512791,
+    "records": []
+  },
+  {
+    "setup": "NY_Forex_0%_MinSL10_MaxSL100_Body4_Trig2_Step0.5_FC12_StartH9_StartM30_OrbMins10_ActMins120_ExitTRAILING",
+    "dailyNetR": {
+      "2024-04-23": 0.06089743589744536,
+      "2024-04-25": 2.7557251908398595,
+      "2024-04-30": -1,
+      "2024-05-10": -1,
+      "2024-05-23": 0.34859154929574393
+    },
+    "trades": 5,
+    "totalNetR": 1.1652141760330488,
+    "oosNetR": 1.1652141760330488,
+    "isNetR": 9.263972119955742,
+    "isMaxDd": 5.016399241894331,
+    "records": []
+  },
+  {
+    "setup": "london_0%_MinSL10_MaxSL30_Body4_Trig1_Step1_FC12_StartH3_StartM15_OrbMins10_ActMins60_ExitTRAILING",
+    "dailyNetR": {
+      "2025-01-03": -1,
+      "2025-01-06": 2.0000000000001554,
+      "2025-01-21": -1,
+      "2025-01-23": -1
+    },
+    "trades": 4,
+    "totalNetR": -0.9999999999998446,
+    "oosNetR": -0.9999999999998446,
+    "isNetR": 1.6032072368419676,
+    "isMaxDd": 3.5789473684210655,
+    "records": []
+  },
+  {
+    "setup": "london_0%_MinSL10_MaxSL50_Body4_Trig1_Step1_FC12_StartH3_StartM15_OrbMins10_ActMins60_ExitTRAILING",
+    "dailyNetR": {
+      "2025-01-03": -1,
+      "2025-01-06": 2.0000000000001554,
+      "2025-01-21": -1,
+      "2025-01-23": -1
+    },
+    "trades": 4,
+    "totalNetR": -0.9999999999998446,
+    "oosNetR": -0.9999999999998446,
+    "isNetR": 1.6032072368419676,
+    "isMaxDd": 3.5789473684210655,
+    "records": []
+  },
+  {
+    "setup": "london_0%_MinSL10_MaxSL25_Body4_Trig1_Step1_FC12_StartH3_StartM15_OrbMins10_ActMins60_ExitTRAILING",
+    "dailyNetR": {
+      "2025-01-03": -1,
+      "2025-01-06": 2.0000000000001554,
+      "2025-01-21": -1,
+      "2025-01-23": -1
+    },
+    "trades": 4,
+    "totalNetR": -0.9999999999998446,
+    "oosNetR": -0.9999999999998446,
+    "isNetR": 1.6032072368419676,
+    "isMaxDd": 3.5789473684210655,
     "records": []
   }
 ]

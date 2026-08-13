@@ -304,7 +304,7 @@ export async function runPreFlightFilter(
   if (orch.activeBots.size === 0) return;
   if (state.isEvaluating) return;
 
-  if (orch.apiLockouts.has(symbol) && Date.now() < orch.apiLockouts.get(symbol))
+  if (orch.apiLockouts.has(symbol) && c.timestamp < orch.apiLockouts.get(symbol))
     return;
   const gateCheck = globalTradeGate.canTrade(
     orch.profileId,
@@ -333,7 +333,7 @@ export async function runPreFlightFilter(
   state.isEvaluating = true;
   globalTradeGate.markDiscEvaluating(orch.profileId, symbol);
   try {
-    const io = getIO();
+    const io = (global as any).__SIM_MOCK_ACCOUNT__ ? null : getIO();
     if (io) {
       io.to(`profile_${orch.profileId}`).emit(
         "discretionary_trader:eval_start",
@@ -412,7 +412,7 @@ export async function runPreFlightFilter(
         `Vision AI Rejected ${signalDir}`,
         msg,
       );
-      orch.apiLockouts.set(symbol, Date.now() + 15 * 6e4);
+      orch.apiLockouts.set(symbol, c.timestamp + 15 * 6e4);
       logger.info(`[DiscretionaryTrader] \u{1F6D1} ${symbol} AI Rejected Trade. Applied 15-minute lockout.`,);
       orch.addEyeFeedEvent({
         type: "EVAL_RESULT",
@@ -593,7 +593,7 @@ export async function runPreFlightFilter(
           const spec = getSymbolSpec(symbol.split("_")[0]);
           const slippagePips = Math.abs(freshQuote.bid - e) / spec.pipSize;
           if (slippagePips > 4) {
-            logger.info(`[DiscretionaryTrader] \u26D4 ${brokerSymbol} \u2014 Slippage exceeded 4 pips (${slippagePips.toFixed(1)} pips) during AI eval. Trade aborted.`,);
+            logger.info(`[DiscretionaryTrader] \u26D4 ${brokerSymbol} \u2014 Slippage exceeded 4 pips (${slippagePips.toFixed(1)} pips) during AI eval. Trade aborted. freshQuote.bid=${freshQuote.bid} e=${e} spec.pipSize=${spec.pipSize}`,);
             addBotLog(
               orch.profileId,
               botId2,
@@ -601,7 +601,7 @@ export async function runPreFlightFilter(
               `Trade Aborted`,
               `Slippage exceeded 4 pips during AI eval (${slippagePips.toFixed(1)} pips).`,
             );
-            orch.apiLockouts.set(symbol, Date.now() + 5 * 6e4);
+            orch.apiLockouts.set(symbol, c.timestamp + 5 * 6e4);
             return;
           }
           // 🔍 Fetch live broker spec — broker-agnostic pip value (no hardcoded getPipValue assumptions)
@@ -748,7 +748,7 @@ export async function runPreFlightFilter(
           );
           safeLots = parseFloat(safeLots.toFixed(2));
           logger.info(`[DiscretionaryTrader] \u2694\uFE0F Executing ${result.decision} on ${brokerSymbol} | Lots: ${safeLots} | SL Pips: ${actualSlPips.toFixed(1)}`,);
-          const clientId = `SRC_${Date.now().toString().slice(-6)}`;
+          const clientId = `SRC_${c.timestamp.toString().slice(-6)}`;
           try {
             const tp = await db
               .prepare("SELECT user_id FROM trading_profiles WHERE id = ?")
@@ -756,9 +756,9 @@ export async function runPreFlightFilter(
             const actualUserId = tp ? tp.user_id : 0;
             const insertTrade = await db.prepare(`
                 INSERT INTO bot_trade_states
-                  (user_id, profile_id, bot_id, broker_symbol, direction, entry_price, sl_price, tp_price,
+                  (user_id, profile_id, bot_id, broker_symbol, direction, entry_price, sl_price, original_sl, tp_price,
                    lots, open_time, meta_order_id, t1_hit, highest_price, lowest_price, initial_risk_pips, status, client_id, manages_own_trailing)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, ?, ?, ?, 'PLACING', ?, 1)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, ?, ?, ?, 'PLACING', ?, 1)
               `);
             const openTimeMs = c.timestamp;
             dbId = (
@@ -769,6 +769,7 @@ export async function runPreFlightFilter(
                 brokerSymbol,
                 result.decision,
                 freshEntry,
+                result.stopLoss,
                 result.stopLoss,
                 result.takeProfit,
                 safeLots,
@@ -821,8 +822,8 @@ export async function runPreFlightFilter(
                   0,
                   0,
                   "FAILED",
-                  Date.now(),
-                  Date.now(),
+                  c.timestamp,
+                  c.timestamp,
                 );
             }
           };
@@ -1081,14 +1082,14 @@ export async function runPreFlightFilter(
         }
       }
     }
-  } catch (e) {
-    logger.error(`[DiscretionaryTrader] \u274C AI Eval Error:`, e.message);
+  } catch (e: any) {
+    logger.error(`[DiscretionaryTrader] ❌ AI Eval Error:`, e.stack);
     addBotLog(
       orch.profileId,
-      "seer",
+      orch.getBotIdForSetup(setupType),
       symbol,
       "Error",
-      `AI Eval Error: ${e.message}`,
+      `AI Eval Error: ${e.stack}`,
     );
   } finally {
     state.isEvaluating = false;
@@ -1236,20 +1237,22 @@ export async function evaluateSeerTrailingOnTick(orch, symbol, state) {
           trade.secondLastConfirmedSH = bePrice;
           newSl = bePrice;
           const roundedBe = roundPrice(bePrice, symbol);
-          await enqueueMetaApiRequest(
-            async () =>
-              (
-                await getSharedConnection(orch.token, orch.accountId)
-              ).modifyPosition(
-                trade.metaOrderId,
-                roundedBe,
-                trade.tpPrice,
-              ),
-            `ModifyPos:${symbol}`,
-            undefined,
-            undefined,
-            orch.profileId
-          );
+          if (!trade.isVirtualSlMode) {
+            await enqueueMetaApiRequest(
+              async () =>
+                (
+                  await getSharedConnection(orch.token, orch.accountId)
+                ).modifyPosition(
+                  trade.metaOrderId,
+                  roundedBe,
+                  trade.tpPrice,
+                ),
+              `ModifyPos:${symbol}`,
+              undefined,
+              undefined,
+              orch.profileId
+            );
+          }
           const db2 = db;
           await db2
             .prepare(
@@ -1341,26 +1344,36 @@ export async function evaluateSeerTrailingOnTick(orch, symbol, state) {
     const roundedNewSl = roundPrice(newSl, symbol);
     trade.slPrice = roundedNewSl;
     try {
-      await enqueueMetaApiRequest(
-        async () =>
-          (
-            await getSharedConnection(orch.token, orch.accountId)
-          ).modifyPosition(
-            trade.metaOrderId,
-            roundedNewSl,
-            trade.tpPrice,
-          ),
-        `ModifyPos:${symbol}`,
-        undefined,
-        undefined,
-        orch.profileId
-      );
+      if (!trade.isVirtualSlMode) {
+        await enqueueMetaApiRequest(
+          async () =>
+            (
+              await getSharedConnection(orch.token, orch.accountId)
+            ).modifyPosition(
+              trade.metaOrderId,
+              roundedNewSl,
+              trade.tpPrice,
+            ),
+          `ModifyPos:${symbol}`,
+          undefined,
+          undefined,
+          orch.profileId
+        );
+      }
       const db2 = db;
+      const seerHighest = trade.direction === "BUY"
+        ? Math.max(trade.highestPrice || trade.entryPrice, c0.high)
+        : (trade.highestPrice || trade.entryPrice);
+      const seerLowest = trade.direction === "SELL"
+        ? Math.min(trade.lowestPrice || trade.entryPrice, c0.low)
+        : (trade.lowestPrice || trade.entryPrice);
+      trade.highestPrice = seerHighest;
+      trade.lowestPrice = seerLowest;
       await db2
         .prepare(
-          "UPDATE bot_trade_states SET sl_price = ? WHERE meta_order_id = ?",
+          "UPDATE bot_trade_states SET sl_price = ?, highest_price = ?, lowest_price = ? WHERE meta_order_id = ?",
         )
-        .run(newSl, trade.metaOrderId);
+        .run(newSl, seerHighest, seerLowest, trade.metaOrderId);
       logger.info(`[DiscretionaryTrader] \u{1F6E1}\uFE0F ${symbol} Structural BOS Confirmed! Trailing SL moved to ${newSl}`,);
     } catch (e) {
       logger.error(`[DiscretionaryTrader] \u274C Failed to structurally trail SL for ${symbol}:`,
