@@ -235,6 +235,7 @@ export default function BotDashboard({ bot }: { bot: any }) {
   useEffect(() => {
     if (!profileId) {
       setDiary([]);
+      setAllTrades([]);
       return;
     }
     // We no longer fetch logs, only trade diary
@@ -242,6 +243,7 @@ export default function BotDashboard({ bot }: { bot: any }) {
       .then(res => res.json())
       .then(data => {
         if (data.success && data.trades) {
+          setAllTrades(data.trades);
           const currentBotId = (bot?.id || '').toLowerCase();
           setDiary(data.trades.filter((t: any) => {
             const dbBotId = (t.bot_id || '').toLowerCase();
@@ -915,6 +917,7 @@ export default function BotDashboard({ bot }: { bot: any }) {
                           const data = await res.json();
                           if (data.success) {
                             setDiary([]);
+                            setAllTrades([]);
                             playSuccess();
                           } else {
                             playError();
