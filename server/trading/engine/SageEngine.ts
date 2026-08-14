@@ -367,11 +367,12 @@ export async function _runSageBotForConfig(orch: any, sessionPair: string, state
   const sweepHighTriggered = roundPrice(actionCandle.high, sessionPair) >= reqSweepHigh;
   const sweepLowTriggered = roundPrice(actionCandle.low, sessionPair) <= reqSweepLow;
 
-  // Log scanning activity for visibility on dev console
-  logger.info(`[SageEngine] 🔍 Scanning ${sessionPair} [${new Date(actionCandle.timestamp).toISOString().substring(11, 16)} EST] | ` +
-    `Candle [High/Low/Close]: [${actionCandle.high}/${actionCandle.low}/${actionCandle.close}] | ` +
-    `ORB [High/Low]: [${rSessionHigh}/${rSessionLow}] | ` +
-    `Target Sweep [High >= ${reqSweepHigh.toFixed(5)} / Low <= ${reqSweepLow.toFixed(5)}]`);
+  const m5EstDate = getFixedEstDate(new Date(actionCandle.timestamp));
+  const estTimeStr = m5EstDate.toISOString().substring(11, 16);
+  logger.info(`[SageEngine] 🔍 Scanning ${sessionPair} [${estTimeStr} EST] | ` +
+      `Candle [High/Low/Close]: [${actionCandle.high}/${actionCandle.low}/${actionCandle.close}] | ` +
+      `ORB [High/Low]: [${rSessionHigh}/${rSessionLow}] | ` +
+      `Target Sweep [High >= ${reqSweepHigh.toFixed(5)} / Low <= ${reqSweepLow.toFixed(5)}]`);
 
   if (sweepHighTriggered && sweepLowTriggered) {
     logger.info(`[SageEngine] 🛑 Double sweep detected on ${sessionPair} at ${new Date(actionCandle.timestamp).toISOString()} - Skipping per Parity Rule.`);
