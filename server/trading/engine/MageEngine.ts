@@ -270,7 +270,38 @@ export async function _runMageBotForConfig(orch: any, symbol: string, state: any
     os.orLow = Math.min(os.orLow, c.low);
     return;
   }
-  if (currentMins >= startMins + orDurationMins && !os.orBuilt) {
+  
+  if (currentMins >= startMins + orDurationMins && (!os.orBuilt || os.currentOrbDateStr !== dateStr)) {
+    if (os.currentOrbDateStr !== "" && os.currentOrbDateStr !== dateStr) {
+      // Missed the live ORB building window for a new calendar day.
+      // Force a full rebuild from the historical M5 buffer for today's ORB.
+      if (os.limitOrderId) {
+        try {
+          const conn = await getSharedConnection(orch.token, orch.accountId);
+          await enqueueMetaApiRequest(
+            async () => await conn.cancelOrder(os.limitOrderId),
+            `CancelStaleLimitLateDay:${symbol}`,
+            undefined,
+            undefined,
+            orch.profileId
+          );
+          logger.info(`[DiscretionaryTrader] 🧹 MAGE cancelled stale limit order ${os.limitOrderId} on ${symbol} (Late day rollover).`);
+        } catch (_e) {}
+      }
+      os.orHigh = -Infinity;
+      os.orLow = Infinity;
+      os.orBuilt = false;
+      os.limitOrderId = null;
+      os.limitPrice = 0;
+      os.slPrice = 0;
+      os.tpPrice = 0;
+      os.breakoutDir = null;
+      os.visionApproved = false;
+      os.fired = false;
+      os.mageTradeTakenToday = false;
+      os.tradeTakenOnOrbDay = undefined;
+    }
+
     if (os.orHigh === -Infinity && state.m5Buffer && state.m5Buffer.length > 0) {
       const windowStartMs = c.timestamp - (currentMins - startMins) * 60_000;
       const windowEndMs = windowStartMs + orDurationMins * 60_000;

@@ -33,10 +33,7 @@ import {
 import { LiveOrchestrator, getFixedEstDate } from "./LiveOrchestrator.js";
 import { DISCRETIONARY_TRADER_PAIRS as SP } from "../index.js";
 
-const REVERSE_BROKER_MAP: Record<string, string> = {};
-for (const [k, v] of Object.entries(BROKER_SYMBOL_MAP)) {
-  REVERSE_BROKER_MAP[v] = k;
-}
+
 
 const DiscretionaryTrader_PAIRS = [
   "AUDJPY", "AUDUSD", "BTCUSD", "CADJPY", "CHFJPY",
@@ -456,14 +453,23 @@ export class TickFeed {
   private processTick(p: any) {
     if (!this.running) return;
     let sym = p.symbol as string;
-    sym = REVERSE_BROKER_MAP[sym] || sym;
-    const baseSym =
-      this.brokerToBaseMap.get(sym) ||
-      sym
+    
+    let baseSym = this.brokerToBaseMap.get(sym);
+    if (!baseSym) {
+      let cleanSym = sym;
+      if (cleanSym.endsWith("=X")) cleanSym = cleanSym.replace("=X", "");
+      if (cleanSym === "GC=F") cleanSym = "XAUUSD";
+      if (cleanSym === "CL=F") cleanSym = "XTIUSD";
+      if (cleanSym === "NQ=F") cleanSym = "NAS100";
+
+      baseSym = cleanSym
         .split(".")[0]
+        .split("-")[0]
         .replace(/[^A-Z0-9]/g, "")
         .trim()
         .toUpperCase();
+    }
+    
     if (!DiscretionaryTrader_PAIRS.includes(baseSym)) return;
 
     // C-06 Fix: Queue tick processing sequentially per pair to prevent race conditions

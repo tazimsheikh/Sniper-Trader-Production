@@ -5,7 +5,7 @@ import { PairConfigManager, MAGE_PAIR_CONFIG, SAGE_PAIR_CONFIG } from "../config
 async function simulate6Months2026() {
   const isAllMode = !process.argv[2] || process.argv[2] === "all";
   const targetRisks = isAllMode 
-    ? [0.05, 0.10, 0.15, 0.20, 0.30, 0.40, 0.50] 
+    ? [0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.40, 0.50, 0.60] 
     : [parseFloat(process.argv[2])];
 
   console.log("=========================================================================");

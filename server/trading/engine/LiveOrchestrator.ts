@@ -157,6 +157,7 @@ export class LiveOrchestrator {
   loggerInited?: boolean;
   cachedEquity: number = 0;
   plog: ProfileLogger;
+  pendingHydration: Set<string>;
 
   constructor(profileId, token, accountId) {
     this.running = false;
@@ -172,6 +173,7 @@ export class LiveOrchestrator {
     this.token = token;
     this.accountId = safeDecryptAccountId(accountId);
     this.customMap = null;
+    this.pendingHydration = new Set<string>();
     this.evaluator = new VisionEvaluator(
       process.env.GOOGLE_GENAI_API_KEY ||
         process.env.GOOGLE_API_KEY ||
@@ -445,6 +447,65 @@ export class LiveOrchestrator {
     }
     await this.warmup();
     this.warmedUp = true;
+
+    // ── Background Hydration Worker ─────────────────────────────
+    // Polling interval to attempt re-hydration of any pairs that failed during cold start warmup
+    setInterval(async () => {
+      if (this.pendingHydration.size === 0) return;
+      this.plog.info(`🔄 Background Hydration Worker: Retrying ${this.pendingHydration.size} missing pairs...`);
+      
+      for (const symbol of Array.from(this.pendingHydration)) {
+        try {
+          const dbCandles = await this.loadCachedM5Candles(symbol, 30);
+          let rawM5 = dbCandles;
+          
+          if (rawM5.length === 0) {
+            let fetchStartTime: Date | undefined = undefined;
+            const MAX_CANDLES = 8640;
+            const CHUNK_SIZE = 1000;
+            
+            while (rawM5.length < MAX_CANDLES) {
+              const fetchCount = Math.min(CHUNK_SIZE, MAX_CANDLES - rawM5.length);
+              const chunk: any[] = await this.fetchCandlesWithRetry(symbol, fetchStartTime, fetchCount);
+              
+              if (!chunk || chunk.length === 0) break;
+              chunk.sort((a: any, b: any) => new Date(a.time).getTime() - new Date(b.time).getTime());
+
+              const newCandles = chunk.filter((c: any) => {
+                const ts = new Date(c.time).getTime();
+                return !rawM5.some((existing) => existing.timestamp === ts);
+              });
+              if (newCandles.length === 0) break;
+
+              rawM5 = [...newCandles, ...rawM5];
+              const oldestTime = new Date(rawM5[0].time).getTime();
+              const nowMs = Date.now();
+              const targetCutoff = nowMs - 30 * 86400 * 1000;
+              if (oldestTime <= targetCutoff) break;
+              fetchStartTime = new Date(oldestTime - 1);
+            }
+            if (rawM5.length > 0) {
+              await this.saveM5CandlesToCache(symbol, rawM5);
+            }
+          }
+          
+          if (rawM5.length > 0) {
+            const matchingPairs = Array.from(this.states.keys()).filter((k) => PairConfigManager.getBaseSymbol(k) === symbol || k === symbol);
+            for (const sp of matchingPairs) {
+              const state = this.states.get(sp);
+              if (state) {
+                state.m5Buffer = rawM5.map(c => ({ ...c }));
+                this.warmupORBStatesForPair(sp);
+              }
+            }
+            this.pendingHydration.delete(symbol);
+            this.plog.info(`✅ Background Hydration successful for ${symbol}. Removing from pending queue.`);
+          }
+        } catch (e: any) {
+          this.plog.warn(`⚠️ Background Hydration attempt failed for ${symbol}: ${e.message}`);
+        }
+      }
+    }, 5 * 60 * 1000); // Retry every 5 minutes
 
     // ── Orphan Position Scanner ──────────────────────────────────
     try {
@@ -747,6 +808,27 @@ export class LiveOrchestrator {
     pruneOldM5CandlesLocal(daysToRetain);
   }
 
+  async fetchCandlesWithRetry(brokerSym: string, fetchStartTime: Date | undefined, fetchCount: number, maxRetries = 3): Promise<any[]> {
+    const account = await getSharedAccount(this.token, this.accountId);
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const chunk: any[] = await Promise.race([
+          account.getHistoricalCandles(brokerSym, "5m", fetchStartTime, fetchCount),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("MetaApi getHistoricalCandles timeout (30s)")), 3e4)
+          ),
+        ]) as any[];
+        return chunk;
+      } catch (err: any) {
+        if (attempt === maxRetries) throw err;
+        const delayMs = Math.pow(2, attempt) * 1000 + Math.random() * 1000;
+        logger.warn(`[DiscretionaryTrader] Hydration timeout for ${brokerSym}. Retrying attempt ${attempt + 1}/${maxRetries} in ${Math.round(delayMs / 1000)}s...`);
+        await new Promise(r => setTimeout(r, delayMs));
+      }
+    }
+    return [];
+  }
+
   async warmup() {
     logger.info(`[DiscretionaryTrader] ⏳ Starting 30-Day Hydration Sequence (DB Cache + Delta MetaApi)...`);
     try {
@@ -770,26 +852,6 @@ export class LiveOrchestrator {
         this.customMap = loadedMap;
       }
       
-      const fetchCandlesWithRetry = async (brokerSym: string, fetchStartTime: Date | undefined, fetchCount: number, maxRetries = 3) => {
-        for (let attempt = 1; attempt <= maxRetries; attempt++) {
-          try {
-            const chunk: any[] = await Promise.race([
-              account.getHistoricalCandles(brokerSym, "5m", fetchStartTime, fetchCount),
-              new Promise((_, reject) =>
-                setTimeout(() => reject(new Error("MetaApi getHistoricalCandles timeout (30s)")), 3e4)
-              ),
-            ]) as any[];
-            return chunk;
-          } catch (err: any) {
-            if (attempt === maxRetries) throw err;
-            const delayMs = Math.pow(2, attempt) * 1000 + Math.random() * 1000;
-            logger.warn(`[DiscretionaryTrader] Hydration timeout for ${brokerSym}. Retrying attempt ${attempt + 1}/${maxRetries} in ${Math.round(delayMs / 1000)}s...`);
-            await new Promise(r => setTimeout(r, delayMs));
-          }
-        }
-        return [];
-      };
-
       // ── Parallelised warmup: all pairs hydrate simultaneously ──────────────
       await Promise.all(
         DISCRETIONARY_TRADER_PAIRS.map(async (cfg) => {
@@ -834,7 +896,7 @@ export class LiveOrchestrator {
               if (msGap > 5 * 60 * 1000) {
                 const expectedMissing = Math.ceil(msGap / (5 * 60 * 1000));
                 const fetchCount = Math.min(1000, Math.max(10, Math.ceil(expectedMissing * 1.10)));
-                const deltaCandles: any[] = await fetchCandlesWithRetry(brokerSym, new Date(latestCachedTs + 1), fetchCount);
+                const deltaCandles: any[] = await this.fetchCandlesWithRetry(brokerSym, new Date(latestCachedTs + 1), fetchCount);
                 if (deltaCandles && deltaCandles.length > 0) {
                   logger.info(`[DiscretionaryTrader] ⚡ Fetched ${deltaCandles.length} missing gap candles from MetaApi for ${symbol}. Saving to local cache...`);
                   await this.saveM5CandlesToCache(symbol, deltaCandles);
@@ -864,7 +926,7 @@ export class LiveOrchestrator {
 
               while (rawM5.length < MAX_CANDLES) {
                 const fetchCount = Math.min(CHUNK_SIZE, MAX_CANDLES - rawM5.length);
-                const chunk: any[] = await fetchCandlesWithRetry(brokerSym, fetchStartTime, fetchCount);
+                const chunk: any[] = await this.fetchCandlesWithRetry(brokerSym, fetchStartTime, fetchCount);
 
                 if (!chunk || chunk.length === 0) break;
                 fetchedChunks++;
@@ -966,6 +1028,7 @@ export class LiveOrchestrator {
               logger.warn(`[DiscretionaryTrader] [Weekend Warning] Hydration failed/timed out for ${symbol} (Normal broker downtime on Saturday/Sunday): ${e.message}`);
             } else {
               logger.error(`[DiscretionaryTrader] Hydration failed for ${symbol}:`, e.message);
+              this.pendingHydration.add(symbol);
             }
           }
         })
