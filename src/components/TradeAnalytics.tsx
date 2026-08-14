@@ -35,8 +35,8 @@ const TradeAnalytics = ({ diary, bots, selectedBotId, onSelectBot, analyticsData
       const selBotId = selectedBotId.toLowerCase();
       if (dbBotId === selBotId) return true;
       if (selBotId === 'seer' && (dbBotId === 'discretionary_trader' || dbBotId === 'seer')) return true;
-      if (selBotId === 'mage' && (dbBotId === 'mage' || dbBotId === 'orb')) return true;
-      if (selBotId === 'sage' && (dbBotId === 'sage' || dbBotId === 'reversal')) return true;
+      if (selBotId === 'mage' && (dbBotId === 'mage' || dbBotId === 'orb' || dbBotId.startsWith('m_'))) return true;
+      if (selBotId === 'sage' && (dbBotId === 'sage' || dbBotId === 'reversal' || dbBotId.startsWith('s_'))) return true;
       return false;
     });
   }, [diary, selectedBotId]);

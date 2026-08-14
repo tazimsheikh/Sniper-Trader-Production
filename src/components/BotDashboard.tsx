@@ -249,6 +249,8 @@ export default function BotDashboard({ bot }: { bot: any }) {
             const dbBotId = (t.bot_id || '').toLowerCase();
             if (dbBotId === currentBotId) return true;
             if (currentBotId === 'seer' && (dbBotId === 'discretionary_trader' || dbBotId === 'seer')) return true;
+            if (currentBotId === 'mage' && dbBotId.startsWith('m_')) return true;
+            if (currentBotId === 'sage' && dbBotId.startsWith('s_')) return true;
             return false;
           }));
         }
