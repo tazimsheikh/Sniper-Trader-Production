@@ -48,9 +48,9 @@ export function buildM1TypedArrays(m1Rows: any[], NFP_DATES: Set<string>, CPI_DA
     m1Typed.isEOD_standard[i] = 0;
     
     if (i > 0) {
-      const prevH = m1Rows[i-1].estHour;
-      m1Typed.isSessionReset[i] = ((prevH < 17 && h >= 17) || (prevH > h && h >= 17)) ? 1 : 0;
-      m1Typed.isMidnightExpiry[i] = (prevH > h && h < 17) ? 1 : 0;
+      const prevH = m1Rows[i - 1].estHour;
+      m1Typed.isSessionReset[i] = ((prevH < 15 && h >= 15) || (prevH > h && h >= 15) || (h === 15 && m === 0)) ? 1 : 0;
+      m1Typed.isMidnightExpiry[i] = (prevH > h && h < 15) ? 1 : 0;
     }
     
     const dateStr = getFixedEstDate(new Date(r.timestamp)).toISOString().split('T')[0];

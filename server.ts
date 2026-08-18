@@ -35,6 +35,22 @@ async function startServer() {
   const { initDb } = await import('./server/core/db.js');
   await initDb();
 
+  // ── Prime Profile Names for Clean Console Output ────────────────────────────
+  try {
+    const { default: db } = await import('./server/core/db.js');
+    const { registerProfileName } = await import('./server/utils/logger.js');
+    const profiles = await db.prepare("SELECT id, profile_name FROM trading_profiles").all() as any[];
+    if (profiles && profiles.length > 0) {
+      for (const p of profiles) {
+        if (p.id && p.profile_name) {
+          registerProfileName(Number(p.id), p.profile_name);
+        }
+      }
+    }
+  } catch (e: any) {
+    console.warn('[Profile Names] Failed to prime profile names on boot:', e.message);
+  }
+
   // ── MetaAPI High-Reliability Upgrade ─────────────────────────────────────────
   // Runs once at startup. Migrates all accounts to G2 redundant infrastructure
   // so the dashboard shows "Connected (redundancy)" instead of "no redundancy".

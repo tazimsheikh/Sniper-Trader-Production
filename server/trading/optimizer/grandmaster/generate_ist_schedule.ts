@@ -48,6 +48,13 @@ function formatToxicHoursIST(hours?: number[]): string {
   return hours.map(h => `${formatISTTime(h, 0)}`).join(", ");
 }
 
+const DOW_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+function formatToxicDays(days?: (number | string)[]): string {
+  if (!days || days.length === 0) return "None";
+  return days.map(d => (typeof d === "number" && DOW_NAMES[d] ? DOW_NAMES[d] : d)).join(", ");
+}
+
 function formatArray(arr?: any[]): string {
   if (!arr || arr.length === 0) return "None";
   return arr.join(", ");
@@ -104,7 +111,7 @@ function processConfigs(configs: Record<string, any[]>, botName: string) {
       const riskPct = cfg.riskPct !== undefined ? (cfg.riskPct * 100).toFixed(1) + "%" : "N/A";
       
       const toxicHoursStr = formatToxicHoursIST(cfg.toxicHours);
-      const toxicDaysStr = formatArray(cfg.toxicDays);
+      const toxicDaysStr = formatToxicDays(cfg.toxicDays);
       const toxicMonthsStr = formatArray(cfg.toxicMonths);
 
       entries.push({

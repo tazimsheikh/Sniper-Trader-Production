@@ -8,6 +8,7 @@ import { shouldForceCloseForNews } from "../news/newsStore.js";
 import { decrypt, isEncrypted } from "../core/crypto.js";
 import { closeTrade, logToDiary } from "./tradeUtils.js";
 import { globalTradeGate } from "../utils/GlobalTradeGate.js";
+import { PairConfigManager } from "../trading/config/PairConfig.js";
 
 // A map to track internal state of positions we're managing
 // positionId -> { entryTime, brokeEven }
@@ -418,7 +419,32 @@ export async function monitorOpenTrades(currentSession: string) {
             }
           }
 
-          // ── 3. Lockout Tracking (Stop Loss hit) ─────────────────────────
+          // ── 3.5. Timeout Sweeper (forceCloseHours safety check) ─────────────────────────
+          if (dbTrade && dbTrade.open_time) {
+            const openMs = Number(dbTrade.open_time);
+            if (openMs > 0) {
+              const baseSymbol = PairConfigManager.getBaseSymbol(pos.symbol);
+              const isSage = (dbTrade.bot_id || "").toUpperCase() === "SAGE";
+              const cfgs = isSage ? PairConfigManager.getSageConfigs(baseSymbol) : PairConfigManager.getMageConfigs(baseSymbol);
+              const fcHours = cfgs?.[0]?.forceCloseHours;
+              if (fcHours && fcHours > 0 && now.getTime() - openMs >= fcHours * 3600 * 1000) {
+                console.log(
+                  `[TradeManager] ⏱️ TIMEOUT CLOSE: Force closing ${dbTrade.bot_id} ${pos.symbol} (${pos.id}) - reached ${fcHours}h max duration.`,
+                );
+                try {
+                  await connection.closePosition(pos.id);
+                  await db.prepare("UPDATE bot_trade_states SET status = 'CLOSED' WHERE id = ?").run(dbTrade.id);
+                  globalTradeGate.release(profile.id, pos.id);
+                  pos._closedInNews = true;
+                  continue;
+                } catch (err: any) {
+                  console.error(`[TradeManager] Failed to timeout close position ${pos.id}:`, err.message);
+                }
+              }
+            }
+          }
+
+          // ── 4. Lockout Tracking (Stop Loss hit) ─────────────────────────
           // In MetaAPI, if a position is closed, it won't appear in getPositions().
           // So how do we know if it hit SL?
           // We need to check closed positions or deals.
@@ -457,8 +483,8 @@ export async function monitorOpenTrades(currentSession: string) {
             } else {
               // Check history orders just in case it closed already
               try {
-                const fallbackTime = stuck.created_at ? new Date(stuck.created_at).getTime() : Date.now();
-                const startTimeMs = Math.min(Date.now() - 24 * 60 * 60 * 1000, fallbackTime - 24 * 60 * 60 * 1000);
+                const fallbackTime = stuck.created_at ? (Number.isFinite(Number(stuck.created_at)) ? Number(stuck.created_at) : new Date(stuck.created_at).getTime()) : Date.now();
+                const startTimeMs = Math.min(Date.now() - 24 * 60 * 60 * 1000, (isNaN(fallbackTime) ? Date.now() : fallbackTime) - 24 * 60 * 60 * 1000);
                 const rawHistoryOrders = await connection.getHistoryOrdersByTimeRange(
                   new Date(startTimeMs),
                   new Date(),
@@ -528,8 +554,8 @@ export async function monitorOpenTrades(currentSession: string) {
             } else {
               // Check history orders just in case it closed already
               try {
-                const fallbackTime = pending.created_at ? new Date(pending.created_at).getTime() : Date.now();
-                const startTimeMs = Math.min(Date.now() - 24 * 60 * 60 * 1000, fallbackTime - 24 * 60 * 60 * 1000);
+                const fallbackTime = pending.created_at ? (Number.isFinite(Number(pending.created_at)) ? Number(pending.created_at) : new Date(pending.created_at).getTime()) : Date.now();
+                const startTimeMs = Math.min(Date.now() - 24 * 60 * 60 * 1000, (isNaN(fallbackTime) ? Date.now() : fallbackTime) - 24 * 60 * 60 * 1000);
                 const rawHistoryOrders = await connection.getHistoryOrdersByTimeRange(
                   new Date(startTimeMs),
                   new Date(),
@@ -557,9 +583,9 @@ export async function monitorOpenTrades(currentSession: string) {
                 } else {
                   // If it's been in PENDING_VERIFICATION for more than 5 minutes and not found on broker, mark as FAILED
                   const createdTime = pending.created_at
-                    ? new Date(pending.created_at).getTime()
+                    ? (Number.isFinite(Number(pending.created_at)) ? Number(pending.created_at) : new Date(pending.created_at).getTime())
                     : Date.now();
-                  if (Date.now() - createdTime > 5 * 60 * 1000) {
+                  if (Date.now() - (isNaN(createdTime) ? Date.now() : createdTime) > 5 * 60 * 1000) {
                     console.log(
                       `[TradeManager] ⚠️ Marking stuck PENDING_VERIFICATION trade ${pending.client_id} as FAILED (Not found on broker after 5 minutes).`,
                     );
@@ -606,7 +632,7 @@ export async function monitorOpenTrades(currentSession: string) {
               let matchedHistoryOrder = null;
               if (!closingDeal) {
                 const fallbackTime = Number(dbTrade.open_time || 0) > 0 ? Number(dbTrade.open_time) : (dbTrade.created_at ? new Date(dbTrade.created_at).getTime() : Date.now());
-                const startTimeMs = Math.min(Date.now() - 24 * 60 * 60 * 1000, fallbackTime - 24 * 60 * 60 * 1000);
+                const startTimeMs = Math.min(Date.now() - 30 * 24 * 60 * 60 * 1000, fallbackTime - 30 * 24 * 60 * 60 * 1000);
                 const rawHistoryOrders = await connection.getHistoryOrdersByTimeRange(
                   new Date(startTimeMs),
                   new Date(),

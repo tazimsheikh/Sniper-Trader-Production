@@ -163,7 +163,8 @@ export function computeMasterRiskSizing(
     const regime = p.regimeRatio ?? 1.0;
     const dsrFactor = p.dsrProb ?? 0.5;
     const corrTax = (p as any).correlationTax ?? 1.0;
-    const sampleSizeFactor = Math.min(1.0, Math.sqrt(p.totalTrades / 30));
+    const tradesCount = p.threeYearTrades || p.totalTrades || 1;
+    const sampleSizeFactor = Math.min(1.0, Math.sqrt(tradesCount / 50));
     return { p, score: baseSafety * regime * (0.3 + 0.7 * dsrFactor) * corrTax * sampleSizeFactor };
   });
 

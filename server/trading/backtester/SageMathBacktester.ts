@@ -14,11 +14,22 @@ import { TradeRecord, TradeOutcome, M1TypedArrays } from "../config/types.js";
 import { isNewsForceClose } from "../market/historicalNews.js";
 import { isEODSession } from "../market/MathFilters.js";
 import { preComputeTriggers, evaluateExits } from "./math_core/SageMathCore.js";
+import { getFixedEstDate } from "./math_core/MathCoreUtils.js";
 
 const backtestCache = new Map<
   string,
   { m5Candles: any[]; emaArr: any; m1Rows: any[] }
 >();
+
+export function clearSageBacktestCache(pair?: string) {
+  if (pair) {
+    for (const k of backtestCache.keys()) {
+      if (k.startsWith(pair)) backtestCache.delete(k);
+    }
+  } else {
+    backtestCache.clear();
+  }
+}
 
 export async function runSageMathBacktest(
   pair: string,
@@ -29,12 +40,6 @@ export async function runSageMathBacktest(
   overrideConfigs?: any[],
   enableTrace: boolean = false,
 ) {
-  for (const key of backtestCache.keys()) {
-    if (!key.startsWith(pair)) {
-      backtestCache.delete(key);
-    }
-  }
-
   const normalizedPair = pair.split("_")[0].split(".")[0].trim().toUpperCase();
   const isCrypto = pair.includes("BTC") || pair.includes("ETH");
   const isIndex =
@@ -173,10 +178,11 @@ export async function runSageMathBacktest(
     m1Typed.minute[i] = r.minute;
     if (i > 0) {
       const prevH = m1Rows[i-1].estHour;
-      m1Typed.isSessionReset[i] = ((prevH < 17 && r.estHour >= 17) || (prevH > r.estHour && r.estHour >= 17) || (r.estHour === 17 && r.minute === 0)) ? 1 : 0;
-      m1Typed.isMidnightExpiry[i] = (prevH > r.estHour && r.estHour < 17) ? 1 : 0;
+      m1Typed.isSessionReset[i] = ((prevH < 15 && r.estHour >= 15) || (prevH > r.estHour && r.estHour >= 15) || (r.estHour === 15 && r.minute === 0)) ? 1 : 0;
+      m1Typed.isMidnightExpiry[i] = (prevH > r.estHour && r.estHour < 15) ? 1 : 0;
     }
-    const dStr = new Date(r.timestamp).toISOString().split("T")[0];
+    const estDate = getFixedEstDate(new Date(r.timestamp));
+    const dStr = estDate.toISOString().split("T")[0];
     m1Typed.isEOD_standard[i] = isEODSession(r.estHour, r.minute) ? 1 : 0;
     m1Typed.isEOD_standard[i] = isEODSession(r.estHour, r.minute) ? 1 : 0;
     m1Typed.isNewsForceClose[i] = isNewsForceClose(dStr, r.estHour, r.minute) ? 1 : 0;
@@ -206,7 +212,12 @@ export async function runSageMathBacktest(
       config.sweepPips,
       config.actionMinutes,
       config.maxSweepMultiplier,
-      config.requireCloseInside
+      config.requireCloseInside,
+      config.htfAlignmentRequired,
+      config.maxH1EmaSlope,
+      config.minWbr,
+      config.requireCloseLocationHalf,
+      config.useHtfSarFilter
     );
 
     const evalRes = evaluateExits(
@@ -224,7 +235,7 @@ export async function runSageMathBacktest(
     const mappedRecords = (evalRes.tradeRecords || []).map((tr: any) => {
       return {
         timestamp: tr.timestamp,
-        date: new Date(tr.timestamp).toISOString().split("T")[0],
+        date: getFixedEstDate(new Date(tr.timestamp)).toISOString().split("T")[0],
         pair,
         setupType: "SAGE_REVERSAL",
         sessionName: "NYSE ORB",
@@ -287,6 +298,7 @@ export async function runSageMathBacktest(
     winRate,
     skipped,
     totalTrades: tradedRecords.length,
-    netR: tradedRecords.reduce((sum, r) => sum + (r.R || 0), 0),
+    netR: tradedRecords.reduce((sum, r) => sum + (r.rMultiple ?? 0), 0),
   };
 }
+

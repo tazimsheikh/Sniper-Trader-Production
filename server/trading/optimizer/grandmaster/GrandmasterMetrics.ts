@@ -14,13 +14,19 @@ export interface IndependentSynthesisComponent {
   hedgeScore: number;
   periodReturns: number[];
   dailyReturns: Record<string, number>;
+  dailyRArray?: Float64Array;
   monteCarloDrawdown99?: number;
   riskPct?: number;
   winRate?: number;
   recentMomentumR?: number;
+  recentTwoMonthR?: number;
+  recentThreeMonthR?: number;
+  threeYearNetR?: number;
+  threeYearWinRate?: number;
   threeYearMaxDrawdown?: number;
   threeYearTrades?: number;
   threeYearProfitFactor?: number;
+  regimeConsistency?: number;
   forceCloseHours?: number;
   recentSixMonthTrades?: number;
   recentSixMonthWinRate?: number;
@@ -39,13 +45,16 @@ export interface IndependentSynthesisComponent {
   dsrProb?: number;
   profitFactor?: number;
   avgWinR?: number;
-  recentTwoMonthR?: number;
+  omegaRatio?: number;
+  cvar95?: number;
+  sampleConfidence?: number;
   correlationTax?: number; // Pre-computed max pairwise Pearson correlation penalty (0.2–1.0); applied in computeMasterRiskSizing
+  clusterId?: number;
+  allocatedRisk?: number;
 }
 
-
-const MIN_TRADES = 20;
-const MAX_DRAWDOWN = 25;
+const MIN_TRADES = 3;
+const MAX_DRAWDOWN = 70;
 const BLACK_SWAN_MAX_DD = 10.0;
 const BLACK_SWAN_MIN_TRADES = 30;
 
@@ -93,19 +102,19 @@ export function evaluateComponent(
       ? (state as any).trades
       : Object.keys(state.dailyNetR || {}).length;
 
-  // Absolute floor: 3 trades minimum to ensure some statistical signal exists.
-  // Overfitting protection is handled downstream by sampleSizeFactor = sqrt(trades/30) in
-  // computeMasterRiskSizing, which discounts low-sample configs' risk allocation proportionally
-  // rather than hard-rejecting them.
+  // Absolute floor: 3 trades minimum to ensure basic mathematical signal.
+  // Continuous sampleSizeFactor discounts low-sample configs proportionally.
   if (tradesCount < 3) return null;
 
   let periodLength = 0;
   let negativeLength = 0;
   let winningTrades = 0;
-  let recentMomentumR = 0;
+  let recentTwoMonthR = 0;
   let recentThreeMonthR = 0;
+  let recentMomentumR = 0;
   const recentSixMonthsNetRByMonth: Record<string, number> = {};
   
+  let cutoff2MonthDateStr = "1970-01-01";
   let cutoffDateStr = "1970-01-01";
   let cutoff3MonthDateStr = "1970-01-01";
   let cutoff1YearDateStr = "1970-01-01";
@@ -115,11 +124,14 @@ export function evaluateComponent(
   
   if (n > 0) {
     lastDate = new Date(globalDates[n - 1]);
-    const cutoffDate = new Date(lastDate.getTime() - 180 * 24 * 60 * 60 * 1000);
-    cutoffDateStr = cutoffDate.toISOString().split("T")[0];
-    
+    const cutoff2MonthDate = new Date(lastDate.getTime() - 60 * 24 * 60 * 60 * 1000);
+    cutoff2MonthDateStr = cutoff2MonthDate.toISOString().split("T")[0];
+
     const cutoff3MonthDate = new Date(lastDate.getTime() - 90 * 24 * 60 * 60 * 1000);
     cutoff3MonthDateStr = cutoff3MonthDate.toISOString().split("T")[0];
+
+    const cutoffDate = new Date(lastDate.getTime() - 180 * 24 * 60 * 60 * 1000);
+    cutoffDateStr = cutoffDate.toISOString().split("T")[0];
 
     const cutoff1YearDate = new Date(lastDate.getTime() - 365.25 * 24 * 60 * 60 * 1000);
     cutoff1YearDateStr = cutoff1YearDate.toISOString().split("T")[0];
@@ -132,17 +144,19 @@ export function evaluateComponent(
     targetMonthStr = `-${String(targetMonthIndex + 1).padStart(2, '0')}-`;
   }
 
-  // --- Strict Black Swan Metrics ---
+  // --- 3-Year Window & Yearly Consistency Tracking ---
   let tyTotalR = 0;
   let tyPeakR = 0;
   let tyMaxDrawdownR = 0;
   let tyGrossProfit = 0;
   let tyGrossLoss = 0;
   let tyTradesCount = 0;
-  let tyWinningTrades = 0; // Bug Fix: scoped to same 3-year window as tyGrossProfit
+  let tyWinningTrades = 0;
   let tyLosingDaysCount = 0;
   const tyMonthlyNetR: Record<string, number> = {};
   const tyWeeklyNetR: Record<string, number> = {};
+  const yearlyNetR: Record<string, number> = {};
+  const yearlyTrades: Record<string, number> = {};
   
   let smTradesCount = 0;
   let smWinningTrades = 0;
@@ -168,16 +182,25 @@ export function evaluateComponent(
       if (val > 0) winningTrades++;
       
       const dateStr = globalDates[i];
-      if (dateStr >= cutoff1YearDateStr) {
-        recentOneYearTrades++;
-        recentOneYearR += val;
+      const yKey = dateStr.substring(0, 4);
+      yearlyNetR[yKey] = (yearlyNetR[yKey] || 0) + val;
+      yearlyTrades[yKey] = (yearlyTrades[yKey] || 0) + 1;
+
+      if (dateStr >= cutoff2MonthDateStr) {
+        recentTwoMonthR += val;
+      }
+      if (dateStr >= cutoff3MonthDateStr) {
+        recentThreeMonthR += val;
       }
       if (dateStr >= cutoffDateStr) {
         recentMomentumR += val;
         const monthKey = dateStr.substring(0, 7);
         recentSixMonthsNetRByMonth[monthKey] = (recentSixMonthsNetRByMonth[monthKey] || 0) + val;
       }
-      if (dateStr >= cutoff3MonthDateStr) recentThreeMonthR += val;
+      if (dateStr >= cutoff1YearDateStr) {
+        recentOneYearTrades++;
+        recentOneYearR += val;
+      }
 
       if (dateStr >= THREE_YEARS_AGO) {
         tyTotalR += val;
@@ -194,7 +217,7 @@ export function evaluateComponent(
         if (val < 0) tyLosingDaysCount++;
         
         tyTradesCount++;
-        if (val > 0) { tyGrossProfit += val; tyWinningTrades++; } // Bug Fix: increment tyWinningTrades alongside tyGrossProfit
+        if (val > 0) { tyGrossProfit += val; tyWinningTrades++; }
         else if (val < 0) tyGrossLoss += Math.abs(val);
       }
 
@@ -220,31 +243,25 @@ export function evaluateComponent(
   const minRequiredR = isPotentialBlackSwan ? 5 : 8;
 
   // Low-frequency assets (Crypto, Indices, Energy, JPY Crosses) trade 4-9 times/year.
-  // Use relaxed recent-year trade minimum so high-yield low-freq alphas are not prematurely dropped.
   const isLowFreqAsset = /BTC|ETH|XTI|NAS100|US30|GER40|JPN225|SPX500|CADJPY|EURJPY/i.test(symbol);
 
-  // Sage requires a sweep market structure — inherently fires 5-25 times/year even on active pairs.
-  // We've reduced the total trades floor to 10 for Forex/Gold. Thus, the recent-year minimum
-  // must be proportionally scaled down to 3 trades to prevent unfairly blocking them.
-  const minRecentOneYearTrades = isLowFreqAsset
-    ? 2                              // Crypto/Index: very low bar for both bots
-    : 3;                             // Forex/Gold: 3 trades in the last year required
-
+  const minRecentOneYearTrades = isLowFreqAsset ? 2 : 3;
   const minTotalTrades = isLowFreqAsset ? 3 : 10;
 
-  // MAX_DRAWDOWN constant is 70 — keep the hard limit consistent across the pipeline.
   if (totalR < minRequiredR || maxDrawdownR > 70 || recentOneYearTrades < minRecentOneYearTrades || tradesCount < minTotalTrades)
     return null;
-    
-  // REGIME UPGRADE: Calendar-month killer guards removed to allow dynamic Volatility Regime (RVR & ADR) filtering over an expanded candidate pool.
 
+  // Calendar Year Consistency Guard:
+  // Reject any setup that loses net money in any calendar year with active trading (>= 3 trades or net loss < -1.5R)
+  for (const [year, yNet] of Object.entries(yearlyNetR)) {
+    const yCnt = yearlyTrades[year] || 0;
+    if ((yCnt >= 3 && yNet < 0) || yNet < -1.5) {
+      return null;
+    }
+  }
 
   // ── Sharpe / Sortino ────────────────────────────────────────────────────────
-  // IMPORTANT: We compute statistics ONLY on days where a trade actually fired.
-  // Including the ~700+ zero-return (no-trade) days in the denominator artificially
-  // suppresses the standard deviation and inflates the Sharpe ratio to unrealistic
-  // levels (>10). The correct approach is to treat each trade result as one
-  // observation, then annualize by the trade frequency.
+  // IMPORTANT: We compute statistics ONLY on active trading days.
   const activeTrades: number[] = [];
   for (let i = 0; i < n; i++) {
     if (arr[i] !== 0) activeTrades.push(arr[i]);
@@ -255,9 +272,17 @@ export function evaluateComponent(
 
   let activeSumSq = 0;
   let activeDownsideVarianceSum = 0;
+  let upsideSum = 0;
+  let downsideSum = 0;
+
   for (const v of activeTrades) {
     activeSumSq += v * v;
-    if (v < 0) activeDownsideVarianceSum += v * v;
+    if (v < 0) {
+      activeDownsideVarianceSum += v * v;
+      downsideSum += Math.abs(v);
+    } else if (v > 0) {
+      upsideSum += v;
+    }
   }
 
   const activeVariance = nActive > 1
@@ -278,8 +303,6 @@ export function evaluateComponent(
     ? (nActive / (n / activeDaysPerYear))
     : activeDaysPerYear;
 
-  // Bug Fix: Zero-variance positive strategies (e.g. perfectly consistent R wins) are ideal —
-  // they should NOT be penalized with Sharpe=0. Assign a high ceiling value of 99 instead.
   const sharpeRatio =
     activeStdDev > 0
       ? (meanActiveReturn / activeStdDev) * Math.sqrt(tradesPerYear)
@@ -289,18 +312,32 @@ export function evaluateComponent(
       ? (meanActiveReturn / activeDownsideStdDev) * Math.sqrt(tradesPerYear)
       : (meanActiveReturn > 0 ? 99 : 0);
   const recoveryFactor =
-    maxDrawdownR > 0 ? totalR / maxDrawdownR : totalR * 2.0; // Sane ceiling for 0 DD setups
+    maxDrawdownR > 0 ? totalR / maxDrawdownR : totalR * 2.0;
+
+  // Discrete Omega Ratio with L = 0
+  const omegaRatio = downsideSum === 0 ? (upsideSum > 0 ? 99.0 : 1.0) : Math.min(99.0, upsideSum / downsideSum);
+
+  // 95% CVaR (Expected Shortfall)
+  let cvar95 = 0;
+  if (activeTrades.length > 0) {
+    const losses = activeTrades.map(r => -r).sort((a, b) => a - b);
+    const cutoffIndex = Math.floor(losses.length * 0.95);
+    let tailSum = 0;
+    let count = 0;
+    for (let i = cutoffIndex; i < losses.length; i++) {
+      tailSum += Math.max(0, losses[i]);
+      count++;
+    }
+    cvar95 = count > 0 ? tailSum / count : (losses[losses.length - 1] > 0 ? losses[losses.length - 1] : 0);
+  }
   
-  // 🛡️ Minimum Risk-Reward Ratio Guard:
-  // Bug Fix: Use tyWinningTrades (3-year window) instead of all-time winningTrades to match
-  // the tyGrossProfit window. Previously, dividing 3yr profit by all-time wins artificially
-  // deflated avgWinR by ~40%, silently mass-killing valid strategies.
+  // Minimum Risk-Reward Ratio Guard (3-year window)
   const avgWinR = tyWinningTrades > 0 ? tyGrossProfit / tyWinningTrades : 0;
   if (avgWinR < 0.2) {
     return null; // Eradicate strategies with < 0.2 RR on average winning day (3yr window)
   }
 
-  // Calculate wfMultiplier FIRST (needed for hedgeScore)
+  // Walk-Forward Efficiency (wfMultiplier)
   const NUM_STEPS = 10;
   const stepSize = Math.floor(n / NUM_STEPS);
   let stepSum = 0, stepSumSq = 0, minStepReturn = Infinity;
@@ -322,9 +359,9 @@ export function evaluateComponent(
   
   let wfMultiplier = stepStdDev > 0 ? (stepMean / (stepStdDev + 1)) : 0.1;
   if (minStepReturn < 0) {
-      wfMultiplier *= 0.1;
+    wfMultiplier *= 0.1;  // Harsh 10x penalty for any losing period
   } else if (minStepReturn < stepMean * 0.2) {
-      wfMultiplier *= 0.5;
+    wfMultiplier *= 0.5;
   }
   wfMultiplier = Math.max(0.1, Math.min(2.0, wfMultiplier));
   const maxStepLoss = minStepReturn < 0 ? Math.abs(minStepReturn) : 0;
@@ -354,9 +391,18 @@ export function evaluateComponent(
 
   const totalYears = Math.max(0.5, n / 252);
   const annualAvgR = totalR / totalYears;
-  const regimeRatio = annualAvgR > 0 
-    ? Math.min(2.0, Math.max(0.25, recentOneYearR / annualAvgR)) 
-    : 0.5;
+  const ratio = annualAvgR > 0 ? (recentOneYearR / annualAvgR) : 0;
+  let regimeRatio = 1.0;
+  if (ratio > 1.4) {
+    // If recent 1 year accounts for disproportionate outperformance, penalize regime overfitting
+    regimeRatio = Math.max(0.2, 1.0 - (ratio - 1.4) * 0.5);
+  } else if (ratio < 0.6) {
+    // If strategy decayed significantly recently, penalize decay
+    regimeRatio = Math.max(0.2, ratio / 0.6);
+  }
+
+  // Continuous sample size confidence
+  const sampleConfidence = Math.min(1.0, Math.sqrt(tradesCount / 30));
 
   // ── Deflated Sharpe Ratio (DSR) Calculation ────────────────────────────────
   let activeSkew = 0;
@@ -376,10 +422,18 @@ export function evaluateComponent(
   // Assume ~500 trials per pair optimization run
   const { dsr, dsrProb } = calculateDeflatedSharpeRatio(sharpeRatio, 500, nActive, activeSkew, activeKurt);
 
-  // FIX 1: Bake DSR Probability into hedgeScore.
-  // Setups that look good purely due to multiple testing selection bias receive a low DSR score
-  // and are deprioritized relative to statistically genuine edges.
-  const hedgeScore = sortinoRatio * recoveryFactor * regimeRatio * wfMultiplier * (0.2 + 0.8 * dsrProb);
+  // ── Recency Momentum & Concentration Multiplier ───────────────────────────
+  // Penalize setups where profits are solely concentrated in a short-term recent spike (>50% of lifetime profit in 3 months)
+  let recencyMultiplier = 1.0;
+  if (totalR > 0 && recentThreeMonthR > totalR * 0.5) {
+    recencyMultiplier = 0.3; // Heavy penalty for single-period concentration
+  } else if (recentThreeMonthR < 0) {
+    recencyMultiplier = Math.max(0.5, 1.0 + (recentThreeMonthR / (Math.abs(totalR) + 1)));
+  }
+
+  // Bake DSR Probability & Recency Multiplier into hedgeScore.
+  // Setups that look good due to multiple testing selection bias receive a low DSR score.
+  const hedgeScore = sortinoRatio * recoveryFactor * regimeRatio * wfMultiplier * recencyMultiplier * (0.2 + 0.8 * dsrProb);
 
   return {
     symbol,
@@ -397,10 +451,16 @@ export function evaluateComponent(
     dsrProb,
     periodReturns,
     dailyReturns,
+    dailyRArray: arr,
     winRate: calcWinRate,
+    recentTwoMonthR,
+    recentThreeMonthR,
     recentMomentumR,
     recentOneYearR,
     regimeRatio,
+    omegaRatio,
+    cvar95,
+    sampleConfidence,
     threeYearMaxDrawdown: tyMaxDrawdownR,
     threeYearTrades: tyTradesCount,
     threeYearProfitFactor: tyProfitFactor,
@@ -483,9 +543,6 @@ export function evaluatePortfolio(
   const mean = sum / numDays;
   const variance = (sumSq / numDays) - (mean * mean);
   const stdDev = Math.sqrt(Math.max(0, variance));
-  // Note: evaluatePortfolio doesn't receive globalDates, so we approximate activeDaysPerYear
-  // based on numDays representing ~5.03 years (from 2021-05-03 to 2026-05-01 roughly).
-  // 925 active days / 5 years = 185 days per year
   const activeDaysPerYear = numDays > 1 ? (numDays / 5.0) : 252;
   const sharpeRatio = stdDev > 0 ? (mean / stdDev) * Math.sqrt(activeDaysPerYear) : 0;
 
@@ -527,18 +584,15 @@ export function evaluatePortfolio(
   else if (category.includes("Most Balanced")) score = (returnToDrawdown + sharpeRatio * 10) * wfMultiplier;
   
   else if (category.includes("Best Risk-Adjusted Return")) {
-    // Pure quality: Sharpe × Return-to-Drawdown composite
     score = sharpeRatio * returnToDrawdown * wfMultiplier;
   }
   else if (category.includes("The Ultimate Trifecta")) {
-    // Three-way composite: recent momentum × low-DD penalty × raw profit
     const recentWeight = Math.max(0.01, recentReturn);
     const ddPenalty = Math.max(0.1, 1.0 - rawMaxDrawdown / 10.0);
     score = recentWeight * ddPenalty * totalReturn * wfMultiplier;
   }
   else if (category.includes("The Holy Grail") || category.includes("Experimental")) {
      const correlationPenalty = Math.max(0.1, 1 - Math.max(0, avgCorr));
-     // RECENCY GUARD: demote configs with negative 6-month YTD performance.
      const recentPenalty = recentReturn >= 0
        ? Math.min(2.0, 1.0 + recentReturn / 60)
        : Math.max(0.05, 1.0 + recentReturn / 30);
@@ -587,19 +641,21 @@ export function calculateDeflatedSharpeRatio(
   skew: number = 0,
   kurt: number = 3
 ): { dsr: number; dsrProb: number } {
-  if (sr <= 0 || tradesCount < 10) return { dsr: 0, dsrProb: 0 };
+  if (sr <= 0 || tradesCount < 4) return { dsr: 0, dsrProb: 0.5 };
   
   // Euler-Mascheroni constant approximation for expected max Sharpe among N IID Gaussian trials
-  const emConst = 0.5772156649;
+  const emConst = 0.5772156649015329;
   const num = Math.max(2, numTrials);
-  const expMaxZ = (1 - emConst) * Math.pow(2 * Math.log(num), -0.5) + Math.pow(2 * Math.log(num), 0.5);
+  const logN = Math.log(num);
+  const sqrt2LogN = Math.sqrt(2 * logN);
+  const expMaxZ = sqrt2LogN * (1 - emConst / (2 * logN)) + (emConst / sqrt2LogN);
   
-  // Variance of the Sharpe Ratio estimator under non-normality (Mertens 2002)
+  // Variance of the Sharpe Ratio estimator under non-normality (Mertens 2002 / Bailey & Lopez de Prado 2014)
   const srVar = (1 - skew * sr + ((kurt - 1) / 4) * sr * sr) / Math.max(1, tradesCount - 1);
   const srStdDev = Math.sqrt(Math.max(1e-6, srVar));
   
   // Deflated Sharpe Ratio statistic (Z-score relative to expected benchmark under multiple testing)
-  const dsrZ = (sr - expMaxZ * srStdDev) / srStdDev;
+  const dsrZ = (sr - expMaxZ) / srStdDev;
   
   // Standard Normal Cumulative Distribution Function approximation (Abramowitz and Stegun)
   const p = 1 / (1 + 0.2316419 * Math.abs(dsrZ));
@@ -610,3 +666,4 @@ export function calculateDeflatedSharpeRatio(
 
   return { dsr: dsrZ, dsrProb: Math.max(0, Math.min(1, normCdf)) };
 }
+

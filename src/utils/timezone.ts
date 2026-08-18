@@ -85,9 +85,16 @@ export function formatTime(ts: string | number | Date): string {
  * Format a timestamp as date only in the user's selected timezone.
  * e.g. "18 Jun 2026"
  */
-export function formatDate(ts: string | number | Date): string {
+export function formatDate(ts: string | number | Date | null | undefined): string {
+  if (!ts) return 'N/A';
   try {
-    return new Date(ts).toLocaleDateString('en-GB', {
+    let parsedVal: any = ts;
+    if (typeof ts === 'string' && /^\d+$/.test(ts)) {
+      parsedVal = parseInt(ts, 10);
+    }
+    const d = new Date(parsedVal);
+    if (isNaN(d.getTime())) return String(ts);
+    return d.toLocaleDateString('en-GB', {
       timeZone: getIanaTz(),
       day: '2-digit',
       month: 'short',
@@ -103,4 +110,19 @@ export function formatDate(ts: string | number | Date): string {
  */
 export function getTzLabel(): string {
   return typeof window !== 'undefined' ? (localStorage.getItem('sniper_tz') || 'IST') : 'IST';
+}
+
+/**
+ * Calculates the canonical broker trading day (YYYY-MM-DD) for a given date.
+ * Shifts standard New York time by +7 hours to align with the 5:00 PM EST rollover.
+ */
+export function getBrokerTradingDayStr(date: Date = new Date()): string {
+  // 1. Get the EST time string
+  const estStr = date.toLocaleString("en-US", { timeZone: "America/New_York" });
+  // 2. Parse it back as if it were UTC (the standard timezone hack to do math on local time)
+  const estDate = new Date(estStr + " UTC");
+  // 3. Add 7 hours so that >= 5:00 PM EST rolls over to the next calendar day
+  estDate.setUTCHours(estDate.getUTCHours() + 7);
+  // 4. Return YYYY-MM-DD
+  return estDate.toISOString().split("T")[0];
 }

@@ -6,9 +6,60 @@ import { logger } from "../../utils/logger.js";
 export interface HTFPrecomputedData {
   h1IndexMap: Int32Array;
   ema50: Float64Array;
+  sar?: Float64Array;
+  h1Candles?: AggregatedCandle[];
 }
 
 export class HTFContextTracker {
+  public static computeH1ParabolicSar(h1Candles: AggregatedCandle[]): Float64Array {
+    const n = h1Candles.length;
+    const sar = new Float64Array(n);
+    if (n < 2) return sar;
+
+    let isUp = h1Candles[1].close >= h1Candles[0].close;
+    let ep = isUp ? Math.max(h1Candles[0].high, h1Candles[1].high) : Math.min(h1Candles[0].low, h1Candles[1].low);
+    let af = 0.02;
+    sar[0] = isUp ? h1Candles[0].low : h1Candles[0].high;
+    sar[1] = sar[0];
+
+    for (let i = 2; i < n; i++) {
+      const prevH = h1Candles[i - 1];
+      const prev2H = h1Candles[i - 2];
+      let nextSar = sar[i - 1] + af * (ep - sar[i - 1]);
+
+      if (isUp) {
+        nextSar = Math.min(nextSar, prevH.low, prev2H.low);
+        if (h1Candles[i].low < nextSar) {
+          isUp = false;
+          sar[i] = ep;
+          ep = h1Candles[i].low;
+          af = 0.02;
+        } else {
+          sar[i] = nextSar;
+          if (h1Candles[i].high > ep) {
+            ep = h1Candles[i].high;
+            af = Math.min(af + 0.02, 0.20);
+          }
+        }
+      } else {
+        nextSar = Math.max(nextSar, prevH.high, prev2H.high);
+        if (h1Candles[i].high > nextSar) {
+          isUp = true;
+          sar[i] = ep;
+          ep = h1Candles[i].high;
+          af = 0.02;
+        } else {
+          sar[i] = nextSar;
+          if (h1Candles[i].low < ep) {
+            ep = h1Candles[i].low;
+            af = Math.min(af + 0.02, 0.20);
+          }
+        }
+      }
+    }
+    return sar;
+  }
+
   public static precomputeHTFData(m5Candles: AggregatedCandle[]): HTFPrecomputedData {
     const h1Candles = aggregateCandles(m5Candles as any, 60);
     const closes = new Float64Array(h1Candles.length);
@@ -16,6 +67,7 @@ export class HTFContextTracker {
       closes[i] = h1Candles[i].close;
     }
     const ema50 = this.calculateEmaTyped(closes, 50);
+    const sar = this.computeH1ParabolicSar(h1Candles);
 
     const h1IndexMap = new Int32Array(m5Candles.length);
     let h1Idx = 0;
@@ -27,8 +79,36 @@ export class HTFContextTracker {
       h1IndexMap[i] = Math.max(0, h1Idx - 1);
     }
 
-    return { h1IndexMap, ema50 };
+    return { h1IndexMap, ema50, sar, h1Candles };
   }
+
+  public static isSarAcceleratingFast(
+    htfData: HTFPrecomputedData,
+    m5Index: number,
+    direction: "BUY" | "SELL"
+  ): boolean {
+    if (!htfData.sar || !htfData.h1Candles) return false;
+    const h1Idx = htfData.h1IndexMap[m5Index];
+    if (h1Idx < 2 || h1Idx >= htfData.h1Candles.length) return false;
+
+    const currentSar = htfData.sar[h1Idx];
+    const prevSar = htfData.sar[h1Idx - 1];
+    const currentClose = htfData.h1Candles[h1Idx].close;
+
+    if (direction === "SELL") {
+      // If price is above SAR and SAR is rising (bullish acceleration) -> reject SELL
+      if (currentClose > currentSar && currentSar > prevSar) {
+        return true;
+      }
+    } else if (direction === "BUY") {
+      // If price is below SAR and SAR is falling (bearish acceleration) -> reject BUY
+      if (currentClose < currentSar && currentSar < prevSar) {
+        return true;
+      }
+    }
+    return false;
+  }
+
 
   public static isTrendParabolicFast(
     htfData: HTFPrecomputedData,

@@ -35,8 +35,11 @@ export class ChromosomeMapper {
   /**
    * Mutates a chromosome by randomly shifting indices up or down, or picking a completely new index.
    */
-  mutate(chromosome: number[], mutationRate: number): number[] {
+  mutate(chromosome: number[], mutationRate: number, mutationMask?: boolean[]): number[] {
     return chromosome.map((gene, i) => {
+      // If a mask is provided and this gene is masked (false), do not mutate it.
+      if (mutationMask && !mutationMask[i]) return gene;
+
       if (Math.random() < mutationRate) {
         const gridLen = this.grids[i].length;
         if (gridLen <= 1) return gene;

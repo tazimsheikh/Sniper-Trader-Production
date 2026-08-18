@@ -517,8 +517,34 @@ function parseSetupStringBody(
     if (rawHtfAlign !== undefined) {
        output += `,\n      "htfAlignmentRequired": ${rawHtfAlign}`;
     } else {
-       output += `,\n      "htfAlignmentRequired": true,\n      "maxH1EmaSlope": 20`;
+       output += `,\n      "htfAlignmentRequired": true`;
     }
+
+    // --- ASSET CLASS ROUTING FOR HTF FILTERS ---
+    const isCrypto = pair.includes("BTC") || pair.includes("ETH");
+    const isIndex = ["US30", "NAS100", "SPX500", "GER40", "UK100", "JPN225"].some(idx => pair.includes(idx));
+    const isJpyCross = pair.includes("JPY");
+    const isAsiaSession = sessionName === "asia";
+
+    // 1. HTF Parabolic SAR Filter
+    let useHtfSar = true;
+    if (isCrypto) useHtfSar = false;
+    if (isIndex && isAsiaSession) useHtfSar = false;
+    if (isJpyCross && !pair.includes("GBP")) useHtfSar = false; // CHFJPY false, GBPJPY true
+    if (pair === "NZDUSD") useHtfSar = false;
+    
+    // 2. Require Close Location Half
+    let reqCloseHalf = false;
+    if (isIndex && !isAsiaSession) reqCloseHalf = true;
+    if (pair === "USDCAD" || pair === "GBPJPY" || pair === "BTCUSD") reqCloseHalf = true;
+    
+    // 3. Minimum Wick-to-Body Ratio (WBR)
+    const wbr = (pair.includes("EURUSD") || (pair.includes("CHFJPY") && !isAsiaSession)) ? 1.75 : 1.5;
+
+    output += `,\n      "maxH1EmaSlope": 20`;
+    output += `,\n      "useHtfSarFilter": ${useHtfSar}`;
+    output += `,\n      "requireCloseLocationHalf": ${reqCloseHalf}`;
+    output += `,\n      "minWbr": ${wbr}`;
     output += `\n`;
   } else {
     const body = findNum("Body") ?? 0;
@@ -533,8 +559,11 @@ function parseSetupStringBody(
     // ExitOPPOSITE_BOUNDARY splits into TWO tokens ("ExitOPPOSITE" + "BOUNDARY").
     // findStr only returns the single Exit-prefixed token remainder. Detect the continuation.
     const exitTokenIdx = parts.findIndex(p => p.startsWith("Exit"));
-    if (exitTokenIdx >= 0 && exitTokenIdx + 1 < parts.length && parts[exitTokenIdx + 1] === "BOUNDARY") {
-      exitModeStr += "_BOUNDARY";
+    if (exitTokenIdx >= 0 && exitTokenIdx + 1 < parts.length) {
+      const nextToken = parts[exitTokenIdx + 1];
+      if (nextToken === "BOUNDARY" || nextToken === "AGGRESSIVE" || nextToken === "MODERATE" || nextToken === "CONSERVATIVE") {
+        exitModeStr += "_" + nextToken;
+      }
     }
 
     output += `      "session": "${sessionName}",\n`;

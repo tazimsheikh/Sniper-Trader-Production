@@ -132,23 +132,25 @@ export function isTradeAllowed(
 }
 
 export function isRolloverCircuitBreaker(estHour: number, estMin: number): boolean {
-  // ðŸš« Prop Firm Compliance: Rollover Circuit Breaker (16:55 to 17:05 EST) ðŸš«
-  return (estHour === 16 && estMin >= 55) || (estHour === 17 && estMin <= 5);
+  // 🚫 Prop Firm & Liquidity Compliance: Rollover Circuit Breaker (15:00 to 18:00 EST / 2h before close) 🚫
+  return (estHour >= 15 && estHour < 18);
 }
 export function isSeerRolloverHalt(estHour: number, estMin: number): boolean {
-  // Seer specific wider window (16:50 - 17:15 EST)
-  return (estHour === 16 && estMin >= 50) || (estHour === 17 && estMin < 15);
+  // Seer specific 2h pre-close window (15:00 - 18:00 EST)
+  return (estHour >= 15 && estHour < 18);
 }
 
 export function isEODSession(estHour: number, estMin: number): boolean {
-  return (estHour === 16 && estMin >= 30) || (estHour >= 17 && estHour < 19);
+  return (estHour >= 15 && estHour < 19);
 }
 
+const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
-export function isToxicDay(dateOrDow: Date | number, toxicDays?: number[]): boolean {
+export function isToxicDay(dateOrDow: Date | number, toxicDays?: (number | string)[]): boolean {
   if (!toxicDays || toxicDays.length === 0) return false;
   const dow = typeof dateOrDow === 'number' ? dateOrDow : dateOrDow.getUTCDay();
-  return toxicDays.includes(dow);
+  const dayName = DAY_NAMES[dow];
+  return toxicDays.some(td => td === dow || (typeof td === "string" && td.toLowerCase() === dayName.toLowerCase()));
 }
 
 /**

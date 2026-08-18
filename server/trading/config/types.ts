@@ -32,6 +32,20 @@ export interface ActiveEntry {
   traderType: TraderType;
 }
 
+export interface SessionLeadTrade {
+  direction: TradeDirection;
+  timestamp: number;
+  entryPrice: number;
+  slPrice: number;
+  tpPrice: number;
+  botId: string;
+  symbol: string;
+  session: string;
+  dateStr: string;
+  sig: string;
+  leadProfileId: number;
+}
+
 export type TradeOutcome = "TP" | "SL" | "EOD" | "EOD_CLOSE" | "SKIPPED" | "EXPIRED" | "NEWS_CLOSE" | null;
 export type SessionFilter =
   | "ALL_DAY"
@@ -231,14 +245,38 @@ export interface PairConfig {
   signature?: string;
   riskPct?: number;
   activeBots?: string[];
-  blackswan_enabled?: boolean;
-  blackswan_risk?: number;
+
   toxicHours?: number[];
+  toxicDays?: (number | string)[];
   htfAlignmentRequired?: boolean;
+  minWbr?: number;
+  requireCloseLocationHalf?: boolean;
+  useHtfSarFilter?: boolean;
+  useAdtelTrailing?: boolean;
+  adtelBeTrigger?: number;
+  adtelBeLock?: number;
+  adtelProfitLockTrigger?: number;
+  adtelProfitLockLevel?: number;
+  adtelProfitLockTrigger2?: number;
+  adtelProfitLockLevel2?: number;
+  adtelStep?: number;
+  adtelEnabled?: boolean;
+  slMode?: "midpoint" | "opposite_boundary" | "MIDPOINT" | "OPPOSITE_BOUNDARY" | "breakout_bar_low" | "BREAKOUT_BAR_LOW" | "box_30pct" | "BOX_30PCT" | string;
+  minBodyRatio?: number;
+  minCloseLoc?: number;
+  requireCloseExtremity?: boolean;
+  htfTrendFilter?: boolean;
+  useHtfEma?: boolean;
+  useHtfSar?: boolean;
+  minAtrRatio?: number;
+  maxAtrRatio?: number;
+  maxWbr?: number;
   dummy?: boolean;
   comment?: string;
 }
 
+export interface MageConfig extends PairConfig {}
+export interface SageConfig extends PairConfig {}
 export interface SageOptimizerConfig extends PairConfig {}
 
 export interface MathFilterConfig {
@@ -274,6 +312,7 @@ export interface TriggerEvent {
   actionCandleEstHour?: number;
   actionCandleUtcDay?: number;
   actionCandleMonth?: number;
+  orStartTimestamp?: number;
 }
 
 export interface TradeRecord {
@@ -337,9 +376,10 @@ export interface ShadowOptions {
   enableMage?: boolean;
   enableSage?: boolean;
   enableSeer?: boolean;
-  enableBlackSwan?: boolean;
+
   startingBalance?: number;
   riskPct?: number;
+  activeBots?: string[];
 }
 
 export interface LiveBacktestOptions {
@@ -508,7 +548,7 @@ export interface GrandmasterSynthesisPairing {
   symbol: string;
   mageSetup: string;
   sageSetup: string;
-  blackswanSetup?: string;
+
   combinedTrades: number;
   combinedTotalR: number;
   combinedMaxDrawdown: number;

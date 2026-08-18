@@ -25,6 +25,7 @@ async function runAll() {
   
   const botPairs = [
     { bot: "SAGE", pairs: Object.keys(SAGE_PAIR_CONFIG || {}) },
+    { bot: "MAGE", pairs: Object.keys(MAGE_PAIR_CONFIG || {}) },
   ];
   
   console.log(`Starting Parity Check across ALL BOTS from ${start} to ${end}...`);

@@ -63,7 +63,8 @@ function calculatePortfolioMetrics(
   components: IndependentSynthesisComponent[],
   globalDates: string[],
   startIdx: number,
-  endIdx: number
+  endIdx: number,
+  useUniformRisk: boolean = false
 ) {
   let totalR = 0;
   let peakR = 0;
@@ -78,7 +79,7 @@ function calculatePortfolioMetrics(
     let dailyR = 0;
     const dateStr = globalDates[d];
     for (const c of components) {
-      dailyR += (c.dailyReturns[dateStr] || 0) * (c.riskPct || 1.0);
+      dailyR += (c.dailyReturns[dateStr] || 0) * (useUniformRisk ? 1.0 : (c.riskPct || 1.0));
     }
     
     totalR += dailyR;
@@ -150,7 +151,7 @@ function scorePortfolioIS(
   window: PLWFOWindow,
   category: string
 ): number {
-  const metrics = calculatePortfolioMetrics(components, globalDates, window.isStart, window.isEnd);
+  const metrics = calculatePortfolioMetrics(components, globalDates, window.isStart, window.isEnd, true);
   const corrPenalty = calculateCorrelationPenalty(components, globalDates, window.isStart, window.isEnd);
   
   const returnToDD = metrics.maxDD > 0 ? metrics.totalR / metrics.maxDD : metrics.totalR * 10;
@@ -184,6 +185,7 @@ export function runPLWFO(
   let globalOosR = 0;
   let globalPeakR = 0;
   let globalMaxDD = 0;
+  let lastAccumulatedOosDay = -1; // tracker to prevent double-counting overlapping OOS windows
 
   const POPULATION_SIZE = 200;
   const GENERATIONS = 80;
@@ -355,7 +357,9 @@ export function runPLWFO(
     const currentPortfolio = bestPortfolioThisWindow.map(idx => grandmasters[idx]);
     const oosMetrics = calculatePortfolioMetrics(currentPortfolio, globalDates, win.oosStart, win.oosEnd);
     
-    for (let d = win.oosStart; d <= win.oosEnd; d++) {
+    // Clamp the OOS start to prevent double-counting days from overlapping windows
+    const effectiveOosStart = Math.max(win.oosStart, lastAccumulatedOosDay + 1);
+    for (let d = effectiveOosStart; d <= win.oosEnd; d++) {
       const idx = d - win.oosStart;
       const dailyRet = idx === 0 ? oosMetrics.compositeCurve[0] : oosMetrics.compositeCurve[idx] - oosMetrics.compositeCurve[idx-1];
       globalOosR += dailyRet;
@@ -365,6 +369,7 @@ export function runPLWFO(
       const dd = globalPeakR - globalOosR;
       if (dd > globalMaxDD) globalMaxDD = dd;
     }
+    lastAccumulatedOosDay = win.oosEnd;
     
     windowResults.push({
       windowIndex: win.index,

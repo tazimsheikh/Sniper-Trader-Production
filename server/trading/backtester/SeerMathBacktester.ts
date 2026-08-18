@@ -23,6 +23,7 @@ import { HTFContextTracker } from '../market/HTFContextTracker.js';
 import { evaluateStacyBurkeSetup } from './math_core/SeerMathCore.js';
 import { isNewsForceClose } from "../market/historicalNews.js";
 import { isSeerRolloverHalt } from "../market/MathFilters.js";
+import { getFixedEstDate } from "./math_core/MathCoreUtils.js";
 import type { VisionDecision } from '../ai/VisionEvaluator.js';
 import { SEER_PAIR_CONFIG, PairConfigManager } from '../config/PairConfig.js';
 import { OPTIMIZER_CONFIG } from '../config/OptimizerPairConfig.js';
@@ -395,7 +396,7 @@ export async function runMathBacktest(
 
       const record: VisionTradeRecord & { hypotheticalOutcome?: string, hypotheticalPips?: number } = {
         timestamp: c.timestamp,
-        date: new Date(c.timestamp).toISOString().split('T')[0],
+        date: getFixedEstDate(new Date(c.timestamp)).toISOString().split('T')[0],
         pair,
         setupType,
         sessionName: isLondon ? 'London Open' : isNY ? 'New York Open' : 'Asia Open',
@@ -488,7 +489,7 @@ export async function runMathBacktest(
         const fc = m5Candles[j];
 
         const fcMin = new Date(fc.timestamp).getUTCMinutes();
-        const dateStr = new Date(fc.timestamp).toISOString().split("T")[0];
+        const dateStr = getFixedEstDate(new Date(fc.timestamp)).toISOString().split("T")[0];
         const isNewsForceCloseLocal = isNewsForceClose(dateStr, fc.estHour, fc.minute);
 
         if (fc.estHour >= 17 || isSeerRolloverHalt(fc.estHour, fcMin) || isNewsForceCloseLocal) { 

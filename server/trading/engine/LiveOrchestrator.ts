@@ -2,7 +2,7 @@ var __defProp = Object.defineProperty;
 var __name = (target, value) =>
   __defProp(target, "name", { value, configurable: true });
 
-import { logger, ProfileLogger, registerProfileName } from "../../utils/logger.js";
+import { logger, ProfileLogger, registerProfileName, profileContext } from "../../utils/logger.js";
 import dbModule from "../../core/db.js";
 import { addBotLog as dbAddBotLog } from "../../core/db.js";
 import {
@@ -58,11 +58,7 @@ import {
   checkSageLimitFill,
   cancelSagePendingOnNews,
 } from "./SageEngine.js";
-import {
-  runBlackSwanMageBot,
-  runBlackSwanSageBot,
-  evaluateBlackSwanTrailingOnTick,
-} from "./BlackSwanEngine.js";
+
 import { isTradeAllowed } from "../market/MathFilters.js";
 import { enqueueMetaApiRequest as enqueueMetaApiRequestOrig } from "../../utils/MetaApiQueue.js";
 const enqueueMetaApiRequest = global.__SIM_QUEUE__ ? global.__SIM_QUEUE__.enqueueMetaApiRequest : enqueueMetaApiRequestOrig;
@@ -188,7 +184,6 @@ export class LiveOrchestrator {
           ["seer", { enabled: true, risk: 1 }],
           ["mage", { enabled: true, risk: 1 }],
           ["sage", { enabled: true, risk: 1 }],
-          ["blackswan", { enabled: true, risk: 1 }],
         ]),
         m5Buffer: [],
         dailyTracker: new DailyContextTracker(),
@@ -227,7 +222,7 @@ export class LiveOrchestrator {
     const s = setupType.toUpperCase();
     if (s.startsWith("MAGE")) return "mage";
     if (s.startsWith("SAGE")) return "sage";
-    if (s.startsWith("BLACKSWAN")) return "blackswan";
+
     return "seer";
   }
   addEyeFeedEvent(event) {
@@ -292,11 +287,7 @@ export class LiveOrchestrator {
               enabled: row.sage_enabled === 1,
               risk: row.sage_risk ?? 1,
             });
-          if (row.blackswan_enabled !== void 0)
-            state.botConfigs.set("blackswan", {
-              enabled: row.blackswan_enabled === 1,
-              risk: row.blackswan_risk ?? 1,
-            });
+
         }
       }
     } catch (err) {
@@ -305,7 +296,7 @@ export class LiveOrchestrator {
 
     // ── Register profile name for clean log output ─────────────────
     try {
-      const profRow = dbModule.prepare("SELECT profile_name FROM trading_profiles WHERE id = ?").get(this.profileId) as any;
+      const profRow = await db.prepare("SELECT profile_name FROM trading_profiles WHERE id = ?").get(this.profileId) as any;
       if (profRow?.profile_name) {
         registerProfileName(Number(this.profileId), profRow.profile_name);
         this.plog = new ProfileLogger(Number(this.profileId));
@@ -426,7 +417,7 @@ export class LiveOrchestrator {
               lastConfirmedSH: t.sl_price,
               secondLastConfirmedSH: t.sl_price,
               openTime: t.open_time
-                ? new Date(t.open_time).getTime()
+                ? (Number.isFinite(Number(t.open_time)) ? Number(t.open_time) : new Date(t.open_time).getTime())
                 : Date.now(),
             });
           }
@@ -439,6 +430,28 @@ export class LiveOrchestrator {
           t.direction,
           "DISC",
         );
+
+        // Register active open trade as lead trade in GlobalTradeGate for cross-account catch-up
+        try {
+          const openMs = t.open_time
+            ? (Number.isFinite(Number(t.open_time)) ? Number(t.open_time) : new Date(t.open_time).getTime())
+            : Date.now();
+          const estDate = getFixedEstDate(new Date(openMs));
+          const dateStr = estDate.toISOString().split("T")[0];
+          globalTradeGate.registerSessionDirection({
+            botId: t.bot_id.toUpperCase(),
+            symbol: baseSymbol,
+            session: "default",
+            dateStr: dateStr,
+            direction: t.direction,
+            leadProfileId: this.profileId,
+            entryPrice: t.entry_price,
+            slPrice: t.sl_price,
+            tpPrice: t.tp_price,
+            timestamp: openMs,
+          });
+        } catch (_rgErr) {}
+
         this.plog.info(`🔄 Re-attached ${t.bot_id} ${t.direction} ${symbol} (order: ${t.meta_order_id})`);
       }
     } catch (err: any) {
@@ -543,7 +556,7 @@ export class LiveOrchestrator {
           const cid = (pos.clientId || "").toUpperCase();
           if (cid.startsWith("S_") || cid.includes("SAGE")) { detectedBotId = "SAGE"; isKnownBotTrade = true; }
           else if (cid.startsWith("M_") || cid.includes("MAGE")) { detectedBotId = "MAGE"; isKnownBotTrade = true; }
-          else if (cid.startsWith("BS_") || cid.includes("BLACKSWAN")) { detectedBotId = "BLACKSWAN"; isKnownBotTrade = true; }
+
           else if (cid.startsWith("SRC_") || cid.includes("SEER")) { detectedBotId = "SEER"; isKnownBotTrade = true; }
         }
 
@@ -783,7 +796,7 @@ export class LiveOrchestrator {
       const state = this.states.get(sp);
       if (state && state.activeTrades && state.activeTrades.length > 0) {
         const initialCount = state.activeTrades.length;
-        state.activeTrades = state.activeTrades.filter(t => t.metaOrderId !== metaOrderId);
+        state.activeTrades = state.activeTrades.filter(t => String(t.metaOrderId) !== String(metaOrderId));
         if (state.activeTrades.length < initialCount) {
           logger.info(`[DiscretionaryTrader] 🧹 Clearing active trade ${metaOrderId} for ${sp} (Closed for ${pnlPips.toFixed(1)} pips).`,);
           broadcast = true;
@@ -1087,7 +1100,7 @@ export class LiveOrchestrator {
 
     const mageConfigs = PairConfigManager.getMageConfigs(sessionPair) || [];
     const sageConfigs = PairConfigManager.getSageConfigs(sessionPair) || [];
-    const bsConfigs = PairConfigManager.getBlackSwanConfigs(sessionPair) || [];
+
 
     const pipSize = this.getPipValue(symbol);
 
@@ -1097,11 +1110,7 @@ export class LiveOrchestrator {
     const nowEst = getFixedEstDate();
 
     const allMageConfigs = [
-      ...mageConfigs.map(c => ({ config: c, botId: "mage" })),
-      ...bsConfigs.filter(c => {
-        const isSageSetup = c.signature?.toUpperCase().includes("SAGE") || c.reversalEnabled === true;
-        return !isSageSetup;
-      }).map(c => ({ config: c, botId: "blackswan" }))
+      ...mageConfigs.map(c => ({ config: c, botId: "mage" }))
     ];
 
     for (const item of allMageConfigs) {
@@ -1219,10 +1228,7 @@ export class LiveOrchestrator {
     }
 
     const allSageConfigs = [
-      ...sageConfigs.map(c => ({ config: c, botId: "sage" })),
-      ...bsConfigs.filter(c => {
-        return c.signature?.toUpperCase().includes("SAGE") || c.reversalEnabled === true;
-      }).map(c => ({ config: c, botId: "blackswan" }))
+      ...sageConfigs.map(c => ({ config: c, botId: "sage" }))
     ];
 
     for (const item of allSageConfigs) {
@@ -1571,7 +1577,7 @@ export class LiveOrchestrator {
       if (safeBotId === "mage") return PairConfigManager.getMageConfigs(p)?.length > 0;
       if (safeBotId === "sage") return PairConfigManager.getSageConfigs(p)?.length > 0;
       if (safeBotId === "seer") return PairConfigManager.getSeerConfigs(p)?.length > 0;
-      if (safeBotId === "blackswan") return PairConfigManager.getBlackSwanConfigs(p)?.length > 0;
+
       return true;
     });
     return {
@@ -1605,7 +1611,7 @@ export class LiveOrchestrator {
     for (const [sp, state] of this.states.entries()) {
       if (state && state.activeTrades && state.activeTrades.length > 0) {
         const initialCount = state.activeTrades.length;
-        state.activeTrades = state.activeTrades.filter(t => t.metaOrderId !== metaOrderId);
+        state.activeTrades = state.activeTrades.filter(t => String(t.metaOrderId) !== String(metaOrderId));
         if (state.activeTrades.length < initialCount) {
           try {
             logger.info(`[DiscretionaryTrader] 🗑️ Cleared ghost trade ${metaOrderId} for ${sp} from Orchestrator memory.`);
@@ -1652,7 +1658,7 @@ export class LiveOrchestrator {
           this.getStatus(botId),
         );
       } else {
-        for (const b of ["mage", "sage", "seer", "blackswan"]) {
+        for (const b of ["mage", "sage", "seer"]) {
           io.to(`profile_${this.profileId}`).emit(
             "discretionary_trader:status",
             this.getStatus(b),
@@ -1717,38 +1723,36 @@ export class LiveOrchestrator {
 
   async onM1Tick(symbol, open, high, low, close, vol, timestampMs) {
     if (!this.running || !this.warmedUp) return;
-    try {
-      const matchingPairs = Array.from(this.states.keys()).filter(
-        (k) => PairConfigManager.getBaseSymbol(k) === symbol,
-      );
-      if (matchingPairs.length === 0) return;
-  
-      for (const sessionPair of matchingPairs) {
-        const state = this.states.get(sessionPair);
-        if (!state) continue;
-        await this._processTickForState(
-          sessionPair,
-          symbol,
-          state,
-          open,
-          high,
-          low,
-          close,
-          vol,
-          timestampMs,
+    return profileContext.run(Number(this.profileId) || 0, async () => {
+      try {
+        const matchingPairs = Array.from(this.states.keys()).filter(
+          (k) => PairConfigManager.getBaseSymbol(k) === symbol,
         );
-      }
-    } catch (err) {
-      if (!this.loggerInited) {
-        this.loggerInited = true;
-        import("../../utils/logger.js").then(({ logger }) => {
+        if (matchingPairs.length === 0) return;
+    
+        for (const sessionPair of matchingPairs) {
+          const state = this.states.get(sessionPair);
+          if (!state) continue;
+          await this._processTickForState(
+            sessionPair,
+            symbol,
+            state,
+            open,
+            high,
+            low,
+            close,
+            vol,
+            timestampMs,
+          );
+        }
+      } catch (err) {
+        if (!this.loggerInited) {
+          this.loggerInited = true;
           logger.info(`LiveOrchestrator (Sim/Live) Started. WarmedUp: ${this.warmedUp}`);
-        });
-      }
-      import("../../utils/logger.js").then(({ logger }) => {
+        }
         logger.error(`[CRITICAL] Orchestrator Engine crashed on tick for ${symbol}. Tick Data: O:${open} H:${high} L:${low} C:${close}. Error: ${err.message}`, err);
-      }).catch((e: any) => this.plog.error(`Logger import failed: ${e?.message}`));
-    }
+      }
+    });
   }
 
   async _processTickForState(
@@ -1918,26 +1922,7 @@ export class LiveOrchestrator {
       );
     }
 
-    if (
-      this.activeBots.has("blackswan") &&
-      PairConfigManager.getBlackSwanConfigs(sessionPair)?.length > 0
-    ) {
-      await cancelMagePendingOnNews(this, sessionPair, state, m1Candle).catch((e) =>
-        logger.error(`Black Swan Mage cancel on news error on ${sessionPair}:`, e),
-      );
-      await cancelSagePendingOnNews(this, sessionPair, state, m1Candle, "BLACKSWAN").catch((e) =>
-        logger.error(`Black Swan Sage cancel on news error on ${sessionPair}:`, e),
-      );
-      await runBlackSwanSageBot(this, sessionPair, state, m1Candle).catch((e) =>
-        logger.error(`[DiscretionaryTrader] Black Swan Sage error on ${sessionPair}:`, e),
-      );
-      await checkSageLimitFill(this, sessionPair, state, m1Candle, "BLACKSWAN").catch((e) =>
-        logger.error(`[DiscretionaryTrader] Black Swan Sage limit fill error on ${sessionPair}:`, e),
-      );
-      await evaluateBlackSwanTrailingOnTick(this, sessionPair, state, m1Candle).catch(
-        (e) => logger.error(`[DiscretionaryTrader] Error evaluating Black Swan trailing SL for ${sessionPair}:`, e),
-      );
-    }
+
 
 
   }
@@ -2086,16 +2071,7 @@ export class LiveOrchestrator {
           e,),
       );
     }
-    if (
-      this.activeBots.has("blackswan") &&
-      PairConfigManager.getBlackSwanConfigs(state.config.pair)?.length > 0 &&
-      PairConfigManager.isOrbEnabled(state.config.pair)
-    ) {
-      runBlackSwanMageBot(this, state.config.pair, state, c).catch((e) =>
-        logger.error(`[DiscretionaryTrader] Black Swan Mage ORB error on ${state.config.pair}:`,
-          e,),
-      );
-    }
+
     if (state.m5Buffer.length >= 5) {
       if (
         state.activeTrade &&

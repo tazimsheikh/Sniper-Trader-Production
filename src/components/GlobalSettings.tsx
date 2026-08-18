@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Settings, X, Save, Trash2, RefreshCw, Key, Shield, Zap, Activity, Terminal, LogOut } from 'lucide-react';
 import { motion } from 'motion/react';
-import { formatDateTime } from '../utils/timezone';
+import { formatDateTime, getBrokerTradingDayStr } from '../utils/timezone';
 
 interface GlobalSettingsProps {
   onClose: () => void;
@@ -34,20 +34,25 @@ export default function GlobalSettings({ onClose, onLogout }: GlobalSettingsProp
   const [globalRisk, setGlobalRisk] = useState<number>(10);
   const [institutionalEnabled, setInstitutionalEnabled] = useState(false);
   const [institutionalStartBalance, setInstitutionalStartBalance] = useState<number | null>(null);
+  const [institutionalDailyDate, setInstitutionalDailyDate] = useState<string | null>(null);
   const [institutionalDailyCap, setInstitutionalDailyCap] = useState<number>(2.5);
   const [institutionalPeakToDraw, setInstitutionalPeakToDraw] = useState<number>(5.5);
   const [isSavingRisk, setIsSavingRisk] = useState(false);
-  
   
   const [newProfileName, setNewProfileName] = useState('');
   const [newProfileAccountId, setNewProfileAccountId] = useState('');
   const [creatingProfile, setCreatingProfile] = useState(false);
   const [isSyncingSymbols, setIsSyncingSymbols] = useState(false);
-  const [liveBalance, setLiveBalance] = useState<number>(0);
+  const [liveBalance, setLiveBalance] = useState<number | null>(null);
+  const [isBalanceLoading, setIsBalanceLoading] = useState(false);
   
   const handleProfileChange = (pId: number) => {
     setSelectedProfileId(pId);
     localStorage.setItem('lastSelectedProfileId', pId.toString());
+    
+    // Clear live balance immediately to prevent cross-profile state bleed while fetching
+    setLiveBalance(null);
+    setIsBalanceLoading(true);
     
     // Sync risk state to the newly selected profile
     const p = profiles.find(x => x.id === pId);
@@ -55,6 +60,7 @@ export default function GlobalSettings({ onClose, onLogout }: GlobalSettingsProp
       setGlobalRisk(p.risk_multiplier || 10);
       setInstitutionalEnabled(p.institutional_enabled === 1);
       setInstitutionalStartBalance(p.institutional_daily_start_balance || null);
+      setInstitutionalDailyDate(p.institutional_daily_date || null);
       setInstitutionalDailyCap(p.institutional_daily_cap || 2.5);
       setInstitutionalPeakToDraw(p.institutional_peak_to_draw || 5.5);
     }
@@ -117,6 +123,8 @@ export default function GlobalSettings({ onClose, onLogout }: GlobalSettingsProp
       const data = await res.json();
       if (data.success && data.newStartBalance) {
         setInstitutionalStartBalance(data.newStartBalance);
+        const nowEst = new Date().toLocaleString("en-US", { timeZone: "America/New_York" });
+        setInstitutionalDailyDate(new Date(nowEst).toISOString().split('T')[0]);
       }
     } catch(e) {}
   };
@@ -272,6 +280,7 @@ export default function GlobalSettings({ onClose, onLogout }: GlobalSettingsProp
           setGlobalRisk(actP.risk_multiplier || 10);
           setInstitutionalEnabled(actP.institutional_enabled === 1);
           setInstitutionalStartBalance(actP.institutional_daily_start_balance || null);
+          setInstitutionalDailyDate(actP.institutional_daily_date || null);
           setInstitutionalDailyCap(actP.institutional_daily_cap || 2.5);
           setInstitutionalPeakToDraw(actP.institutional_peak_to_draw || 5.5);
         }
@@ -327,21 +336,27 @@ export default function GlobalSettings({ onClose, onLogout }: GlobalSettingsProp
 
   const testConnections = async (overrideProfileId?: number) => {
     setIsTesting(true);
+    setIsBalanceLoading(true);
+    const pid = overrideProfileId !== undefined ? overrideProfileId : selectedProfileId;
     try {
-      const pid = overrideProfileId !== undefined ? overrideProfileId : selectedProfileId;
       const url = pid ? `/api/settings/status?profileId=${pid}` : '/api/settings/status';
       const res = await fetch(url, { credentials: 'same-origin' });
       const data = await res.json();
       if (data.success) {
         setStatus(data.status);
-        if (data.account && data.account.balance) {
+        if (data.account && data.account.balance !== undefined && data.account.balance !== null) {
           setLiveBalance(data.account.balance);
+        } else {
+          setLiveBalance(null);
         }
+      } else {
+        setLiveBalance(null);
       }
     } catch (e) {
-      // Error ignored
+      setLiveBalance(null);
     } finally {
       setIsTesting(false);
+      setIsBalanceLoading(false);
     }
   };
 
@@ -547,7 +562,10 @@ export default function GlobalSettings({ onClose, onLogout }: GlobalSettingsProp
                           min="0.1" max="100" step="0.1"
                           value={globalRisk}
                           onChange={(e) => setGlobalRisk(parseFloat(e.target.value))}
-                          onBlur={(e) => handleSaveRiskSettings({ risk_multiplier: parseFloat(e.target.value) })}
+                          onBlur={(e) => {
+                            const val = parseFloat(e.target.value);
+                            if (!isNaN(val) && val > 0) handleSaveRiskSettings({ risk_multiplier: val });
+                          }}
                           className="w-full bg-transparent font-display font-bold text-base text-fuchsia-400 focus:outline-none"
                         />
                       </div>
@@ -583,7 +601,10 @@ export default function GlobalSettings({ onClose, onLogout }: GlobalSettingsProp
                                   min="0.1" max="100" step="0.1"
                                   value={institutionalDailyCap}
                                   onChange={(e) => setInstitutionalDailyCap(parseFloat(e.target.value))}
-                                  onBlur={(e) => handleSaveRiskSettings({ institutional_daily_cap: parseFloat(e.target.value) })}
+                                  onBlur={(e) => {
+                                    const val = parseFloat(e.target.value);
+                                    if (!isNaN(val) && val > 0) handleSaveRiskSettings({ institutional_daily_cap: val });
+                                  }}
                                   className="w-full bg-transparent font-display font-bold text-base text-fuchsia-400 focus:outline-none"
                                 />
                               </div>
@@ -594,7 +615,10 @@ export default function GlobalSettings({ onClose, onLogout }: GlobalSettingsProp
                                   min="0.1" max="100" step="0.1"
                                   value={institutionalPeakToDraw}
                                   onChange={(e) => setInstitutionalPeakToDraw(parseFloat(e.target.value))}
-                                  onBlur={(e) => handleSaveRiskSettings({ institutional_peak_to_draw: parseFloat(e.target.value) })}
+                                  onBlur={(e) => {
+                                    const val = parseFloat(e.target.value);
+                                    if (!isNaN(val) && val > 0) handleSaveRiskSettings({ institutional_peak_to_draw: val });
+                                  }}
                                   className="w-full bg-transparent font-display font-bold text-base text-fuchsia-400 focus:outline-none"
                                 />
                               </div>
@@ -604,8 +628,21 @@ export default function GlobalSettings({ onClose, onLogout }: GlobalSettingsProp
                             <div className="flex flex-col flex-1">
                               <span className="text-slate-500 font-mono text-[9px] uppercase tracking-widest">Live Daily PnL</span>
                               {(() => {
-                                const startBal = institutionalStartBalance || liveBalance || 0;
-                                const currentBal = liveBalance || startBal;
+                                if (isBalanceLoading || liveBalance === null) {
+                                  return (
+                                    <div className="flex items-baseline gap-2 mt-1">
+                                      <span className="font-display font-bold text-sm text-slate-400 animate-pulse">
+                                        Syncing live balance...
+                                      </span>
+                                    </div>
+                                  );
+                                }
+
+                                const todayEstDate = getBrokerTradingDayStr(new Date());
+
+                                const isToday = institutionalDailyDate === todayEstDate;
+                                const startBal = (isToday && institutionalStartBalance && institutionalStartBalance > 0) ? institutionalStartBalance : liveBalance;
+                                const currentBal = liveBalance;
                                 const diff = currentBal - startBal;
                                 const pct = startBal > 0 ? (diff / startBal) * 100 : 0;
                                 const isPositive = pct >= 0;

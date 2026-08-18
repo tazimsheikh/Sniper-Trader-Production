@@ -18,6 +18,8 @@ export interface GeneticOptimizerOptions {
   seedChromosomes?: number[][];
   /** Consecutive generations with <0.01% best-fitness improvement before early exit. Default: 15 */
   stagnationLimit?: number;
+  /** Optional Epoch schedule for Tiered Optimization */
+  epochs?: { generations: number; activeGenes: number[] }[];
 }
 
 export class HybridGeneticOptimizer {
@@ -32,6 +34,7 @@ export class HybridGeneticOptimizer {
   private fitnessMode: 'calmar' | 'blended';
   private seedChromosomes: number[][];
   private stagnationLimit: number;
+  private epochs?: { generations: number; activeGenes: number[] }[];
 
   constructor(
     mapper: ChromosomeMapper,
@@ -49,6 +52,7 @@ export class HybridGeneticOptimizer {
     this.fitnessMode = options.fitnessMode ?? 'calmar';
     this.seedChromosomes = options.seedChromosomes ?? [];
     this.stagnationLimit = options.stagnationLimit ?? 15;
+    this.epochs = options.epochs;
   }
 
   /**
@@ -205,6 +209,33 @@ export class HybridGeneticOptimizer {
         nextGen.push(evaluated[i].chromosome);
       }
 
+      // --- TIERED OPTIMIZATION: Determine Active Genes for this Epoch ---
+      let currentMutationMask: boolean[] | undefined = undefined;
+      if (this.epochs && this.epochs.length > 0 && population.length > 0) {
+        let accumulatedGens = 0;
+        let activeGenes: number[] | undefined = undefined;
+        for (const epoch of this.epochs) {
+          accumulatedGens += epoch.generations;
+          if (gen < accumulatedGens) {
+            activeGenes = epoch.activeGenes;
+            break;
+          }
+        }
+        // If we exceeded all epochs, use the last epoch's active genes
+        if (!activeGenes) {
+          activeGenes = this.epochs[this.epochs.length - 1].activeGenes;
+        }
+
+        const chromoLen = population[0].length;
+        currentMutationMask = new Array(chromoLen).fill(false);
+        for (const geneIdx of activeGenes) {
+          if (geneIdx >= 0 && geneIdx < chromoLen) {
+            currentMutationMask[geneIdx] = true;
+          }
+        }
+      }
+      // ------------------------------------------------------------------
+
       // Selection & Reproduction
       while (nextGen.length < this.popSize) {
         const parentA = this.tournamentSelect(evaluated);
@@ -212,8 +243,8 @@ export class HybridGeneticOptimizer {
 
         let [childA, childB] = this.mapper.crossover(parentA, parentB);
 
-        childA = this.mapper.mutate(childA, currentMutationRate);
-        childB = this.mapper.mutate(childB, currentMutationRate);
+        childA = this.mapper.mutate(childA, currentMutationRate, currentMutationMask);
+        childB = this.mapper.mutate(childB, currentMutationRate, currentMutationMask);
 
         nextGen.push(this.mapper.clamp(childA));
         if (nextGen.length < this.popSize) {

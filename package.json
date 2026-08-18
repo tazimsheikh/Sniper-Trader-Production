@@ -14,7 +14,8 @@
     "test:parity": "npx tsx server/trading/testing/test_all_parity.ts",
     "test:parity:quick": "npx tsx server/trading/testing/test_all_parity.ts",
     "test:parity:6mo": "npx tsx server/trading/testing/parity/run_last_6mo.ts",
-    "backtest:modes": "npx tsx server/trading/testing/simulate_risk_modes.ts",
+    "backtest:modes": "npx tsx server/trading/testing/simulate_portfolio_math.ts",
+    "backtest:modes:shadow": "npx tsx server/trading/testing/simulate_portfolio_shadow.ts",
     "optimize:all": "npx tsx server/trading/optimizer/pipelines/master_pipeline.ts",
     "test:pipeline:robust": "npx tsx server/trading/testing/test_pipeline_robustness.ts"
   },

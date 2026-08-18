@@ -1,176 +1,541 @@
-PORTFOLIO PARITY REPORT (2026-04-01 to 2026-04-30)
+PORTFOLIO PARITY REPORT (2026-02-14 to 2026-08-14)
 ======================================================
-[MAGE_AUDUSD    ]: Math =   7T /  -1.77R | Shadow =   4T /   1.18R | Status: ❌ DISCREPANCY
-   ❌ [MISSED TRADE] Math took trade at 2026-04-01T02:55:00.000Z that Shadow missed.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-08T00:40:00.000Z that Shadow missed.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-16T02:40:00.000Z that Shadow missed.
-[MAGE_EURUSD    ]: Math =   5T /   1.00R | Shadow =   2T /   5.53R | Status: ❌ DISCREPANCY
-   ❌ [MISSED TRADE] Math took trade at 2026-04-01T14:45:00.000Z that Shadow missed.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-06T14:35:00.000Z that Shadow missed.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-08T15:05:00.000Z that Shadow missed.
-   ❌ [GHOST TRADE] Shadow took trade at 2026-04-08T15:19:00.000Z that Math did not.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-20T15:20:00.000Z that Shadow missed.
-   ❌ [GHOST TRADE] Shadow took trade at 2026-04-20T18:59:00.000Z that Math did not.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-21T14:35:00.000Z (EURUSD) that Shadow missed.
-[MAGE_GBPJPY    ]: Math =  11T /   3.90R | Shadow =   8T /   6.87R | Status: ❌ DISCREPANCY
-   ❌ [MISSED TRADE] Math took trade at 2026-04-16T08:25:00.000Z that Shadow missed.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-20T09:25:00.000Z that Shadow missed.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-23T08:30:00.000Z that Shadow missed.
-[MAGE_GBPUSD    ]: Math =   9T /  10.38R | Shadow =   5T /   1.71R | Status: ❌ DISCREPANCY
-   ⚠️ [R DIFF] 2026-04-02 GBPUSD MAGE: Math R = 0.28, Shadow R = -0.13 (diff: 0.41)
-   ❌ [MISSED TRADE] Math took trade at 2026-04-06T13:50:00.000Z that Shadow missed.
-   ⚠️ [R DIFF] 2026-04-07 GBPUSD MAGE: Math R = 10.33, Shadow R = 2.19 (diff: 8.14)
-   ❌ [MISSED TRADE] Math took trade at 2026-04-09T14:40:00.000Z that Shadow missed.
-   ⚠️ [R DIFF] 2026-04-16 GBPUSD MAGE: Math R = -1.00, Shadow R = -0.14 (diff: -0.86)
-   ❌ [MISSED TRADE] Math took trade at 2026-04-17T13:45:00.000Z that Shadow missed.
-   ⚠️ [R DIFF] 2026-04-21 GBPUSD MAGE: Math R = -1.00, Shadow R = 0.19 (diff: -1.19)
-   ❌ [MISSED TRADE] Math took trade at 2026-04-30T14:00:00.000Z (GBPUSD) that Shadow missed.
-[MAGE_GER40     ]: Math =  28T /  -2.73R | Shadow =  15T /  15.33R | Status: ❌ DISCREPANCY
-   ❌ [MISSED TRADE] Math took trade at 2026-04-01T13:10:00.000Z that Shadow missed.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-07T06:10:00.000Z that Shadow missed.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-07T13:35:00.000Z that Shadow missed.
-   ❌ [GHOST TRADE] Shadow took trade at 2026-04-07T19:19:00.000Z that Math did not.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-09T13:15:00.000Z that Shadow missed.
-   ❌ [GHOST TRADE] Shadow took trade at 2026-04-09T13:28:00.000Z that Math did not.
-   ❌ [GHOST TRADE] Shadow took trade at 2026-04-10T06:20:00.000Z that Math did not.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-13T06:10:00.000Z that Shadow missed.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-14T13:10:00.000Z that Shadow missed.
-   ❌ [GHOST TRADE] Shadow took trade at 2026-04-14T13:31:00.000Z that Math did not.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-15T06:35:00.000Z that Shadow missed.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-16T07:05:00.000Z that Shadow missed.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-16T13:10:00.000Z that Shadow missed.
-   ❌ [GHOST TRADE] Shadow took trade at 2026-04-16T13:16:00.000Z that Math did not.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-17T06:20:00.000Z that Shadow missed.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-20T06:10:00.000Z that Shadow missed.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-21T13:10:00.000Z that Shadow missed.
-   ❌ [GHOST TRADE] Shadow took trade at 2026-04-21T13:40:00.000Z that Math did not.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-23T13:10:00.000Z that Shadow missed.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-24T06:15:00.000Z that Shadow missed.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-24T13:15:00.000Z that Shadow missed.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-27T06:10:00.000Z that Shadow missed.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-27T13:10:00.000Z that Shadow missed.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-28T07:05:00.000Z that Shadow missed.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-28T13:10:00.000Z that Shadow missed.
-   ❌ [GHOST TRADE] Shadow took trade at 2026-04-28T13:31:00.000Z that Math did not.
-   ⚠️ [R DIFF] 2026-04-29 GER40 MAGE: Math R = 0.37, Shadow R = 0.43 (diff: -0.07)
-   ❌ [MISSED TRADE] Math took trade at 2026-04-30T06:20:00.000Z that Shadow missed.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-30T13:25:00.000Z that Shadow missed.
-   ❌ [GHOST TRADE] Shadow took trade at 2026-04-30T14:29:00.000Z (GER40) that Math did not.
-[MAGE_NAS100    ]: Math =  16T /   2.19R | Shadow =  10T /   6.30R | Status: ❌ DISCREPANCY
-   ⚠️ [R DIFF] 2026-04-07 NAS100 MAGE: Math R = 2.00, Shadow R = 0.00 (diff: 2.00)
-   ❌ [MISSED TRADE] Math took trade at 2026-04-15T00:50:00.000Z that Shadow missed.
-   ❌ [GHOST TRADE] Shadow took trade at 2026-04-15T00:56:00.000Z that Math did not.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-15T08:25:00.000Z that Shadow missed.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-24T08:25:00.000Z (NAS100) that Shadow missed.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-27T08:00:00.000Z (NAS100) that Shadow missed.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-28T08:00:00.000Z (NAS100) that Shadow missed.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-29T08:05:00.000Z (NAS100) that Shadow missed.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-30T08:00:00.000Z (NAS100) that Shadow missed.
-[MAGE_US30      ]: Math =  12T /  24.28R | Shadow =   4T /  32.13R | Status: ❌ DISCREPANCY
-   ❌ [MISSED TRADE] Math took trade at 2026-04-01T07:30:00.000Z that Shadow missed.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-07T08:05:00.000Z that Shadow missed.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-16T07:50:00.000Z that Shadow missed.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-22T08:40:00.000Z that Shadow missed.
+[MAGE_EURJPY    ]: Math =  38T /  10.91R | Shadow =  29T /  25.23R | Status: ❌ DISCREPANCY
+   ⚠️ [R DIFF] 2026-02-16 EURJPY MAGE: Math R = -1.00, Shadow R = 1.21 (diff: -2.21)
+   ⚠️ [R DIFF] 2026-02-17 EURJPY MAGE: Math R = 6.47, Shadow R = 1.70 (diff: 4.77)
+   ❌ [GHOST TRADE] Shadow took trade at 2026-02-18T15:20:00.000Z that Math did not.
+   ⚠️ [R DIFF] 2026-02-19 EURJPY MAGE: Math R = 2.00, Shadow R = 1.45 (diff: 0.55)
+   ❌ [MISSED TRADE] Math took trade at 2026-02-26T16:12:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-02-27 EURJPY MAGE: Math R = -3.27, Shadow R = 1.09 (diff: -4.36)
+   ❌ [MISSED TRADE] Math took trade at 2026-03-02T15:10:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-03-03T15:36:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-03-05 EURJPY MAGE: Math R = -1.00, Shadow R = -0.15 (diff: -0.85)
+   ⚠️ [R DIFF] 2026-03-09 EURJPY MAGE: Math R = -1.00, Shadow R = -0.09 (diff: -0.91)
+   ⚠️ [R DIFF] 2026-03-10 EURJPY MAGE: Math R = 1.11, Shadow R = -0.63 (diff: 1.74)
+   ⚠️ [R DIFF] 2026-03-19 EURJPY MAGE: Math R = 9.61, Shadow R = 4.09 (diff: 5.52)
+   ⚠️ [R DIFF] 2026-03-23 EURJPY MAGE: Math R = -1.00, Shadow R = 0.94 (diff: -1.94)
+   ❌ [MISSED TRADE] Math took trade at 2026-03-25T14:06:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-03-26 EURJPY MAGE: Math R = -1.00, Shadow R = 0.48 (diff: -1.48)
+   ⚠️ [R DIFF] 2026-04-06 EURJPY MAGE: Math R = 5.26, Shadow R = 5.34 (diff: -0.08)
+   ❌ [GHOST TRADE] Shadow took trade at 2026-04-08T03:27:00.000Z that Math did not.
+   ❌ [MISSED TRADE] Math took trade at 2026-04-08T16:09:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-04-09 EURJPY MAGE: Math R = 4.27, Shadow R = 1.07 (diff: 3.20)
+   ❌ [MISSED TRADE] Math took trade at 2026-04-13T14:25:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-04-14 EURJPY MAGE: Math R = -1.00, Shadow R = 0.70 (diff: -1.70)
+   ⚠️ [R DIFF] 2026-04-21 EURJPY MAGE: Math R = -1.00, Shadow R = 0.13 (diff: -1.13)
+   ⚠️ [R DIFF] 2026-04-22 EURJPY MAGE: Math R = 1.37, Shadow R = 0.87 (diff: 0.50)
+   ⚠️ [R DIFF] 2026-04-24 EURJPY MAGE: Math R = 1.31, Shadow R = 0.24 (diff: 1.07)
+   ❌ [MISSED TRADE] Math took trade at 2026-05-04T15:49:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-05-05 EURJPY MAGE: Math R = -1.00, Shadow R = 0.87 (diff: -1.87)
+   ⚠️ [R DIFF] 2026-05-06 EURJPY MAGE: Math R = -1.00, Shadow R = 0.19 (diff: -1.19)
+   ❌ [MISSED TRADE] Math took trade at 2026-05-07T14:29:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-05-27 EURJPY MAGE: Math R = 1.00, Shadow R = 0.55 (diff: 0.45)
+   ⚠️ [R DIFF] 2026-06-08 EURJPY MAGE: Math R = -1.00, Shadow R = 0.89 (diff: -1.89)
+   ⚠️ [R DIFF] 2026-06-09 EURJPY MAGE: Math R = 2.13, Shadow R = -0.31 (diff: 2.44)
+   ❌ [MISSED TRADE] Math took trade at 2026-06-18T16:30:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-06-24 EURJPY MAGE: Math R = -1.00, Shadow R = 0.35 (diff: -1.35)
+   ⚠️ [R DIFF] 2026-07-20 EURJPY MAGE: Math R = -1.00, Shadow R = -0.05 (diff: -0.95)
+   ⚠️ [R DIFF] 2026-07-23 EURJPY MAGE: Math R = -1.00, Shadow R = -0.49 (diff: -0.51)
+   ❌ [MISSED TRADE] Math took trade at 2026-07-30T14:36:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-07-31T14:24:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-08-03 EURJPY MAGE: Math R = 5.00, Shadow R = 5.57 (diff: -0.57)
+[MAGE_GBPJPY    ]: Math =  58T /   3.34R | Shadow =  33T /  27.91R | Status: ❌ DISCREPANCY
+   ❌ [MISSED TRADE] Math took trade at 2026-02-20T09:35:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-02-24T09:15:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-02-27T09:20:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-03-11 GBPJPY MAGE: Math R = 0.59, Shadow R = 0.71 (diff: -0.12)
+   ⚠️ [R DIFF] 2026-03-16 GBPJPY MAGE: Math R = 3.00, Shadow R = 3.21 (diff: -0.21)
+   ❌ [MISSED TRADE] Math took trade at 2026-04-10T08:25:00.000Z that Shadow missed.
+   ❌ [GHOST TRADE] Shadow took trade at 2026-04-10T09:00:00.000Z that Math did not.
+   ❌ [MISSED TRADE] Math took trade at 2026-04-16T08:30:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-04-20T10:05:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-04-22T08:20:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-04-23T08:35:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-05-04T08:15:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-05-12T08:20:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-05-15T08:20:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-05-28 GBPJPY MAGE: Math R = 1.00, Shadow R = 1.61 (diff: -0.61)
+   ❌ [MISSED TRADE] Math took trade at 2026-06-01T09:00:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-06-02 GBPJPY MAGE: Math R = 0.00, Shadow R = 0.15 (diff: -0.15)
+   ❌ [MISSED TRADE] Math took trade at 2026-06-09T08:55:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-06-17T08:35:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-06-22T10:10:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-06-23T08:40:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-06-26T10:05:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-06-30 GBPJPY MAGE: Math R = 0.45, Shadow R = -0.15 (diff: 0.59)
+   ❌ [MISSED TRADE] Math took trade at 2026-07-08T08:15:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-07-09T10:10:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-07-16T10:10:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-07-17 GBPJPY MAGE: Math R = 1.56, Shadow R = 1.27 (diff: 0.29)
+   ❌ [MISSED TRADE] Math took trade at 2026-07-21T08:15:00.000Z that Shadow missed.
+   ❌ [GHOST TRADE] Shadow took trade at 2026-07-21T08:55:00.000Z that Math did not.
+   ⚠️ [R DIFF] 2026-07-23 GBPJPY MAGE: Math R = 0.00, Shadow R = -0.19 (diff: 0.19)
+   ❌ [MISSED TRADE] Math took trade at 2026-07-24T10:10:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-07-29T08:15:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-07-31T08:40:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-08-03T08:30:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-08-05T08:20:00.000Z that Shadow missed.
+   ❌ [GHOST TRADE] Shadow took trade at 2026-08-05T10:05:00.000Z that Math did not.
+   ❌ [MISSED TRADE] Math took trade at 2026-08-07T09:00:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-08-14T08:35:00.000Z (GBPJPY) that Shadow missed.
+[MAGE_GER40     ]: Math =  83T /  57.03R | Shadow =  43T /  93.71R | Status: ❌ DISCREPANCY
+   ⚠️ [R DIFF] 2026-02-16 GER40 MAGE: Math R = 5.18, Shadow R = 5.25 (diff: -0.06)
+   ❌ [MISSED TRADE] Math took trade at 2026-02-23T08:55:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-03-02T08:40:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-03-06 GER40 MAGE: Math R = 2.71, Shadow R = 2.96 (diff: -0.25)
+   ❌ [MISSED TRADE] Math took trade at 2026-03-13T08:20:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-03-18T07:40:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-03-24T07:45:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-04-01T07:40:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-04-02T08:00:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-04-10T09:05:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-04-13T07:45:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-04-14T07:40:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-04-15T08:10:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-04-21T07:45:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-04-22 GER40 MAGE: Math R = 6.04, Shadow R = 6.26 (diff: -0.21)
    ❌ [MISSED TRADE] Math took trade at 2026-04-23T07:40:00.000Z that Shadow missed.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-24T08:10:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-04-29 GER40 MAGE: Math R = 0.83, Shadow R = 0.99 (diff: -0.15)
+   ⚠️ [R DIFF] 2026-05-05 GER40 MAGE: Math R = 4.06, Shadow R = 3.90 (diff: 0.16)
+   ⚠️ [R DIFF] 2026-05-06 GER40 MAGE: Math R = 6.00, Shadow R = 2.11 (diff: 3.89)
+   ❌ [MISSED TRADE] Math took trade at 2026-05-08T08:00:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-05-11T07:45:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-05-13T07:30:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-05-14T08:00:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-05-15 GER40 MAGE: Math R = 7.19, Shadow R = 7.44 (diff: -0.24)
+   ❌ [MISSED TRADE] Math took trade at 2026-05-20T08:30:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-05-21T07:35:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-05-28T07:35:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-06-01T07:35:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-06-02T08:00:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-06-04T07:35:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-06-09T07:30:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-06-11T08:00:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-06-22T08:00:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-06-24T07:30:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-06-25T07:45:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-06-26T08:10:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-06-29T07:30:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-07-02 GER40 MAGE: Math R = 9.43, Shadow R = 9.55 (diff: -0.13)
+   ⚠️ [R DIFF] 2026-07-03 GER40 MAGE: Math R = 2.55, Shadow R = 2.30 (diff: 0.26)
+   ❌ [MISSED TRADE] Math took trade at 2026-07-10T07:35:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-07-15T07:30:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-07-20T08:45:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-07-23T07:35:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-07-24T07:30:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-07-27T07:30:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-08-03T07:40:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-08-05T07:45:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-08-07T09:50:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-08-12 GER40 MAGE: Math R = 2.73, Shadow R = 2.61 (diff: 0.12)
+   ❌ [MISSED TRADE] Math took trade at 2026-08-14T07:30:00.000Z (GER40) that Shadow missed.
+[MAGE_NAS100    ]: Math =  96T /  74.08R | Shadow =  31T / 121.96R | Status: ❌ DISCREPANCY
+   ❌ [MISSED TRADE] Math took trade at 2026-02-23T08:45:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-02-25T08:55:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-03-04T08:55:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-03-05T09:15:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-03-12T08:00:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-03-13T07:55:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-03-17T07:55:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-03-18T07:50:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-03-23 NAS100 MAGE: Math R = 14.00, Shadow R = 1.26 (diff: 12.74)
+   ❌ [MISSED TRADE] Math took trade at 2026-03-26T07:50:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-03-27 NAS100 MAGE: Math R = 12.14, Shadow R = 10.64 (diff: 1.50)
+   ❌ [MISSED TRADE] Math took trade at 2026-04-01T08:20:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-04-10T07:45:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-04-13T08:05:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-04-14T08:30:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-04-15T08:30:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-04-22T08:05:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-04-24T08:30:00.000Z that Shadow missed.
    ❌ [MISSED TRADE] Math took trade at 2026-04-27T08:05:00.000Z that Shadow missed.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-28T07:35:00.000Z that Shadow missed.
-   ⚠️ [R DIFF] 2026-04-30 US30 MAGE: Math R = 21.26, Shadow R = 21.09 (diff: 0.17)
-[MAGE_USDCAD    ]: Math =  10T /   9.00R | Shadow =   7T /   7.23R | Status: ❌ DISCREPANCY
-   ❌ [MISSED TRADE] Math took trade at 2026-04-02T14:35:00.000Z that Shadow missed.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-14T14:00:00.000Z that Shadow missed.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-30T14:00:00.000Z (USDCAD) that Shadow missed.
-[MAGE_USDJPY    ]: Math =  12T /  16.58R | Shadow =   9T /   4.51R | Status: ❌ DISCREPANCY
-   ❌ [MISSED TRADE] Math took trade at 2026-04-01T07:20:00.000Z that Shadow missed.
-   ❌ [GHOST TRADE] Shadow took trade at 2026-04-01T12:44:00.000Z that Math did not.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-02T14:20:00.000Z that Shadow missed.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-03T07:20:00.000Z that Shadow missed.
-   ❌ [GHOST TRADE] Shadow took trade at 2026-04-03T08:01:00.000Z that Math did not.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-07T14:20:00.000Z that Shadow missed.
-   ❌ [GHOST TRADE] Shadow took trade at 2026-04-07T14:57:00.000Z that Math did not.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-09T07:15:00.000Z that Shadow missed.
-   ❌ [GHOST TRADE] Shadow took trade at 2026-04-09T16:07:00.000Z that Math did not.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-15T14:25:00.000Z that Shadow missed.
-   ❌ [GHOST TRADE] Shadow took trade at 2026-04-15T14:39:00.000Z that Math did not.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-20T07:45:00.000Z that Shadow missed.
-   ❌ [GHOST TRADE] Shadow took trade at 2026-04-20T10:11:00.000Z that Math did not.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-23T14:20:00.000Z that Shadow missed.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-27T07:20:00.000Z that Shadow missed.
-   ❌ [GHOST TRADE] Shadow took trade at 2026-04-27T07:28:00.000Z that Math did not.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-27T14:30:00.000Z that Shadow missed.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-28T14:35:00.000Z that Shadow missed.
-   ❌ [GHOST TRADE] Shadow took trade at 2026-04-28T15:57:00.000Z that Math did not.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-29T07:15:00.000Z that Shadow missed.
-   ❌ [GHOST TRADE] Shadow took trade at 2026-04-29T07:30:00.000Z (USDJPY) that Math did not.
-[SAGE_AUDUSD    ]: Math =  19T /  -0.57R | Shadow =  13T /   5.64R | Status: ❌ DISCREPANCY
-   ⚠️ [R DIFF] 2026-04-01 AUDUSD SAGE: Math R = 0.50, Shadow R = 0.00 (diff: 0.50)
-   ⚠️ [R DIFF] 2026-04-02 AUDUSD SAGE: Math R = 2.50, Shadow R = 1.99 (diff: 0.51)
-   ❌ [MISSED TRADE] Math took trade at 2026-04-07T10:55:00.000Z that Shadow missed.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-08T08:15:00.000Z that Shadow missed.
-   ⚠️ [R DIFF] 2026-04-13 AUDUSD SAGE: Math R = 0.50, Shadow R = 1.83 (diff: -1.33)
-   ❌ [MISSED TRADE] Math took trade at 2026-04-14T08:40:00.000Z that Shadow missed.
-   ❌ [GHOST TRADE] Shadow took trade at 2026-04-15T09:15:00.000Z that Math did not.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-15T10:26:00.000Z that Shadow missed.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-16T08:20:00.000Z that Shadow missed.
-   ⚠️ [R DIFF] 2026-04-17 AUDUSD SAGE: Math R = 0.51, Shadow R = 0.00 (diff: 0.51)
-   ⚠️ [R DIFF] 2026-04-21 AUDUSD SAGE: Math R = 1.00, Shadow R = 0.68 (diff: 0.32)
-   ❌ [MISSED TRADE] Math took trade at 2026-04-24T08:48:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-04-28T08:05:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-04-29T08:10:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-04-30T08:05:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-05-04 NAS100 MAGE: Math R = 12.00, Shadow R = 9.11 (diff: 2.89)
+   ❌ [GHOST TRADE] Shadow took trade at 2026-05-06T07:55:00.000Z that Math did not.
+   ❌ [MISSED TRADE] Math took trade at 2026-05-06T08:20:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-05-07T08:05:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-05-08 NAS100 MAGE: Math R = 1.27, Shadow R = 1.39 (diff: -0.12)
+   ❌ [MISSED TRADE] Math took trade at 2026-05-11T08:20:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-05-12 NAS100 MAGE: Math R = 1.45, Shadow R = 1.32 (diff: 0.13)
+   ❌ [MISSED TRADE] Math took trade at 2026-05-13T08:00:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-05-14T08:00:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-05-15T10:15:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-05-19T07:50:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-05-20T08:05:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-05-27T07:50:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-05-28T07:50:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-06-02T07:50:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-06-03T08:30:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-06-08T07:50:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-06-09T08:15:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-06-10 NAS100 MAGE: Math R = 3.86, Shadow R = 3.93 (diff: -0.07)
+   ❌ [MISSED TRADE] Math took trade at 2026-06-11T07:50:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-06-15T08:20:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-06-16T07:45:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-06-17 NAS100 MAGE: Math R = 1.88, Shadow R = 1.96 (diff: -0.09)
+   ❌ [MISSED TRADE] Math took trade at 2026-06-18T08:00:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-06-23T07:45:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-06-24T07:55:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-06-25T07:45:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-06-26T08:05:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-06-29T08:10:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-06-30T08:00:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-07-01T08:05:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-07-02T09:45:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-07-03 NAS100 MAGE: Math R = 0.87, Shadow R = 1.74 (diff: -0.87)
+   ❌ [MISSED TRADE] Math took trade at 2026-07-06T08:00:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-07-07T07:50:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-07-08T08:05:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-07-09T07:50:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-07-10T07:45:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-07-13T08:05:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-07-14T09:40:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-07-15T09:45:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-07-16 NAS100 MAGE: Math R = 5.59, Shadow R = 5.36 (diff: 0.22)
+   ❌ [MISSED TRADE] Math took trade at 2026-07-21T09:20:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-07-22T07:55:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-07-24T09:15:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-07-28T10:40:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-07-31T08:05:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-08-03T08:40:00.000Z that Shadow missed.
+   ❌ [GHOST TRADE] Shadow took trade at 2026-08-04T08:55:00.000Z that Math did not.
+   ❌ [MISSED TRADE] Math took trade at 2026-08-04T10:40:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-08-05T07:50:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-08-07T07:55:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-08-11T07:45:00.000Z (NAS100) that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-08-12T07:50:00.000Z (NAS100) that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-08-13T08:20:00.000Z (NAS100) that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-08-14T07:55:00.000Z (NAS100) that Shadow missed.
+[MAGE_US30      ]: Math =  77T /  61.82R | Shadow =  31T /  91.32R | Status: ❌ DISCREPANCY
+   ❌ [MISSED TRADE] Math took trade at 2026-03-05T09:05:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-03-09T08:10:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-03-12T08:40:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-03-13T07:50:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-03-18 US30 MAGE: Math R = 1.82, Shadow R = 1.70 (diff: 0.12)
+   ❌ [MISSED TRADE] Math took trade at 2026-03-19T09:00:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-03-20 US30 MAGE: Math R = 1.57, Shadow R = 0.06 (diff: 1.51)
+   ⚠️ [R DIFF] 2026-03-23 US30 MAGE: Math R = 13.50, Shadow R = 0.44 (diff: 13.06)
+   ❌ [MISSED TRADE] Math took trade at 2026-03-24T08:05:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-03-25T09:10:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-03-26T08:30:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-04-01T08:10:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-04-07T08:05:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-04-08T07:50:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-04-10T08:05:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-04-13T09:10:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-04-14T10:40:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-04-15T08:10:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-04-16T07:55:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-04-23T08:45:00.000Z that Shadow missed.
    ❌ [MISSED TRADE] Math took trade at 2026-04-27T08:10:00.000Z that Shadow missed.
-   ⚠️ [R DIFF] 2026-04-28 AUDUSD SAGE: Math R = 0.00, Shadow R = 0.74 (diff: -0.74)
-[SAGE_BTCUSD    ]: Math =  14T /   0.89R | Shadow =  11T /   3.48R | Status: ❌ DISCREPANCY
-   ⚠️ [R DIFF] 2026-04-01 BTCUSD SAGE: Math R = -0.69, Shadow R = -0.02 (diff: -0.67)
-   ❌ [MISSED TRADE] Math took trade at 2026-04-02T03:45:00.000Z that Shadow missed.
-   ⚠️ [R DIFF] 2026-04-05 BTCUSD SAGE: Math R = 0.59, Shadow R = 0.79 (diff: -0.20)
-   ⚠️ [R DIFF] 2026-04-13 BTCUSD SAGE: Math R = 1.72, Shadow R = 2.20 (diff: -0.48)
-   ⚠️ [R DIFF] 2026-04-16 BTCUSD SAGE: Math R = 1.18, Shadow R = -0.02 (diff: 1.20)
-   ❌ [MISSED TRADE] Math took trade at 2026-04-22T02:55:00.000Z that Shadow missed.
-   ⚠️ [R DIFF] 2026-04-24 BTCUSD SAGE: Math R = 0.04, Shadow R = -0.07 (diff: 0.11)
-   ⚠️ [R DIFF] 2026-04-26 BTCUSD SAGE: Math R = -0.24, Shadow R = -0.33 (diff: 0.08)
-   ❌ [MISSED TRADE] Math took trade at 2026-04-28T02:40:00.000Z that Shadow missed.
-   ⚠️ [R DIFF] 2026-04-29 BTCUSD SAGE: Math R = -0.74, Shadow R = -0.02 (diff: -0.72)
-   ⚠️ [R DIFF] 2026-04-30 BTCUSD SAGE: Math R = 0.72, Shadow R = 1.00 (diff: -0.29)
-[SAGE_EURNZD    ]: Math =   6T /  -1.80R | Shadow =   6T /   1.02R | Status: ❌ DISCREPANCY
-   ❌ [GHOST TRADE] Shadow took trade at 2026-04-07T02:45:00.000Z that Math did not.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-07T02:53:00.000Z that Shadow missed.
-   ❌ [GHOST TRADE] Shadow took trade at 2026-04-08T02:30:00.000Z that Math did not.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-08T02:37:00.000Z that Shadow missed.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-13T02:14:00.000Z that Shadow missed.
-   ⚠️ [R DIFF] 2026-04-16 EURNZD SAGE: Math R = 0.79, Shadow R = 0.72 (diff: 0.07)
-   ❌ [GHOST TRADE] Shadow took trade at 2026-04-21T01:40:00.000Z that Math did not.
-   ❌ [GHOST TRADE] Shadow took trade at 2026-04-28T01:50:00.000Z that Math did not.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-29T01:17:00.000Z (EURNZD) that Shadow missed.
-[SAGE_GBPUSD    ]: Math =   7T /   1.62R | Shadow =   5T /   2.50R | Status: ❌ DISCREPANCY
-   ❌ [MISSED TRADE] Math took trade at 2026-04-02T14:06:00.000Z that Shadow missed.
-   ❌ [GHOST TRADE] Shadow took trade at 2026-04-14T14:05:00.000Z that Math did not.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-14T14:19:00.000Z that Shadow missed.
-   ⚠️ [R DIFF] 2026-04-15 GBPUSD SAGE: Math R = 0.21, Shadow R = 0.06 (diff: 0.15)
-   ⚠️ [R DIFF] 2026-04-21 GBPUSD SAGE: Math R = 2.00, Shadow R = 2.20 (diff: -0.20)
-   ❌ [MISSED TRADE] Math took trade at 2026-04-24T14:05:00.000Z that Shadow missed.
-[SAGE_GER40     ]: Math =  11T /  13.45R | Shadow =   8T /  11.89R | Status: ❌ DISCREPANCY
-   ⚠️ [R DIFF] 2026-04-02 GER40 SAGE: Math R = 3.00, Shadow R = 2.00 (diff: 1.00)
-   ⚠️ [R DIFF] 2026-04-07 GER40 SAGE: Math R = 0.00, Shadow R = 1.34 (diff: -1.34)
-   ⚠️ [R DIFF] 2026-04-15 GER40 SAGE: Math R = 1.00, Shadow R = 1.39 (diff: -0.39)
-   ⚠️ [R DIFF] 2026-04-16 GER40 SAGE: Math R = 2.00, Shadow R = 1.00 (diff: 1.00)
-   ❌ [MISSED TRADE] Math took trade at 2026-04-21T07:35:00.000Z that Shadow missed.
-   ⚠️ [R DIFF] 2026-04-22 GER40 SAGE: Math R = 4.00, Shadow R = 1.16 (diff: 2.84)
-   ⚠️ [R DIFF] 2026-04-27 GER40 SAGE: Math R = 4.00, Shadow R = 3.00 (diff: 1.00)
-   ❌ [MISSED TRADE] Math took trade at 2026-04-28T08:01:00.000Z (GER40) that Shadow missed.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-29T07:10:00.000Z (GER40) that Shadow missed.
-[SAGE_XAUUSD    ]: Math =  10T /  17.29R | Shadow =  11T /  15.13R | Status: ❌ DISCREPANCY
-   ❌ [GHOST TRADE] Shadow took trade at 2026-04-01T12:10:00.000Z that Math did not.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-02T12:56:00.000Z that Shadow missed.
-   ⚠️ [R DIFF] 2026-04-06 XAUUSD SAGE: Math R = 7.37, Shadow R = -0.03 (diff: 7.40)
-   ❌ [GHOST TRADE] Shadow took trade at 2026-04-07T09:30:00.000Z that Math did not.
-   ❌ [GHOST TRADE] Shadow took trade at 2026-04-10T09:25:00.000Z that Math did not.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-13T10:15:00.000Z that Shadow missed.
-   ❌ [GHOST TRADE] Shadow took trade at 2026-04-14T10:50:00.000Z that Math did not.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-14T11:00:00.000Z that Shadow missed.
-   ⚠️ [R DIFF] 2026-04-15 XAUUSD SAGE: Math R = 3.62, Shadow R = 2.30 (diff: 1.32)
-   ❌ [GHOST TRADE] Shadow took trade at 2026-04-16T10:20:00.000Z that Math did not.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-16T10:30:00.000Z that Shadow missed.
-   ❌ [GHOST TRADE] Shadow took trade at 2026-04-20T09:40:00.000Z that Math did not.
-   ❌ [GHOST TRADE] Shadow took trade at 2026-04-22T10:30:00.000Z that Math did not.
-   ⚠️ [R DIFF] 2026-04-24 XAUUSD SAGE: Math R = 2.42, Shadow R = 1.87 (diff: 0.55)
-   ⚠️ [R DIFF] 2026-04-27 XAUUSD SAGE: Math R = 1.99, Shadow R = 0.99 (diff: 1.00)
-   ❌ [MISSED TRADE] Math took trade at 2026-04-28T09:25:00.000Z (XAUUSD) that Shadow missed.
-   ❌ [MISSED TRADE] Math took trade at 2026-04-30T10:16:00.000Z (XAUUSD) that Shadow missed.
+   ⚠️ [R DIFF] 2026-04-30 US30 MAGE: Math R = 16.29, Shadow R = 16.42 (diff: -0.13)
+   ❌ [MISSED TRADE] Math took trade at 2026-05-07T07:55:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-05-15 US30 MAGE: Math R = 1.63, Shadow R = 1.79 (diff: -0.16)
+   ❌ [MISSED TRADE] Math took trade at 2026-05-27T07:50:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-05-28T08:00:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-06-04 US30 MAGE: Math R = 6.88, Shadow R = 7.21 (diff: -0.33)
+   ❌ [MISSED TRADE] Math took trade at 2026-06-05T08:00:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-06-08T07:55:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-06-10 US30 MAGE: Math R = 2.61, Shadow R = 2.51 (diff: 0.10)
+   ❌ [MISSED TRADE] Math took trade at 2026-06-11T07:50:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-06-12 US30 MAGE: Math R = 1.02, Shadow R = 0.16 (diff: 0.86)
+   ❌ [MISSED TRADE] Math took trade at 2026-06-15T08:35:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-06-18T07:55:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-06-26T08:20:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-06-29T10:30:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-06-30T07:50:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-07-01T09:25:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-07-02 US30 MAGE: Math R = 1.40, Shadow R = 1.52 (diff: -0.12)
+   ❌ [MISSED TRADE] Math took trade at 2026-07-06T10:35:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-07-07T07:55:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-07-09T08:00:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-07-10T07:55:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-07-13T08:15:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-07-15T08:10:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-07-16T09:00:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-07-17T08:00:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-07-20T08:50:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-07-27T07:55:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-07-30T10:40:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-07-31T10:35:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-08-06 US30 MAGE: Math R = 10.96, Shadow R = 9.46 (diff: 1.50)
+   ❌ [MISSED TRADE] Math took trade at 2026-08-07T07:50:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-08-12T08:00:00.000Z (US30) that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-08-13T08:35:00.000Z (US30) that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-08-14T08:15:00.000Z (US30) that Shadow missed.
+[SAGE_BTCUSD    ]: Math = 117T /   3.18R | Shadow =  97T /  22.41R | Status: ❌ DISCREPANCY
+   ❌ [GHOST TRADE] Shadow took trade at 2026-02-14T02:01:00.000Z that Math did not.
+   ❌ [MISSED TRADE] Math took trade at 2026-02-14T05:05:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-02-17 BTCUSD SAGE: Math R = -1.00, Shadow R = -0.84 (diff: -0.16)
+   ⚠️ [R DIFF] 2026-02-19 BTCUSD SAGE: Math R = 0.50, Shadow R = -0.02 (diff: 0.52)
+   ⚠️ [R DIFF] 2026-02-20 BTCUSD SAGE: Math R = -1.00, Shadow R = -0.00 (diff: -1.00)
+   ⚠️ [R DIFF] 2026-02-21 BTCUSD SAGE: Math R = 0.76, Shadow R = 0.83 (diff: -0.07)
+   ⚠️ [R DIFF] 2026-02-27 BTCUSD SAGE: Math R = 1.00, Shadow R = -0.02 (diff: 1.02)
+   ❌ [MISSED TRADE] Math took trade at 2026-02-28T04:50:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-03-04 BTCUSD SAGE: Math R = 3.00, Shadow R = 1.50 (diff: 1.50)
+   ⚠️ [R DIFF] 2026-03-06 BTCUSD SAGE: Math R = 0.50, Shadow R = -0.02 (diff: 0.52)
+   ❌ [MISSED TRADE] Math took trade at 2026-03-07T03:39:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-03-14 BTCUSD SAGE: Math R = 0.36, Shadow R = 0.49 (diff: -0.13)
+   ⚠️ [R DIFF] 2026-03-16 BTCUSD SAGE: Math R = 1.00, Shadow R = 1.50 (diff: -0.50)
+   ⚠️ [R DIFF] 2026-03-18 BTCUSD SAGE: Math R = 1.06, Shadow R = -0.02 (diff: 1.08)
+   ⚠️ [R DIFF] 2026-03-20 BTCUSD SAGE: Math R = -0.81, Shadow R = -0.02 (diff: -0.79)
+   ⚠️ [R DIFF] 2026-03-22 BTCUSD SAGE: Math R = 0.50, Shadow R = 1.00 (diff: -0.50)
+   ⚠️ [R DIFF] 2026-03-24 BTCUSD SAGE: Math R = 0.00, Shadow R = 0.73 (diff: -0.73)
+   ⚠️ [R DIFF] 2026-03-27 BTCUSD SAGE: Math R = 2.50, Shadow R = -0.02 (diff: 2.52)
+   ⚠️ [R DIFF] 2026-03-28 BTCUSD SAGE: Math R = 0.50, Shadow R = 0.76 (diff: -0.26)
+   ⚠️ [R DIFF] 2026-04-03 BTCUSD SAGE: Math R = 0.37, Shadow R = 0.45 (diff: -0.08)
+   ⚠️ [R DIFF] 2026-04-06 BTCUSD SAGE: Math R = 0.50, Shadow R = -0.00 (diff: 0.50)
+   ⚠️ [R DIFF] 2026-04-07 BTCUSD SAGE: Math R = -0.96, Shadow R = 0.28 (diff: -1.24)
+   ⚠️ [R DIFF] 2026-04-08 BTCUSD SAGE: Math R = 0.50, Shadow R = 0.15 (diff: 0.35)
+   ⚠️ [R DIFF] 2026-04-09 BTCUSD SAGE: Math R = 0.00, Shadow R = 0.59 (diff: -0.59)
+   ⚠️ [R DIFF] 2026-04-17 BTCUSD SAGE: Math R = 1.00, Shadow R = 1.50 (diff: -0.50)
+   ⚠️ [R DIFF] 2026-04-18 BTCUSD SAGE: Math R = 1.00, Shadow R = 1.89 (diff: -0.89)
+   ⚠️ [R DIFF] 2026-04-20 BTCUSD SAGE: Math R = -0.82, Shadow R = -0.02 (diff: -0.80)
+   ⚠️ [R DIFF] 2026-04-24 BTCUSD SAGE: Math R = -0.57, Shadow R = -0.65 (diff: 0.09)
+   ⚠️ [R DIFF] 2026-04-26 BTCUSD SAGE: Math R = 0.81, Shadow R = 0.92 (diff: -0.11)
+   ❌ [MISSED TRADE] Math took trade at 2026-04-28T02:15:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-04-30 BTCUSD SAGE: Math R = 0.00, Shadow R = 0.50 (diff: -0.50)
+   ❌ [MISSED TRADE] Math took trade at 2026-05-01T02:15:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-05-06 BTCUSD SAGE: Math R = -0.87, Shadow R = -0.02 (diff: -0.85)
+   ⚠️ [R DIFF] 2026-05-07 BTCUSD SAGE: Math R = 0.00, Shadow R = 0.10 (diff: -0.10)
+   ⚠️ [R DIFF] 2026-05-08 BTCUSD SAGE: Math R = 0.48, Shadow R = 0.24 (diff: 0.24)
+   ❌ [MISSED TRADE] Math took trade at 2026-05-11T02:55:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-05-16T04:45:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-05-18T01:55:00.000Z that Shadow missed.
+   ❌ [GHOST TRADE] Shadow took trade at 2026-05-18T02:21:00.000Z that Math did not.
+   ⚠️ [R DIFF] 2026-05-22 BTCUSD SAGE: Math R = 1.88, Shadow R = -0.02 (diff: 1.89)
+   ❌ [MISSED TRADE] Math took trade at 2026-05-25T02:05:00.000Z that Shadow missed.
+   ❌ [GHOST TRADE] Shadow took trade at 2026-05-25T02:25:00.000Z that Math did not.
+   ❌ [MISSED TRADE] Math took trade at 2026-05-27T02:35:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-05-28T01:26:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-05-29T01:55:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-06-01 BTCUSD SAGE: Math R = -0.83, Shadow R = 0.00 (diff: -0.83)
+   ❌ [MISSED TRADE] Math took trade at 2026-06-02T03:35:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-06-03T02:01:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-06-05T01:45:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-06-06T02:10:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-06-10 BTCUSD SAGE: Math R = -0.42, Shadow R = -0.51 (diff: 0.09)
+   ❌ [MISSED TRADE] Math took trade at 2026-06-11T03:15:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-06-12 BTCUSD SAGE: Math R = 0.42, Shadow R = 0.00 (diff: 0.42)
+   ⚠️ [R DIFF] 2026-06-13 BTCUSD SAGE: Math R = -0.31, Shadow R = -0.39 (diff: 0.08)
+   ⚠️ [R DIFF] 2026-06-14 BTCUSD SAGE: Math R = 0.61, Shadow R = 0.70 (diff: -0.08)
+   ⚠️ [R DIFF] 2026-06-15 BTCUSD SAGE: Math R = 1.34, Shadow R = 1.00 (diff: 0.34)
+   ❌ [MISSED TRADE] Math took trade at 2026-06-17T01:40:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-06-18T03:55:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-06-19 BTCUSD SAGE: Math R = 0.32, Shadow R = -0.12 (diff: 0.44)
+   ⚠️ [R DIFF] 2026-06-20 BTCUSD SAGE: Math R = -0.62, Shadow R = -0.00 (diff: -0.62)
+   ❌ [MISSED TRADE] Math took trade at 2026-06-30T01:30:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-07-01 BTCUSD SAGE: Math R = -0.00, Shadow R = 0.50 (diff: -0.50)
+   ⚠️ [R DIFF] 2026-07-02 BTCUSD SAGE: Math R = 1.50, Shadow R = 2.00 (diff: -0.50)
+   ⚠️ [R DIFF] 2026-07-03 BTCUSD SAGE: Math R = -0.79, Shadow R = -0.02 (diff: -0.77)
+   ❌ [MISSED TRADE] Math took trade at 2026-07-06T02:40:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-07-08T03:10:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-07-14T02:05:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-07-16 BTCUSD SAGE: Math R = 0.50, Shadow R = -0.02 (diff: 0.52)
+   ❌ [MISSED TRADE] Math took trade at 2026-07-17T01:45:00.000Z that Shadow missed.
+   ❌ [GHOST TRADE] Shadow took trade at 2026-07-17T01:51:00.000Z that Math did not.
+   ⚠️ [R DIFF] 2026-07-21 BTCUSD SAGE: Math R = -0.99, Shadow R = -0.02 (diff: -0.98)
+   ⚠️ [R DIFF] 2026-07-23 BTCUSD SAGE: Math R = -0.38, Shadow R = -0.45 (diff: 0.07)
+   ⚠️ [R DIFF] 2026-07-26 BTCUSD SAGE: Math R = 1.10, Shadow R = 0.32 (diff: 0.78)
+   ⚠️ [R DIFF] 2026-07-27 BTCUSD SAGE: Math R = 0.30, Shadow R = -0.01 (diff: 0.31)
+   ⚠️ [R DIFF] 2026-07-29 BTCUSD SAGE: Math R = 0.32, Shadow R = 0.50 (diff: -0.18)
+   ⚠️ [R DIFF] 2026-08-03 BTCUSD SAGE: Math R = 0.90, Shadow R = 1.36 (diff: -0.46)
+   ⚠️ [R DIFF] 2026-08-04 BTCUSD SAGE: Math R = 0.53, Shadow R = 0.27 (diff: 0.26)
+   ⚠️ [R DIFF] 2026-08-10 BTCUSD SAGE: Math R = 1.15, Shadow R = 1.22 (diff: -0.07)
+[SAGE_EURJPY    ]: Math =  64T /   3.97R | Shadow =  45T /  27.46R | Status: ❌ DISCREPANCY
+   ❌ [MISSED TRADE] Math took trade at 2026-02-17T02:25:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-02-24T01:40:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-02-26 EURJPY SAGE: Math R = -1.00, Shadow R = -0.02 (diff: -0.98)
+   ⚠️ [R DIFF] 2026-03-03 EURJPY SAGE: Math R = 3.68, Shadow R = 3.83 (diff: -0.15)
+   ❌ [MISSED TRADE] Math took trade at 2026-03-09T03:25:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-03-18 EURJPY SAGE: Math R = -1.00, Shadow R = -0.07 (diff: -0.93)
+   ⚠️ [R DIFF] 2026-03-20 EURJPY SAGE: Math R = 2.33, Shadow R = 2.40 (diff: -0.07)
+   ⚠️ [R DIFF] 2026-03-23 EURJPY SAGE: Math R = 0.26, Shadow R = 0.18 (diff: 0.08)
+   ⚠️ [R DIFF] 2026-03-26 EURJPY SAGE: Math R = 0.29, Shadow R = 0.41 (diff: -0.13)
+   ⚠️ [R DIFF] 2026-03-30 EURJPY SAGE: Math R = -1.00, Shadow R = -0.10 (diff: -0.90)
+   ❌ [MISSED TRADE] Math took trade at 2026-04-01T01:55:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-04-07T01:15:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-04-09T03:45:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-04-13 EURJPY SAGE: Math R = -0.12, Shadow R = 0.03 (diff: -0.14)
+   ⚠️ [R DIFF] 2026-04-16 EURJPY SAGE: Math R = -1.00, Shadow R = -0.09 (diff: -0.91)
+   ❌ [MISSED TRADE] Math took trade at 2026-04-17T01:15:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-05-14 EURJPY SAGE: Math R = -0.44, Shadow R = -0.03 (diff: -0.41)
+   ❌ [MISSED TRADE] Math took trade at 2026-05-18T02:25:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-05-19T02:30:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-05-27T03:25:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-06-01 EURJPY SAGE: Math R = 1.31, Shadow R = 1.15 (diff: 0.16)
+   ❌ [MISSED TRADE] Math took trade at 2026-06-02T02:20:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-06-03T03:30:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-06-10T01:05:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-06-24T01:30:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-06-30 EURJPY SAGE: Math R = 0.58, Shadow R = 0.67 (diff: -0.09)
+   ❌ [MISSED TRADE] Math took trade at 2026-07-06T02:40:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-07-07 EURJPY SAGE: Math R = 0.14, Shadow R = 0.23 (diff: -0.09)
+   ⚠️ [R DIFF] 2026-07-15 EURJPY SAGE: Math R = 0.51, Shadow R = 0.67 (diff: -0.17)
+   ❌ [MISSED TRADE] Math took trade at 2026-07-21T03:55:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-07-23T01:20:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-07-27 EURJPY SAGE: Math R = 1.23, Shadow R = 1.17 (diff: 0.06)
+   ⚠️ [R DIFF] 2026-07-29 EURJPY SAGE: Math R = 0.00, Shadow R = -0.06 (diff: 0.06)
+   ❌ [MISSED TRADE] Math took trade at 2026-08-05T03:35:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-08-10T03:45:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-08-13 EURJPY SAGE: Math R = 0.27, Shadow R = 0.17 (diff: 0.09)
+[SAGE_GBPUSD    ]: Math =  32T /  -1.41R | Shadow =  23T /   7.50R | Status: ❌ DISCREPANCY
+   ❌ [MISSED TRADE] Math took trade at 2026-02-26T12:35:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-02-27T11:10:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-03-10 GBPUSD SAGE: Math R = 0.00, Shadow R = -0.08 (diff: 0.08)
+   ❌ [MISSED TRADE] Math took trade at 2026-03-26T13:50:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-04-21T12:50:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-04-22T11:20:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-04-24T10:40:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-04-29 GBPUSD SAGE: Math R = 0.01, Shadow R = 0.10 (diff: -0.09)
+   ❌ [MISSED TRADE] Math took trade at 2026-07-13T11:15:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-07-24T12:00:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-07-29 GBPUSD SAGE: Math R = 0.77, Shadow R = 0.71 (diff: 0.06)
+   ❌ [MISSED TRADE] Math took trade at 2026-08-06T12:30:00.000Z that Shadow missed.
+[SAGE_NAS100    ]: Math =  88T /  28.38R | Shadow =  53T /  40.10R | Status: ❌ DISCREPANCY
+   ❌ [MISSED TRADE] Math took trade at 2026-02-16T03:40:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-02-17 NAS100 SAGE: Math R = 0.00, Shadow R = -0.15 (diff: 0.15)
+   ⚠️ [R DIFF] 2026-02-19 NAS100 SAGE: Math R = 1.49, Shadow R = -0.01 (diff: 1.50)
+   ⚠️ [R DIFF] 2026-02-27 NAS100 SAGE: Math R = 3.23, Shadow R = -0.01 (diff: 3.24)
+   ❌ [MISSED TRADE] Math took trade at 2026-03-02T04:15:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-03-03T04:50:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-03-04 NAS100 SAGE: Math R = 4.22, Shadow R = 1.12 (diff: 3.10)
+   ⚠️ [R DIFF] 2026-03-05 NAS100 SAGE: Math R = 0.00, Shadow R = 0.52 (diff: -0.52)
+   ⚠️ [R DIFF] 2026-03-06 NAS100 SAGE: Math R = 2.70, Shadow R = -0.01 (diff: 2.71)
+   ⚠️ [R DIFF] 2026-03-10 NAS100 SAGE: Math R = 0.00, Shadow R = 1.13 (diff: -1.13)
+   ⚠️ [R DIFF] 2026-03-11 NAS100 SAGE: Math R = 1.51, Shadow R = -0.01 (diff: 1.52)
+   ❌ [MISSED TRADE] Math took trade at 2026-03-13T03:00:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-03-16T04:10:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-03-20T05:35:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-03-26T05:05:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-03-27 NAS100 SAGE: Math R = 4.43, Shadow R = -0.01 (diff: 4.44)
+   ❌ [MISSED TRADE] Math took trade at 2026-03-30T02:10:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-04-06T04:55:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-04-07 NAS100 SAGE: Math R = 0.00, Shadow R = 1.43 (diff: -1.43)
+   ⚠️ [R DIFF] 2026-04-09 NAS100 SAGE: Math R = -1.00, Shadow R = -0.01 (diff: -0.99)
+   ⚠️ [R DIFF] 2026-04-15 NAS100 SAGE: Math R = 2.62, Shadow R = -0.20 (diff: 2.81)
+   ⚠️ [R DIFF] 2026-04-22 NAS100 SAGE: Math R = 2.87, Shadow R = 0.43 (diff: 2.44)
+   ⚠️ [R DIFF] 2026-04-24 NAS100 SAGE: Math R = 2.93, Shadow R = 2.98 (diff: -0.05)
+   ⚠️ [R DIFF] 2026-04-27 NAS100 SAGE: Math R = -1.00, Shadow R = -0.51 (diff: -0.49)
+   ❌ [MISSED TRADE] Math took trade at 2026-04-28T02:55:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-04-29 NAS100 SAGE: Math R = 0.35, Shadow R = -0.01 (diff: 0.36)
+   ❌ [MISSED TRADE] Math took trade at 2026-05-01T03:35:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-05-05 NAS100 SAGE: Math R = -1.00, Shadow R = -0.01 (diff: -0.99)
+   ⚠️ [R DIFF] 2026-05-06 NAS100 SAGE: Math R = -1.00, Shadow R = -0.01 (diff: -0.99)
+   ⚠️ [R DIFF] 2026-05-07 NAS100 SAGE: Math R = -1.00, Shadow R = -0.01 (diff: -0.99)
+   ⚠️ [R DIFF] 2026-05-08 NAS100 SAGE: Math R = 1.23, Shadow R = 1.03 (diff: 0.20)
+   ❌ [MISSED TRADE] Math took trade at 2026-05-14T03:15:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-05-15T02:10:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-05-18T03:50:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-05-20 NAS100 SAGE: Math R = 3.28, Shadow R = 1.59 (diff: 1.68)
+   ⚠️ [R DIFF] 2026-05-25 NAS100 SAGE: Math R = 0.41, Shadow R = 0.03 (diff: 0.38)
+   ❌ [MISSED TRADE] Math took trade at 2026-05-28T02:25:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-05-29T03:55:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-06-02 NAS100 SAGE: Math R = 2.40, Shadow R = 1.78 (diff: 0.62)
+   ❌ [MISSED TRADE] Math took trade at 2026-06-10T02:25:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-06-16T04:15:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-06-17T02:30:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-06-19T02:10:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-06-26T02:40:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-06-30 NAS100 SAGE: Math R = 3.24, Shadow R = 3.31 (diff: -0.08)
+   ❌ [MISSED TRADE] Math took trade at 2026-07-02T02:55:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-07-03T02:45:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-07-06 NAS100 SAGE: Math R = -1.00, Shadow R = -0.01 (diff: -0.99)
+   ❌ [MISSED TRADE] Math took trade at 2026-07-08T04:45:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-07-10T02:35:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-07-15T02:35:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-07-16T03:00:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-07-22T02:20:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-07-24 NAS100 SAGE: Math R = -1.00, Shadow R = -0.01 (diff: -0.99)
+   ⚠️ [R DIFF] 2026-07-27 NAS100 SAGE: Math R = 6.00, Shadow R = -0.01 (diff: 6.01)
+   ❌ [MISSED TRADE] Math took trade at 2026-07-28T04:40:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-08-03T02:25:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-08-06T03:35:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-08-07T02:25:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-08-10 NAS100 SAGE: Math R = 1.09, Shadow R = 1.24 (diff: -0.14)
+   ❌ [MISSED TRADE] Math took trade at 2026-08-11T02:45:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-08-13T02:35:00.000Z (NAS100) that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-08-14T03:00:00.000Z (NAS100) that Shadow missed.
+[SAGE_NZDUSD    ]: Math =  61T /  35.66R | Shadow =  52T /  31.33R | Status: ❌ DISCREPANCY
+   ⚠️ [R DIFF] 2026-02-20 NZDUSD SAGE: Math R = -1.00, Shadow R = -0.05 (diff: -0.95)
+   ⚠️ [R DIFF] 2026-02-23 NZDUSD SAGE: Math R = 1.58, Shadow R = 0.45 (diff: 1.14)
+   ⚠️ [R DIFF] 2026-02-24 NZDUSD SAGE: Math R = 0.00, Shadow R = -0.40 (diff: 0.40)
+   ❌ [MISSED TRADE] Math took trade at 2026-02-27T01:40:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-03-03 NZDUSD SAGE: Math R = 4.00, Shadow R = 2.33 (diff: 1.67)
+   ⚠️ [R DIFF] 2026-03-04 NZDUSD SAGE: Math R = -1.00, Shadow R = -0.05 (diff: -0.95)
+   ⚠️ [R DIFF] 2026-03-05 NZDUSD SAGE: Math R = -1.00, Shadow R = -0.06 (diff: -0.94)
+   ⚠️ [R DIFF] 2026-03-10 NZDUSD SAGE: Math R = 0.00, Shadow R = -0.06 (diff: 0.06)
+   ❌ [MISSED TRADE] Math took trade at 2026-03-15T23:30:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-03-16T23:10:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-03-19 NZDUSD SAGE: Math R = 0.00, Shadow R = -0.07 (diff: 0.07)
+   ⚠️ [R DIFF] 2026-03-23 NZDUSD SAGE: Math R = 2.00, Shadow R = 1.72 (diff: 0.28)
+   ⚠️ [R DIFF] 2026-03-25 NZDUSD SAGE: Math R = 1.19, Shadow R = 0.61 (diff: 0.57)
+   ⚠️ [R DIFF] 2026-03-25 NZDUSD SAGE: Math R = 1.45, Shadow R = 0.42 (diff: 1.04)
+   ⚠️ [R DIFF] 2026-03-30 NZDUSD SAGE: Math R = -1.00, Shadow R = -0.05 (diff: -0.95)
+   ⚠️ [R DIFF] 2026-04-01 NZDUSD SAGE: Math R = 0.65, Shadow R = 0.55 (diff: 0.09)
+   ⚠️ [R DIFF] 2026-04-09 NZDUSD SAGE: Math R = 2.66, Shadow R = -0.04 (diff: 2.71)
+   ⚠️ [R DIFF] 2026-04-09 NZDUSD SAGE: Math R = -1.00, Shadow R = -0.05 (diff: -0.95)
+   ⚠️ [R DIFF] 2026-04-14 NZDUSD SAGE: Math R = 2.54, Shadow R = -0.05 (diff: 2.59)
+   ⚠️ [R DIFF] 2026-04-23 NZDUSD SAGE: Math R = 2.03, Shadow R = 1.25 (diff: 0.78)
+   ⚠️ [R DIFF] 2026-04-29 NZDUSD SAGE: Math R = 2.24, Shadow R = 1.94 (diff: 0.29)
+   ⚠️ [R DIFF] 2026-05-14 NZDUSD SAGE: Math R = -0.71, Shadow R = -0.05 (diff: -0.66)
+   ⚠️ [R DIFF] 2026-05-18 NZDUSD SAGE: Math R = 1.97, Shadow R = -0.05 (diff: 2.03)
+   ⚠️ [R DIFF] 2026-05-21 NZDUSD SAGE: Math R = 1.56, Shadow R = 1.14 (diff: 0.41)
+   ⚠️ [R DIFF] 2026-06-22 NZDUSD SAGE: Math R = -1.00, Shadow R = -0.08 (diff: -0.92)
+   ⚠️ [R DIFF] 2026-06-25 NZDUSD SAGE: Math R = 0.00, Shadow R = -0.06 (diff: 0.06)
+   ❌ [MISSED TRADE] Math took trade at 2026-06-29T00:10:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-07-02T23:35:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-07-05 NZDUSD SAGE: Math R = 0.65, Shadow R = -0.05 (diff: 0.70)
+   ❌ [MISSED TRADE] Math took trade at 2026-07-13T00:45:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-07-20 NZDUSD SAGE: Math R = 2.29, Shadow R = 0.23 (diff: 2.06)
+   ⚠️ [R DIFF] 2026-07-23 NZDUSD SAGE: Math R = -1.00, Shadow R = -0.05 (diff: -0.95)
+   ⚠️ [R DIFF] 2026-07-23 NZDUSD SAGE: Math R = 0.59, Shadow R = -0.05 (diff: 0.64)
+   ⚠️ [R DIFF] 2026-07-27 NZDUSD SAGE: Math R = 1.01, Shadow R = -0.05 (diff: 1.05)
+   ⚠️ [R DIFF] 2026-07-28 NZDUSD SAGE: Math R = -0.75, Shadow R = -0.04 (diff: -0.71)
+   ❌ [MISSED TRADE] Math took trade at 2026-07-29T23:35:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-08-02 NZDUSD SAGE: Math R = -1.00, Shadow R = -0.05 (diff: -0.95)
+   ⚠️ [R DIFF] 2026-08-04 NZDUSD SAGE: Math R = 1.35, Shadow R = -0.06 (diff: 1.41)
+   ⚠️ [R DIFF] 2026-08-05 NZDUSD SAGE: Math R = 1.47, Shadow R = 1.56 (diff: -0.09)
+   ⚠️ [R DIFF] 2026-08-07 NZDUSD SAGE: Math R = 1.26, Shadow R = -0.05 (diff: 1.31)
+   ⚠️ [R DIFF] 2026-08-11 NZDUSD SAGE: Math R = 1.02, Shadow R = 0.24 (diff: 0.78)
+   ❌ [MISSED TRADE] Math took trade at 2026-08-11T23:35:00.000Z (NZDUSD) that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-08-13T23:50:00.000Z (NZDUSD) that Shadow missed.
+[SAGE_USDCHF    ]: Math =  41T /  12.80R | Shadow =  33T /  11.27R | Status: ❌ DISCREPANCY
+   ⚠️ [R DIFF] 2026-02-17 USDCHF SAGE: Math R = 0.91, Shadow R = -0.04 (diff: 0.95)
+   ⚠️ [R DIFF] 2026-02-18 USDCHF SAGE: Math R = -0.81, Shadow R = 0.25 (diff: -1.07)
+   ⚠️ [R DIFF] 2026-02-20 USDCHF SAGE: Math R = -0.19, Shadow R = -0.35 (diff: 0.16)
+   ⚠️ [R DIFF] 2026-02-24 USDCHF SAGE: Math R = 0.35, Shadow R = 0.84 (diff: -0.49)
+   ⚠️ [R DIFF] 2026-02-27 USDCHF SAGE: Math R = 2.44, Shadow R = 0.57 (diff: 1.87)
+   ⚠️ [R DIFF] 2026-03-02 USDCHF SAGE: Math R = 1.00, Shadow R = -0.04 (diff: 1.04)
+   ❌ [MISSED TRADE] Math took trade at 2026-03-05T01:55:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-03-11 USDCHF SAGE: Math R = 0.49, Shadow R = -0.04 (diff: 0.53)
+   ❌ [MISSED TRADE] Math took trade at 2026-03-18T00:50:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-03-19 USDCHF SAGE: Math R = 0.71, Shadow R = -0.04 (diff: 0.76)
+   ⚠️ [R DIFF] 2026-03-20 USDCHF SAGE: Math R = 1.00, Shadow R = 1.37 (diff: -0.37)
+   ⚠️ [R DIFF] 2026-03-24 USDCHF SAGE: Math R = -0.30, Shadow R = 0.35 (diff: -0.65)
+   ⚠️ [R DIFF] 2026-04-03 USDCHF SAGE: Math R = 0.39, Shadow R = 0.33 (diff: 0.06)
+   ⚠️ [R DIFF] 2026-04-07 USDCHF SAGE: Math R = -0.26, Shadow R = 0.31 (diff: -0.57)
+   ⚠️ [R DIFF] 2026-04-08 USDCHF SAGE: Math R = 1.72, Shadow R = 1.50 (diff: 0.22)
+   ⚠️ [R DIFF] 2026-04-10 USDCHF SAGE: Math R = -1.00, Shadow R = -0.05 (diff: -0.95)
+   ⚠️ [R DIFF] 2026-04-23 USDCHF SAGE: Math R = 0.46, Shadow R = -0.04 (diff: 0.51)
+   ⚠️ [R DIFF] 2026-05-06 USDCHF SAGE: Math R = -1.00, Shadow R = -0.04 (diff: -0.96)
+   ⚠️ [R DIFF] 2026-05-27 USDCHF SAGE: Math R = 0.23, Shadow R = 0.09 (diff: 0.13)
+   ⚠️ [R DIFF] 2026-06-11 USDCHF SAGE: Math R = -0.26, Shadow R = -0.16 (diff: -0.10)
+   ❌ [MISSED TRADE] Math took trade at 2026-06-12T00:55:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-06-15 USDCHF SAGE: Math R = 0.72, Shadow R = 0.82 (diff: -0.11)
+   ❌ [MISSED TRADE] Math took trade at 2026-06-25T03:25:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-07-03 USDCHF SAGE: Math R = 0.53, Shadow R = -0.04 (diff: 0.57)
+   ❌ [MISSED TRADE] Math took trade at 2026-07-13T01:05:00.000Z that Shadow missed.
+   ❌ [MISSED TRADE] Math took trade at 2026-07-14T00:45:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-07-16 USDCHF SAGE: Math R = 1.17, Shadow R = -0.04 (diff: 1.21)
+   ⚠️ [R DIFF] 2026-07-20 USDCHF SAGE: Math R = 1.80, Shadow R = -0.04 (diff: 1.84)
+   ⚠️ [R DIFF] 2026-07-21 USDCHF SAGE: Math R = 1.06, Shadow R = -0.04 (diff: 1.10)
+   ⚠️ [R DIFF] 2026-07-28 USDCHF SAGE: Math R = 1.02, Shadow R = -0.61 (diff: 1.62)
+   ⚠️ [R DIFF] 2026-07-29 USDCHF SAGE: Math R = 1.46, Shadow R = -0.05 (diff: 1.50)
+   ❌ [MISSED TRADE] Math took trade at 2026-07-31T01:55:00.000Z that Shadow missed.
+   ⚠️ [R DIFF] 2026-08-03 USDCHF SAGE: Math R = 1.22, Shadow R = -0.04 (diff: 1.26)
+   ⚠️ [R DIFF] 2026-08-04 USDCHF SAGE: Math R = -1.00, Shadow R = -0.04 (diff: -0.96)
+   ⚠️ [R DIFF] 2026-08-11 USDCHF SAGE: Math R = 0.34, Shadow R = -0.04 (diff: 0.38)
+   ❌ [MISSED TRADE] Math took trade at 2026-08-14T01:25:00.000Z (USDCHF) that Shadow missed.

@@ -23,7 +23,8 @@ import { logger } from "./logger.js";
 
 export const MAX_CONCURRENT_TRADES = 10;
 
-import { TraderType, ActiveEntry } from "../trading/config/types.js";
+import { TraderType, ActiveEntry, TradeDirection, SessionLeadTrade } from "../trading/config/types.js";
+import { PairConfigManager } from "../trading/config/PairConfig.js";
 
 class GlobalTradeGate {
   // profileId → Map<tradeId, ActiveEntry>
@@ -32,6 +33,8 @@ class GlobalTradeGate {
   private discEvaluating = new Map<number, Set<string>>();
   // profileId → Promise<void> for mutex locking
   private locks = new Map<number, Promise<void>>();
+  // Canonical Session Direction Locks & Lead Trades: Key -> SessionLeadTrade
+  private sessionDirectionLocks = new Map<string, SessionLeadTrade>();
 
   private getProfileMap(profileId: number): Map<string, ActiveEntry> {
     if (!this.activeTrades.has(profileId)) {
@@ -87,13 +90,13 @@ class GlobalTradeGate {
     // 🚫 Rule 6: Currency Exposure Cap (DESIGN-7: Max 3 positions per currency) 🚫
     const MAX_CURRENCY_EXPOSURE = 3;
     const knownCurrencies = ["EUR", "GBP", "USD", "JPY", "AUD", "CAD", "NZD", "CHF"];
-    const targetPairClean = pair.replace(".Daily", "").toUpperCase();
+    const targetPairClean = PairConfigManager.getBaseSymbol(pair).toUpperCase();
     
     for (const curr of knownCurrencies) {
       if (targetPairClean.includes(curr)) {
         let currCount = 0;
         for (const [_, t] of trades.entries()) {
-          const activePairClean = t.pair.replace(".Daily", "").toUpperCase();
+          const activePairClean = PairConfigManager.getBaseSymbol(t.pair).toUpperCase();
           if (activePairClean.includes(curr)) {
             currCount++;
           }
@@ -223,6 +226,95 @@ class GlobalTradeGate {
       maxCorrelated: -1,
       trades: [...trades.entries()].map(([id, t]) => ({ id, ...t })),
     };
+  }
+
+  /**
+   * Enforces that all accounts take the same canonical breakout direction per session.
+   * If a strategy triggers a BUY breakout for GER40 in London session on 2026-08-17,
+   * any subsequent SELL breakout attempt in that same session will be blocked across all accounts.
+   */
+  checkSessionDirection(
+    botId: string,
+    pair: string,
+    session: string,
+    dateStr: string,
+    direction: TradeDirection,
+  ): { approved: boolean; reason?: string } {
+    const cleanPair = PairConfigManager.getBaseSymbol(pair).toUpperCase();
+    const sessionKey = `${botId.toUpperCase()}_${cleanPair}_${session || 'default'}_${dateStr}`;
+    const existing = this.sessionDirectionLocks.get(sessionKey);
+    if (existing) {
+      if (existing.direction !== direction) {
+        return {
+          approved: false,
+          reason: `Session Direction Consensus: ${botId.toUpperCase()} on ${cleanPair} already established ${existing.direction} for session ${session || 'default'} on ${dateStr}. Opposite ${direction} blocked to prevent cross-account whipsaw divergence.`,
+        };
+      }
+    }
+    return { approved: true };
+  }
+
+  /**
+   * Locks the canonical session direction and registers the lead trade for cross-account catch-up.
+   */
+  registerSessionDirection(leadTrade: SessionLeadTrade) {
+    const cleanPair = PairConfigManager.getBaseSymbol(leadTrade.symbol).toUpperCase();
+    const cleanBot = leadTrade.botId.toUpperCase();
+    const sessionKey = `${cleanBot}_${cleanPair}_${leadTrade.session || 'default'}_${leadTrade.dateStr}`;
+    if (!this.sessionDirectionLocks.has(sessionKey)) {
+      this.sessionDirectionLocks.set(sessionKey, leadTrade);
+      // Also store pair-level fallback key
+      this.sessionDirectionLocks.set(`${cleanBot}_${cleanPair}`, leadTrade);
+      logger.info(
+        `[GlobalTradeGate] 🔒 Locked canonical session direction: ${cleanBot} ${cleanPair} ${leadTrade.direction} for ${leadTrade.session || 'default'} on ${leadTrade.dateStr} (Lead Profile: #${leadTrade.leadProfileId})`,
+      );
+    }
+  }
+
+  /**
+   * Retrieves the active lead trade for cross-account reconciliation and catch-up.
+   */
+  getActiveLeadTrade(
+    botId: string,
+    pair: string,
+    session?: string,
+    dateStr?: string,
+  ): SessionLeadTrade | undefined {
+    const cleanPair = PairConfigManager.getBaseSymbol(pair).toUpperCase();
+    const cleanBot = botId.toUpperCase();
+    
+    // 1. Exact session key match
+    if (session && dateStr) {
+      const sessionKey = `${cleanBot}_${cleanPair}_${session}_${dateStr}`;
+      const direct = this.sessionDirectionLocks.get(sessionKey);
+      if (direct) return direct;
+    }
+
+    // 2. Pair-level active trade fallback (covers cross-day holds & restarts)
+    const pairFallback = this.sessionDirectionLocks.get(`${cleanBot}_${cleanPair}`);
+    if (pairFallback) return pairFallback;
+
+    // 3. Scan all active locks starting with bot and pair
+    for (const [key, lock] of this.sessionDirectionLocks.entries()) {
+      if (key.startsWith(`${cleanBot}_${cleanPair}`)) {
+        return lock;
+      }
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Periodic cleanup of session direction locks older than 24 hours.
+   */
+  clearOldSessionLocks(olderThanHours = 24) {
+    const now = Date.now();
+    const cutoffMs = olderThanHours * 60 * 60 * 1000;
+    for (const [key, lock] of this.sessionDirectionLocks.entries()) {
+      if (now - lock.timestamp > cutoffMs) {
+        this.sessionDirectionLocks.delete(key);
+      }
+    }
   }
 }
 

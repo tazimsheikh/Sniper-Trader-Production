@@ -173,15 +173,18 @@ export function getSymbolSpec(symbol: string) {
 export function safeDecryptAccountId(id: string | undefined) {
   return id || "SIM_ACCOUNT";
 }
-// Handles two calling conventions:
 export function getBrokerSymbol(
   symbol: string,
   customMap?: Record<string, string> | null,
 ): string {
+  const clean = symbol.replace(/_[0-9]+$/, "").replace("=X", "").replace("=F", "");
+  if (customMap && customMap[clean]) {
+    return customMap[clean];
+  }
   if (customMap && customMap[symbol]) {
     return customMap[symbol];
   }
-  return symbol.replace("=X", "").replace("=F", "");
+  return clean;
 }
 export function clearSharedConnection(_token: string, _accountId: string) {}
 export function forceRebootMetaApi(_token: string, _accountId: string) {}

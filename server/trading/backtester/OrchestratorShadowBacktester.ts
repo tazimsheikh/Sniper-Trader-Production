@@ -55,8 +55,17 @@ async function registerStubs() {
   (global as any).__SIM_ADD_BOT_LOG__ = () => {};
   (global as any).__SIM_TIME_PROVIDER__ = (date?: Date | number) => {
     const d = date ? (typeof date === "number" ? new Date(date) : date) : ((global as any).__SIM_CURRENT_TIME__ || new Date());
-    const estStr = d.toLocaleString("en-US", { timeZone: "America/New_York" });
-    return new Date(estStr + " UTC");
+    const y = d.getUTCFullYear();
+    const marchFirst = new Date(Date.UTC(y, 2, 1));
+    const daysToFirstSunday = (7 - marchFirst.getUTCDay()) % 7;
+    const secondSundayMarch = new Date(Date.UTC(y, 2, 1 + daysToFirstSunday + 7, 7, 0, 0));
+    const novFirst = new Date(Date.UTC(y, 10, 1));
+    const daysToFirstSunNov = (7 - novFirst.getUTCDay()) % 7;
+    const firstSundayNov = new Date(Date.UTC(y, 10, 1 + daysToFirstSunNov, 6, 0, 0));
+    const t = d.getTime();
+    const isDst = t >= secondSundayMarch.getTime() && t < firstSundayNov.getTime();
+    const offsetHours = isDst ? -4 : -5;
+    return new Date(t + offsetHours * 60 * 60 * 1000);
   };
 
   return { dbStub, socketStub, metaApiStub, tradeGateStub, newsStoreStub, queueStub };
@@ -142,10 +151,9 @@ export async function runShadowBacktest(pair: string, startDate?: string, endDat
   else orch.activeBots.delete('seer');
 
   // Ensure pair state has bots enabled
-  const normalizedPair = pair.replace('.Daily', '');
+  const basePair = PairConfigManager.getBaseSymbol(pair);
   const sessionPairs = Array.from(orch.states.keys()).filter(k => {
-    const normK = (k as string).replace('.Daily', '');
-    return normK === normalizedPair;
+    return PairConfigManager.getBaseSymbol(k as string) === basePair;
   });
   
   if (sessionPairs.length === 0) {
@@ -244,10 +252,8 @@ export async function runShadowBacktest(pair: string, startDate?: string, endDat
     if ((orch as any).pendingPromises && (orch as any).pendingPromises.length > 0) {
       await Promise.all((orch as any).pendingPromises);
       (orch as any).pendingPromises = [];
+      await new Promise<void>(resolve => setImmediate(resolve));
     }
-
-    // Drain the microtask queue
-    await new Promise<void>(resolve => setImmediate(resolve));
 
     // ── Trailing SL sync ──────────────────────────────────────────────────────
     // Belt-and-suspenders: ensure pos.sl reflects the latest trade.slPrice from
@@ -316,16 +322,9 @@ export async function runShadowBacktest(pair: string, startDate?: string, endDat
       const state = orch.states.get(sessionPair);
       if (!state) continue;
 
-      // Hack to reset daily state tracking exactly like LiveOrchestrator warmups
-      if (isWarmingUp && state.sageStates) {
-        for (const sig in state.sageStates) {
-          const ss = state.sageStates[sig];
-          ss.limitOrderId = null;
-          ss.sessionActive = false;
-        }
-      }
-      
+
       // Let LiveOrchestrator handle the daily lockout resets.
+      // Note: warmup suppression removed — targetStartMs filter handles warmup exclusion correctly.
       
       // Simulate Order Execution latency (Tick by Tick limit check)
       if (state.orbState?.limitOrderId && !state.activeTrade) {

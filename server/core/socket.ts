@@ -642,10 +642,12 @@ export async function resumePersistedBots(): Promise<void> {
     const { TickFeed } = await import("../trading/index.js");
     const { decrypt, isEncrypted } = await import("./crypto.js");
 
+    const { registerProfileName } = await import("../utils/logger.js");
+
     // Fetch all profiles that have persisted active bots
     const profiles = await db2
       .prepare(
-        `SELECT tp.id, tp.active_bots, u.metaapi_token, tp.metaapi_account_id
+        `SELECT tp.id, tp.profile_name, tp.active_bots, u.metaapi_token, tp.metaapi_account_id
          FROM trading_profiles tp
          JOIN users u ON u.id = tp.user_id
          WHERE tp.active_bots IS NOT NULL AND tp.active_bots != '[]'`
@@ -659,6 +661,9 @@ export async function resumePersistedBots(): Promise<void> {
 
     await Promise.allSettled(
       (profiles as any[]).map(async (profile) => {
+        if (profile.profile_name) {
+          registerProfileName(Number(profile.id), profile.profile_name);
+        }
         let activeBots: string[] = [];
         try {
           activeBots = JSON.parse(profile.active_bots || "[]");
@@ -667,7 +672,7 @@ export async function resumePersistedBots(): Promise<void> {
         }
         if (activeBots.length === 0) return;
 
-        console.log(`[AutoResume] 🔄 Resuming bots [${activeBots.join(", ")}] for profile ${profile.id}...`);
+        console.log(`[AutoResume] 🔄 Resuming bots [${activeBots.join(", ")}] for profile ${profile.profile_name || profile.id}...`);
 
         try {
           const tokenToUse = isEncrypted(profile.metaapi_token)

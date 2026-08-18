@@ -11,6 +11,7 @@ import { MAGE_PAIR_CONFIG, PairConfigManager } from "../config/PairConfig.js";
 import { TradeRecord, TradeOutcome } from "../config/types.js";
 import { OPTIMIZER_CONFIG } from "../config/OptimizerPairConfig.js";
 import { NFP_DATES, CPI_DATES, FOMC_DATES } from "../market/historicalNews.js";
+import { getFixedEstDate } from "./math_core/MathCoreUtils.js";
 
 function getDigitsForPair(pair: string): number {
   const optCfg = OPTIMIZER_CONFIG[pair.replace(".Daily", "")];
@@ -356,7 +357,7 @@ export async function runMageMathBacktestExp(
         if (!(buyTriggered && sellTriggered)) {
           if (buyTriggered || sellTriggered) {
             // 🚫 Prop Firm Compliance: Blackout Windows 🚫
-            const dateStr = new Date(c.timestamp).toISOString().split("T")[0];
+            const dateStr = getFixedEstDate(new Date(c.timestamp)).toISOString().split("T")[0];
             const isNFP = NFP_DATES.has(dateStr);
             const isCPI = CPI_DATES.has(dateStr);
             const isFOMC = FOMC_DATES.has(dateStr);
@@ -567,7 +568,7 @@ export async function runMageMathBacktestExp(
         }
 
         if (tradeActive) {
-          const dateStr = new Date(fc.timestamp).toISOString().split("T")[0];
+          const dateStr = getFixedEstDate(new Date(fc.timestamp)).toISOString().split("T")[0];
           const isNFP = NFP_DATES.has(dateStr);
           const isCPI = CPI_DATES.has(dateStr);
           const isFOMC = FOMC_DATES.has(dateStr);
@@ -693,7 +694,7 @@ export async function runMageMathBacktestExp(
 
     records.push({
       timestamp: c.timestamp,
-      date: new Date(c.timestamp).toISOString().split("T")[0],
+      date: getFixedEstDate(new Date(c.timestamp)).toISOString().split("T")[0],
       pair: pair,
       setupType: "MAGE_ORB",
       sessionName: config.session || "ny",
@@ -720,7 +721,7 @@ export async function runMageMathBacktestExp(
 
     if (outcome !== "SKIPPED") {
       console.log(
-        `[MATH TOOK TRADE] date: ${new Date(c.timestamp).toISOString().split("T")[0]} time: ${new Date(c.timestamp).toISOString()} cBodyPips: ${cBodyPips} outcome: ${outcome}`,
+        `[MATH TOOK TRADE] date: ${getFixedEstDate(new Date(c.timestamp)).toISOString().split("T")[0]} time: ${new Date(c.timestamp).toISOString()} cBodyPips: ${cBodyPips} outcome: ${outcome}`,
       );
       }
     } // End inner loop

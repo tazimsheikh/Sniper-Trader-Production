@@ -1,170 +1,90 @@
 [
   {
-    "symbol": "AUDUSD",
-    "botType": "Sage",
-    "setup": "london_20%_MinSL10_MaxSL30_Sweep2_MaxSwp3_ReqClsfalse_ExitTRAILING_Trig0.5_Step1_FC8_StartH3_StartM15_OrbMins15_ActMins15",
-    "totalTotalR": 5.640000000000641,
-    "monteCarloDrawdown99": 8.759999999999536,
-    "riskPct": 0.05922283482136437
-  },
-  {
-    "symbol": "GER40",
-    "botType": "Mage",
-    "setup": "london_0%_MinSL15_MaxSL350_Body12_Trig1.5_Step2_FC16_StartH3_StartM15_OrbMins10_ActMins180_ExitTRAILING",
-    "totalTotalR": 18.823481392103403,
-    "monteCarloDrawdown99": 7.0003635041803065,
-    "riskPct": 0.04608443100079986
-  },
-  {
     "symbol": "NZDUSD",
     "botType": "Sage",
-    "setup": "asia_0%_MinSL15_MaxSL50_Sweep3_MaxSwp2_ReqClsfalse_ExitTRAILING_Trig1_Step2_FC16_StartH18_StartM0_OrbMins30_ActMins30",
-    "totalTotalR": 13.574999753484036,
-    "monteCarloDrawdown99": 15.813481018932011,
-    "riskPct": 0.044760727910346756
+    "setup": "asia_0%_MinSL15_MaxSL80_Sweep3_MaxSwp2_ReqClsfalse_ExitTRAILING_Trig1_Step2_FC16_StartH18_StartM0_OrbMins30_ActMins30",
+    "totalTotalR": 6.505180476375621,
+    "monteCarloDrawdown99": 0,
+    "riskPct": 0.08034890468592058
   },
   {
-    "symbol": "USDCAD",
+    "symbol": "USDCHF",
     "botType": "Sage",
-    "setup": "NY_Forex_20%_MinSL15_MaxSL35_Sweep3_MaxSwp3_ReqClsfalse_ExitTRAILING_Trig1.5_Step1_FC16_StartH8_StartM30_OrbMins30_ActMins15",
-    "totalTotalR": 11.861333333335041,
-    "monteCarloDrawdown99": 8.058666666666571,
-    "riskPct": 0.0899945356504839
-  },
-  {
-    "symbol": "CHFJPY",
-    "botType": "Sage",
-    "setup": "london_20%_MinSL30_MaxSL80_Sweep3_MaxSwp1.5_ReqClsfalse_ExitTRAILING_Trig0.5_Step2_FC8_StartH2_StartM0_OrbMins30_ActMins30",
-    "totalTotalR": 14.981620835813004,
-    "monteCarloDrawdown99": 12.429474280765906,
-    "riskPct": 0.05834811827347675
-  },
-  {
-    "symbol": "GBPJPY",
-    "botType": "Mage",
-    "setup": "london_0%_MinSL20_MaxSL50_Body4_Trig0.5_Step2_FC12_StartH4_StartM0_OrbMins10_ActMins180_ExitTRAILING",
-    "totalTotalR": 18.847818109099638,
-    "monteCarloDrawdown99": 10.394048852701548,
-    "riskPct": 0.05766101858220285
-  },
-  {
-    "symbol": "USDJPY",
-    "botType": "Mage",
-    "setup": "london_60%_MinSL25_MaxSL70_Body4_Trig2_Step0.5_FC24_StartH3_StartM0_OrbMins10_ActMins120_ExitTRAILING",
-    "totalTotalR": 13.499999999999886,
-    "monteCarloDrawdown99": 9,
-    "riskPct": 0.022038957568066037
-  },
-  {
-    "symbol": "GBPAUD",
-    "botType": "Mage",
-    "setup": "NY_Forex_30%_MinSL20_MaxSL40_Body4_Trig1.5_Step1.5_FC16_StartH8_StartM30_OrbMins15_ActMins180_ExitTRAILING",
-    "totalTotalR": 9.055000000000028,
-    "monteCarloDrawdown99": 4,
-    "riskPct": 0.04213242954868372
-  },
-  {
-    "symbol": "NAS100",
-    "botType": "Mage",
-    "setup": "london_0%_MinSL30_MaxSL250_Body10_Trig0.5_Step2_FC24_StartH3_StartM30_OrbMins10_ActMins120_ExitTRAILING",
-    "totalTotalR": 14.41761363636365,
-    "monteCarloDrawdown99": 10.000000000000133,
-    "riskPct": 0.04884575530539189
-  },
-  {
-    "symbol": "US30",
-    "botType": "Mage",
-    "setup": "london_0%_MinSL30_MaxSL100_Body10_Trig2_Step1.5_FC12_StartH4_StartM0_OrbMins10_ActMins60_ExitTRAILING",
-    "totalTotalR": 13.48026075531371,
-    "monteCarloDrawdown99": 14,
-    "riskPct": 0.03284693802329223
-  },
-  {
-    "symbol": "USDJPY",
-    "botType": "Mage",
-    "setup": "NY_Forex_60%_MinSL15_MaxSL40_Body4_Trig3_Step0.5_FC16_StartH10_StartM0_OrbMins10_ActMins120_ExitTRAILING",
-    "totalTotalR": 8.733333333332258,
-    "monteCarloDrawdown99": 8.113333333333301,
-    "riskPct": 0.05475266825918048
-  },
-  {
-    "symbol": "NAS100",
-    "botType": "Sage",
-    "setup": "NY_Indices_20%_MinSL70_MaxSL150_Sweep20_MaxSwp3_ReqClstrue_ExitMIDPOINT_Trig0.25_Step1_FC12_StartH9_StartM0_OrbMins15_ActMins10",
-    "totalTotalR": 6.566452380952384,
-    "monteCarloDrawdown99": 4.75567857142865,
-    "riskPct": 0.09316863440817524
-  },
-  {
-    "symbol": "BTCUSD",
-    "botType": "Sage",
-    "setup": "NY_Indices_0%_MinSL100_MaxSL500_Sweep10_MaxSwp2_ReqClsfalse_ExitMIDPOINT_Trig0.5_Step0.5_FC16_StartH9_StartM30_OrbMins120_ActMins10",
-    "totalTotalR": 7.931886620298874,
-    "monteCarloDrawdown99": 12.830059804128512,
-    "riskPct": 0.05633100078035906
-  },
-  {
-    "symbol": "EURUSD",
-    "botType": "Sage",
-    "setup": "london_0%_MinSL15_MaxSL50_Sweep2_MaxSwp3_ReqClsfalse_ExitTRAILING_Trig1_Step1_FC12_StartH3_StartM15_OrbMins60_ActMins10",
-    "totalTotalR": 6.632280873110012,
-    "monteCarloDrawdown99": 23.254971810621385,
-    "riskPct": 0.016471193216468134
-  },
-  {
-    "symbol": "GBPJPY",
-    "botType": "Sage",
-    "setup": "asia_0%_MinSL20_MaxSL80_Sweep3_MaxSwp1.5_ReqClsfalse_ExitTRAILING_Trig2_Step1_FC8_StartH18_StartM0_OrbMins120_ActMins30",
-    "totalTotalR": 11.376867358958897,
-    "monteCarloDrawdown99": 18.98350964193092,
-    "riskPct": 0.03246373441222683
+    "setup": "asia_0%_MinSL20_MaxSL35_Sweep3_MaxSwp1.5_ReqClsfalse_ExitTRAILING_Trig1_Step1_FC12_StartH20_StartM0_OrbMins15_ActMins15",
+    "totalTotalR": 7.627691279540883,
+    "monteCarloDrawdown99": 0,
+    "riskPct": 0.05909563417750383
   },
   {
     "symbol": "USDJPY",
     "botType": "Mage",
     "setup": "asia_30%_MinSL15_MaxSL30_Body4_Trig3_Step1_FC8_StartH20_StartM45_OrbMins10_ActMins180_ExitTRAILING",
     "totalTotalR": 9.17333333333264,
-    "monteCarloDrawdown99": 10.646666666666889,
-    "riskPct": 0.01897532680621455
+    "monteCarloDrawdown99": 0,
+    "riskPct": 0.02715632284496215
   },
   {
-    "symbol": "GBPAUD",
+    "symbol": "CHFJPY",
     "botType": "Mage",
-    "setup": "asia_0%_MinSL30_MaxSL40_Body5_Trig2_Step0.5_FC24_StartH0_StartM0_OrbMins10_ActMins120_ExitTRAILING",
-    "totalTotalR": 6.517478627011457,
-    "monteCarloDrawdown99": 9.479435483870962,
-    "riskPct": 0.023137743167806295
+    "setup": "london_60%_MinSL20_MaxSL80_Body4_Trig3_Step1_FC24_StartH3_StartM0_OrbMins10_ActMins120_ExitTRAILING",
+    "totalTotalR": 17.87500000000123,
+    "monteCarloDrawdown99": 0,
+    "riskPct": 0.06281034343598449
   },
   {
-    "symbol": "NAS100",
+    "symbol": "GBPJPY",
     "botType": "Mage",
-    "setup": "NY_Forex_0%_MinSL20_MaxSL180_Body12_Trig2_Step2_FC24_StartH8_StartM0_OrbMins45_ActMins180_ExitTRAILING",
-    "totalTotalR": 21.969871353534753,
-    "monteCarloDrawdown99": 24.997416020672297,
-    "riskPct": 0.0059667443306268
+    "setup": "london_0%_MinSL15_MaxSL40_Body4_Trig1_Step1_FC24_StartH4_StartM0_OrbMins10_ActMins180_ExitTRAILING",
+    "totalTotalR": 11.29485153072175,
+    "monteCarloDrawdown99": 0,
+    "riskPct": 0.03406310658369951
   },
   {
     "symbol": "US30",
     "botType": "Mage",
-    "setup": "NY_Forex_0%_MinSL20_MaxSL100_Body12_Trig2_Step2_FC16_StartH8_StartM0_OrbMins15_ActMins120_ExitTRAILING",
-    "totalTotalR": 5.066437177280798,
-    "monteCarloDrawdown99": 17,
-    "riskPct": 0.008292212834831978
+    "setup": "london_0%_MinSL50_MaxSL140_Body10_Trig3_Step1.5_FC16_StartH3_StartM30_OrbMins15_ActMins180_ExitTRAILING",
+    "totalTotalR": 14.454673926900139,
+    "monteCarloDrawdown99": 0,
+    "riskPct": 0.027978935170186004
+  },
+  {
+    "symbol": "GER40",
+    "botType": "Mage",
+    "setup": "london_0%_MinSL50_MaxSL250_Body12_Trig3_Step1.5_FC24_StartH5_StartM0_OrbMins15_ActMins60_ExitTRAILING",
+    "totalTotalR": 14.084334421590277,
+    "monteCarloDrawdown99": 0,
+    "riskPct": 0.026382552394847786
   },
   {
     "symbol": "NAS100",
     "botType": "Mage",
-    "setup": "asia_60%_MinSL30_MaxSL60_Body10_Trig3_Step2_FC16_StartH0_StartM0_OrbMins60_ActMins180_ExitTRAILING",
-    "totalTotalR": 14.983776493255984,
-    "monteCarloDrawdown99": 26.51333333333338,
-    "riskPct": 0.018813814080567315
+    "setup": "london_0%_MinSL15_MaxSL180_Body10_Trig3_Step2_FC16_StartH3_StartM30_OrbMins10_ActMins180_ExitTRAILING",
+    "totalTotalR": 11.58073672024039,
+    "monteCarloDrawdown99": 0,
+    "riskPct": 0.03618935482489345
   },
   {
     "symbol": "NAS100",
     "botType": "Sage",
-    "setup": "asia_0%_MinSL120_MaxSL200_Sweep10_MaxSwp3_ReqClsfalse_ExitTRAILING_Trig1_Step2_FC16_StartH21_StartM0_OrbMins60_ActMins10",
-    "totalTotalR": 9.038986247504061,
-    "monteCarloDrawdown99": 19.052754310116075,
-    "riskPct": 0.024548419290316054
+    "setup": "asia_0%_MinSL120_MaxSL150_Sweep10_MaxSwp3_ReqClsfalse_ExitTRAILING_Trig1_Step2_FC16_StartH21_StartM0_OrbMins60_ActMins10",
+    "totalTotalR": 6.067741715611721,
+    "monteCarloDrawdown99": 0,
+    "riskPct": 0.03749400467306154
+  },
+  {
+    "symbol": "GBPNZD",
+    "botType": "Mage",
+    "setup": "NY_Forex_30%_MinSL25_MaxSL30_Body4_Trig2_Step2_FC16_StartH8_StartM30_OrbMins15_ActMins180_ExitTRAILING",
+    "totalTotalR": 9.059999999999805,
+    "monteCarloDrawdown99": 0,
+    "riskPct": 0.05934430547054656
+  },
+  {
+    "symbol": "EURJPY",
+    "botType": "Mage",
+    "setup": "NY_Forex_60%_MinSL15_MaxSL30_Body4_Trig3_Step1_FC24_StartH9_StartM45_OrbMins10_ActMins60_ExitTRAILING",
+    "totalTotalR": 7.666666666667453,
+    "monteCarloDrawdown99": 0,
+    "riskPct": 0.026399160665959494
   }
 ]

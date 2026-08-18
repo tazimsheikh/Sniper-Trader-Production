@@ -94,7 +94,7 @@ export class MockBrokerAccount {
 
   /** Called before each M1 tick is fed to the orchestrator */
   setCurrentCandle(o: number, h: number, l: number, c: number, ts: number, estHour: number, estMin: number) {
-    const isSessionReset = this.lastEstHour !== -1 && ((this.lastEstHour < 17 && estHour >= 17) || (this.lastEstHour > estHour && estHour >= 17));
+    const isSessionReset = this.lastEstHour !== -1 && ((this.lastEstHour < 15 && estHour >= 15) || (this.lastEstHour > estHour && estHour >= 15));
     this.currentCandle = { 
       open: o, 
       high: h, 
@@ -137,6 +137,22 @@ export class MockBrokerAccount {
     return null;
   }
 
+  private resolveMageKey(orchestratorState: any, clientId?: string): string | null {
+    if (!clientId || !orchestratorState?.orbStates) return null;
+    if (orchestratorState.orbStates[clientId]) return clientId;
+    
+    const parts = clientId.split('_');
+    if (parts.length >= 2) {
+      const hash = parts[1];
+      for (const key of Object.keys(orchestratorState.orbStates)) {
+        if (getShortHash(key) === hash || key.includes(hash)) {
+          return key;
+        }
+      }
+    }
+    return null;
+  }
+
   getCurrentSimulatedTime(): Date {
     return this.simulatedTime;
   }
@@ -144,10 +160,40 @@ export class MockBrokerAccount {
   private getOrchState(opts?: any): any {
     if (opts?.orchState) return opts.orchState;
     const orch = (global as any).__SIM_ORCH__;
-    if (orch && opts?.clientId) {
-      const clientId = opts.clientId as string;
+    if (orch) {
+      if (opts?.clientId) {
+        const clientId = opts.clientId as string;
+        for (const [sp, state] of orch.states.entries()) {
+          if (clientId.includes(sp) || clientId.startsWith(sp)) {
+            return state;
+          }
+        }
+        // Short hash resolution
+        const parts = clientId.split("_");
+        if (parts.length >= 2) {
+          const hash = parts[1];
+          for (const [sp, state] of orch.states.entries()) {
+            if (state.orbStates) {
+              for (const sig of Object.keys(state.orbStates)) {
+                if (getShortHash(sig) === hash || sig.includes(hash)) {
+                  return state;
+                }
+              }
+            }
+            if (state.sageStates) {
+              for (const sig of Object.keys(state.sageStates)) {
+                if (getShortHash(sig) === hash || sig.includes(hash)) {
+                  return state;
+                }
+              }
+            }
+          }
+        }
+      }
+      // Match by symbol of this MockBrokerAccount instance
+      const cleanSym = this.symbol.replace(".Daily", "").toUpperCase();
       for (const [sp, state] of orch.states.entries()) {
-        if (clientId.includes(sp) || clientId.startsWith(sp)) {
+        if (sp.toUpperCase().startsWith(cleanSym)) {
           return state;
         }
       }
@@ -167,8 +213,9 @@ export class MockBrokerAccount {
       // PARITY FIX: SageMathCore evaluates fills from M1 bars within the sweep M5 candle.
       // In Tier 2, the limit is placed at the next M1 tick (after the M5 closes), so
       // checkPendingOrderFills above uses the wrong (post-sweep) candle. Also check
-      // against the last completed M5 candle so same-sweep fills are not missed.
-      if (this.pendingOrders.has(id)) {
+      // against the last completed M5 candle so same-sweep fills are not missed for Sage.
+      const isSage = this.deduceBotId(opts) === 'sage';
+      if (isSage && this.pendingOrders.has(id)) {
         this.checkPendingOrderFillsWithSweepCandle(orchState, id);
       }
     }
@@ -177,16 +224,13 @@ export class MockBrokerAccount {
 
   async createLimitSellOrder(symbol: string, lots: number, price: number, sl: number, tp: number, opts?: any) {
     const id = `SIM_${this.orderId++}`;
-    console.log(`[DEBUG MOCK CREATE] id=${id} simulatedTime=${this.simulatedTime.toISOString()} candleTs=${this.currentCandle?.timestamp}`);
     this.pendingOrders.set(id, { id, symbol, direction: 'SELL', orderType: 'LIMIT', limitPrice: price, sl, tp, volume: lots, placedAt: this.currentCandle?.timestamp || 0, clientId: opts?.clientId, botId: this.deduceBotId(opts), magic: opts?.magic, orHigh: opts?.orHigh, orLow: opts?.orLow });
     const orchState = this.getOrchState(opts);
     if (orchState) {
       this.checkPendingOrderFills(orchState, id);
       // PARITY FIX: SageMathCore evaluates fills from M1 bars within the sweep M5 candle.
-      // In Tier 2, the limit is placed at the next M1 tick (after the M5 closes), so
-      // checkPendingOrderFills above uses the wrong (post-sweep) candle. Also check
-      // against the last completed M5 candle so same-sweep fills are not missed.
-      if (this.pendingOrders.has(id)) {
+      const isSage = this.deduceBotId(opts) === 'sage';
+      if (isSage && this.pendingOrders.has(id)) {
         this.checkPendingOrderFillsWithSweepCandle(orchState, id);
       }
     }
@@ -264,7 +308,7 @@ export class MockBrokerAccount {
     const orchState = (global as any).__SIM_ORCH_STATE__ || (opts?.orchState);
     if (orchState) {
       if (!orchState.activeTrades) orchState.activeTrades = [];
-      if (!orchState.activeTrades.some((t: any) => t.metaOrderId === id)) {
+      if (!orchState.activeTrades.some((t: any) => String(t.metaOrderId) === String(id))) {
         orchState.activeTrades.push({
         id,
         dbId: id,
@@ -326,7 +370,7 @@ export class MockBrokerAccount {
     const orchState = (global as any).__SIM_ORCH_STATE__ || (opts?.orchState);
     if (orchState) {
       if (!orchState.activeTrades) orchState.activeTrades = [];
-      if (!orchState.activeTrades.some((t: any) => t.metaOrderId === id)) {
+      if (!orchState.activeTrades.some((t: any) => String(t.metaOrderId) === String(id))) {
         orchState.activeTrades.push({
           id,
           dbId: id,
@@ -435,8 +479,8 @@ export class MockBrokerAccount {
     if (!this.currentCandle) return;
     const c = this.currentCandle;
 
-    // Parity Rule: Cancel pending limit orders at 17:00 EST rollover (positions hold overnight)
-    if (c.isSessionReset || (c.estHour === 17 && c.estMin === 0)) {
+    // Parity Rule: Cancel pending limit orders at 15:00 EST rollover / 2h pre-close (positions hold overnight)
+    if (c.isSessionReset || (c.estHour >= 15 && c.estHour <= 17)) {
       if (singleOrderId) return; // Do not process session reset on a single order instantiation check
       if (orchestratorState && orchestratorState.sageStates) {
         for (const sig of Object.keys(orchestratorState.sageStates)) {
@@ -461,8 +505,6 @@ export class MockBrokerAccount {
       const isBuy = order.direction === 'BUY';
       const originalLimitPrice = order.limitPrice;
 
-
-
       let buyFilled = false;
       let sellFilled = false;
       
@@ -484,9 +526,10 @@ export class MockBrokerAccount {
         }
       }
 
-
-
       if (buyFilled || sellFilled) {
+        if (order.symbol.includes("CHFJPY")) {
+          console.log(`[DEBUG FILLED!] orderId=${orderId} buyFilled=${buyFilled} sellFilled=${sellFilled} at ${new Date(c.timestamp).toISOString()}`);
+        }
         const direction = buyFilled ? 'BUY' : 'SELL';
         const gappedPastSl = buyFilled
           ? order.limitPrice <= order.sl
@@ -544,38 +587,54 @@ export class MockBrokerAccount {
         this.positions.set(orderId, pos);
         this.pendingOrders.delete(orderId);
 
-        if (orchestratorState) {
-          orchestratorState.limitOrderId = null;
-          orchestratorState.limitPlacedAt = null;
+        const targetState = this.getOrchState(order) || orchestratorState;
+        if (targetState) {
+          targetState.limitOrderId = null;
+          targetState.limitPlacedAt = null;
           const intendedLimit = originalLimitPrice || order.limitPrice;
           const riskPips = Math.abs(intendedLimit - order.sl) / this.pipSize;
           
-          const sageSig = this.resolveSageKey(orchestratorState, order.clientId);
+          const sageSig = this.resolveSageKey(targetState, order.clientId);
             
           if (sageSig) {
             // let SageEngine handle its own activeTrades injection in checkSageLimitFill
           } else {
-            // let MageEngine handle its own activeTrades injection in checkMageLimitFill
-            const mageSig = order.clientId;
+            const mageSig = this.resolveMageKey(targetState, order.clientId) || order.clientId;
             const baseSig = mageSig ? mageSig.split('_').slice(0, -1).join('_') : '';
-            const targetOs = orchestratorState.orbStates?.[mageSig] || orchestratorState.orbStates?.[baseSig] || orchestratorState.orbState;
+            const targetOs = targetState.orbStates?.[mageSig] || targetState.orbStates?.[baseSig] || targetState.orbState;
             if (targetOs) {
               targetOs.fired = true;
-              // Let checkMageLimitFill handle limitOrderId clearing so it registers the trade!
-              // targetOs.limitOrderId = null; 
+              targetOs.limitOrderId = null;
             }
-            const targetSs = orchestratorState.sageStates?.[mageSig] || orchestratorState.sageStates?.[baseSig];
+            const targetSs = targetState.sageStates?.[mageSig] || targetState.sageStates?.[baseSig];
             if (targetSs) {
               targetSs.fired = true;
-              // targetSs.limitOrderId = null;
               targetSs.fired_fill_check = true;
+            }
+            if (!targetState.activeTrades) targetState.activeTrades = [];
+            if (!targetState.activeTrades.some((t: any) => String(t.metaOrderId) === String(orderId))) {
+              targetState.activeTrades.push({
+                id: orderId,
+                dbId: 1,
+                metaOrderId: orderId,
+                clientId: mageSig,
+                botId: 'MAGE',
+                symbol: this.symbol,
+                direction: isBuy ? 'BUY' : 'SELL',
+                entryPrice: pos.openPrice,
+                slPrice: pos.sl,
+                originalSl: pos.originalSl || pos.sl,
+                tpPrice: pos.tp,
+                riskPips: Math.abs(pos.openPrice - pos.sl) / (this.pipSize || 0.0001),
+                highestPrice: pos.openPrice,
+                lowestPrice: pos.openPrice,
+                openTime: this.currentCandle?.timestamp || Date.now(),
+                timestamp: this.currentCandle?.timestamp || Date.now(),
+              });
             }
           }
           
           // PARITY FIX: Same-candle TP/SL exit.
-          // For Sage fills, activeTrades is not yet populated (SageEngine defers to checkSageLimitFill).
-          // Use pos/order directly so we can still detect fill+exit on the same candle,
-          // matching SageMathCore which evaluates TP/SL within the same M1 bar as the fill.
           const fillEntryPrice = pos.openPrice;
           const fillSl = pos.sl;
           const fillTp = pos.tp;
@@ -594,7 +653,7 @@ export class MockBrokerAccount {
               orHigh: pos.orHigh, orLow: pos.orLow, limitPlacedAt: order.placedAt, trailLog: pos.trailLog
             });
             this.positions.delete(orderId);
-            orchestratorState.activeTrades = (orchestratorState.activeTrades || []).filter((t: any) => t.metaOrderId !== orderId);
+            targetState.activeTrades = (targetState.activeTrades || []).filter((t: any) => String(t.metaOrderId) !== String(orderId));
             sameCandleExit = true;
           } else if (!isBuy && c.high + this.spreadPts >= fillSl) {
             const exitPrice = Math.max(c.open + this.spreadPts, fillSl);
@@ -607,7 +666,7 @@ export class MockBrokerAccount {
               orHigh: pos.orHigh, orLow: pos.orLow, limitPlacedAt: order.placedAt, trailLog: pos.trailLog
             });
             this.positions.delete(orderId);
-            orchestratorState.activeTrades = (orchestratorState.activeTrades || []).filter((t: any) => t.metaOrderId !== orderId);
+            targetState.activeTrades = (targetState.activeTrades || []).filter((t: any) => String(t.metaOrderId) !== String(orderId));
             sameCandleExit = true;
           } else if (isBuy && c.high >= fillTp) {
             const rMultiple = fillRiskPips > 0 ? (fillTp - fillEntryPrice) / this.pipSize / fillRiskPips : 0;
@@ -619,7 +678,7 @@ export class MockBrokerAccount {
               orHigh: pos.orHigh, orLow: pos.orLow, limitPlacedAt: order.placedAt, trailLog: pos.trailLog
             });
             this.positions.delete(orderId);
-            orchestratorState.activeTrades = (orchestratorState.activeTrades || []).filter((t: any) => t.metaOrderId !== orderId);
+            targetState.activeTrades = (targetState.activeTrades || []).filter((t: any) => String(t.metaOrderId) !== String(orderId));
             sameCandleExit = true;
           } else if (!isBuy && c.low + this.spreadPts <= fillTp) {
             console.log(`[T2 TP HIT] Time: ${new Date(c.timestamp).toISOString()} | Low: ${c.low} | SpreadPts: ${this.spreadPts} | pos.tp: ${fillTp}`);
@@ -632,15 +691,15 @@ export class MockBrokerAccount {
               orHigh: pos.orHigh, orLow: pos.orLow, limitPlacedAt: order.placedAt, trailLog: pos.trailLog
             });
             this.positions.delete(orderId);
-            orchestratorState.activeTrades = (orchestratorState.activeTrades || []).filter((t: any) => t.metaOrderId !== orderId);
+            targetState.activeTrades = (targetState.activeTrades || []).filter((t: any) => String(t.metaOrderId) !== String(orderId));
             sameCandleExit = true;
           }
 
           // Mark sage state as settled if same-candle exit occurred
-          if (sameCandleExit && sageSig && orchestratorState.sageStates?.[sageSig]) {
-            orchestratorState.sageStates[sageSig].limitOrderId = null;
-            orchestratorState.sageStates[sageSig].fired = true;
-            orchestratorState.sageStates[sageSig].fired_fill_check = true;
+          if (sameCandleExit && sageSig && targetState.sageStates?.[sageSig]) {
+            targetState.sageStates[sageSig].limitOrderId = null;
+            targetState.sageStates[sageSig].fired = true;
+            targetState.sageStates[sageSig].fired_fill_check = true;
           }
         }
 
@@ -679,8 +738,8 @@ export class MockBrokerAccount {
           orHigh: pos.orHigh, orLow: pos.orLow, limitPlacedAt: pos.limitPlacedAt, trailLog: pos.trailLog
         });
         this.positions.delete(trade.metaOrderId);
-        orchestratorState.activeTrades = orchestratorState.activeTrades?.filter((t: any) => t.metaOrderId !== trade.metaOrderId);
-        if (orchestratorState.activeTrade?.metaOrderId === trade.metaOrderId) {
+        orchestratorState.activeTrades = orchestratorState.activeTrades?.filter((t: any) => String(t.metaOrderId) !== String(trade.metaOrderId));
+        if (String(orchestratorState.activeTrade?.metaOrderId) === String(trade.metaOrderId)) {
           delete orchestratorState.activeTrade;
         }
         anyHit = true;
@@ -695,8 +754,8 @@ export class MockBrokerAccount {
           orHigh: pos.orHigh, orLow: pos.orLow, limitPlacedAt: pos.limitPlacedAt, trailLog: pos.trailLog
         });
         this.positions.delete(trade.metaOrderId);
-        orchestratorState.activeTrades = orchestratorState.activeTrades?.filter((t: any) => t.metaOrderId !== trade.metaOrderId);
-        if (orchestratorState.activeTrade?.metaOrderId === trade.metaOrderId) {
+        orchestratorState.activeTrades = orchestratorState.activeTrades?.filter((t: any) => String(t.metaOrderId) !== String(trade.metaOrderId));
+        if (String(orchestratorState.activeTrade?.metaOrderId) === String(trade.metaOrderId)) {
           delete orchestratorState.activeTrade;
         }
         anyHit = true;
@@ -710,8 +769,8 @@ export class MockBrokerAccount {
           orHigh: pos.orHigh, orLow: pos.orLow, limitPlacedAt: pos.limitPlacedAt, trailLog: pos.trailLog
         });
         this.positions.delete(trade.metaOrderId);
-        orchestratorState.activeTrades = orchestratorState.activeTrades?.filter((t: any) => t.metaOrderId !== trade.metaOrderId);
-        if (orchestratorState.activeTrade?.metaOrderId === trade.metaOrderId) {
+        orchestratorState.activeTrades = orchestratorState.activeTrades?.filter((t: any) => String(t.metaOrderId) !== String(trade.metaOrderId));
+        if (String(orchestratorState.activeTrade?.metaOrderId) === String(trade.metaOrderId)) {
           delete orchestratorState.activeTrade;
         }
         if (trade.clientId && orchestratorState.sageStates?.[trade.clientId]) {
@@ -730,8 +789,8 @@ export class MockBrokerAccount {
           orHigh: pos.orHigh, orLow: pos.orLow, limitPlacedAt: pos.limitPlacedAt, trailLog: pos.trailLog
         });
         this.positions.delete(trade.metaOrderId);
-        orchestratorState.activeTrades = orchestratorState.activeTrades?.filter((t: any) => t.metaOrderId !== trade.metaOrderId);
-        if (orchestratorState.activeTrade?.metaOrderId === trade.metaOrderId) {
+        orchestratorState.activeTrades = orchestratorState.activeTrades?.filter((t: any) => String(t.metaOrderId) !== String(trade.metaOrderId));
+        if (String(orchestratorState.activeTrade?.metaOrderId) === String(trade.metaOrderId)) {
           delete orchestratorState.activeTrade;
         }
         if (trade.clientId && orchestratorState.sageStates?.[trade.clientId]) {
@@ -774,7 +833,7 @@ export class MockBrokerAccount {
       if (orch) {
         for (const state of orch.states.values()) {
           if (state.activeTrades) {
-            const tr = state.activeTrades.find((t: any) => t.metaOrderId === positionId || t.id === positionId);
+            const tr = state.activeTrades.find((t: any) => String(t.metaOrderId) === String(positionId) || String(t.id) === String(positionId));
             if (tr) {
               if (actualSl !== undefined) tr.slPrice = actualSl;
               if (actualTp !== undefined) tr.tpPrice = actualTp;
@@ -834,9 +893,9 @@ export class MockBrokerAccount {
     const orchState = (global as any).__SIM_ORCH_STATE__;
     if (orchState) {
       if (orchState.activeTrades) {
-        orchState.activeTrades = orchState.activeTrades.filter((t: any) => t.metaOrderId !== positionId && t.id !== positionId);
+        orchState.activeTrades = orchState.activeTrades.filter((t: any) => String(t.metaOrderId) !== String(positionId) && String(t.id) !== String(positionId));
       }
-      if (orchState.activeTrade?.metaOrderId === positionId || orchState.activeTrade?.id === positionId) {
+      if (String(orchState.activeTrade?.metaOrderId) === String(positionId) || String(orchState.activeTrade?.id) === String(positionId)) {
         delete orchState.activeTrade;
       }
       if (pos && (pos as any).clientId && orchState.sageStates?.[(pos as any).clientId]) {

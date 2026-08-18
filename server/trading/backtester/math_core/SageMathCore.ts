@@ -1,9 +1,11 @@
 import { DailyContextTracker } from '../../market/DailyContextTracker.js';
+import { HTFContextTracker } from '../../market/HTFContextTracker.js';
 import { OPTIMIZER_CONFIG } from '../../config/OptimizerPairConfig.js';
 import { PairConfigManager } from '../../config/PairConfig.js';
 import { TriggerEvent, SageOptimizerConfig, M1TypedArrays } from '../../config/types.js';
 import { isNewsForceClose } from '../../market/historicalNews.js';
-import { isRolloverCircuitBreaker } from '../../market/MathFilters.js';
+import { isRolloverCircuitBreaker, isToxicDay } from '../../market/MathFilters.js';
+import { getFixedEstDate } from './MathCoreUtils.js';
 
 function getDigitsForPair(pair: string): number {
   const optCfg = OPTIMIZER_CONFIG[pair.replace(".Daily", "")];
@@ -73,6 +75,11 @@ export function preComputeTriggers(
   actionMinutes: number = 5,
   maxSweepMultiplier: number = 3,
   requireCloseInside: boolean = false,
+  htfAlignmentRequired: boolean = false,
+  maxH1EmaSlope: number = 30,
+  minWbr: number = 1.5,
+  requireCloseLocationHalf: boolean = false,
+  useHtfSarFilter: boolean = false,
 ): TriggerEvent[] {
   const startMins = orbStartHour * 60 + orbStartMin;
 
@@ -87,6 +94,7 @@ export function preComputeTriggers(
   const triggers: TriggerEvent[] = [];
   const sessionTradeTaken = false;
   const dailyTracker = new DailyContextTracker();
+  const htfData = HTFContextTracker.precomputeHTFData(m5Candles);
   let m1Idx = 0;
 
   for (let i = 2; i < m5Candles.length - 1; i++) {
@@ -127,6 +135,7 @@ export function preComputeTriggers(
     if (!isBuildingORB && currentMins >= startMins + orbMinutes && currentMins < startMins + 4 * 60) {
       if (!orBuilt) {
         if ((orHigh === -Infinity || orLow === Infinity) && i > 0) {
+          let foundAnyOrbCandle = false;
           for (let k = i - 1; k >= 0; k--) {
             const mc = m5Candles[k];
             const mcMin = mc.estMin ?? new Date(mc.timestamp).getUTCMinutes();
@@ -134,6 +143,10 @@ export function preComputeTriggers(
             if (mcMins >= startMins && mcMins < startMins + orbMinutes) {
               if (mc.high > orHigh) orHigh = mc.high;
               if (mc.low < orLow) orLow = mc.low;
+              foundAnyOrbCandle = true;
+            } else if (foundAnyOrbCandle) {
+              // Scanned past the ORB window going backward — stop to avoid pulling in prior-session candles
+              break;
             }
           }
         }
@@ -153,7 +166,7 @@ export function preComputeTriggers(
     }
 
     // 🚫 Prop Firm Compliance: Blackout Windows 🚫
-    const dateStr = c.dateStr || new Date(c.timestamp).toISOString().split("T")[0];
+    const dateStr = getFixedEstDate(new Date(c.timestamp)).toISOString().split("T")[0];
     if (
       isRolloverCircuitBreaker(c.estHour, estMin) ||
       isNewsForceClose(dateStr, c.estHour, estMin)
@@ -176,6 +189,18 @@ export function preComputeTriggers(
         : actionCandle.low <= orLow - sweepBuffer;
 
       if (!m5SweepHigh && !m5SweepLow) continue;
+      if (m5SweepHigh && m5SweepLow) continue;
+
+      const triggeredDir: "SELL" | "BUY" = m5SweepHigh ? "SELL" : "BUY";
+
+      if (htfAlignmentRequired) {
+        if (HTFContextTracker.isTrendParabolicFast(htfData, i, triggeredDir, maxH1EmaSlope, pipSize)) {
+          continue; // Veto counter-trend parabolic momentum
+        }
+        if (useHtfSarFilter && HTFContextTracker.isSarAcceleratingFast(htfData, i, triggeredDir)) {
+          continue; // Veto counter-SAR acceleration
+        }
+      }
 
       const actionDateStr = prevC.dateStr || new Date(prevC.timestamp).toISOString().slice(0, 10);
       const cBodyPips = parseFloat((Math.abs(actionCandle.close - actionCandle.open) / pipSize).toFixed(1));
@@ -210,6 +235,7 @@ export function preComputeTriggers(
   }
   return triggers;
 }
+
 
 const weekCache: Record<string, string> = {};
 
@@ -273,15 +299,16 @@ export function evaluateExits(
       continue;
     }
 
-    // PARITY: Match live engine's toxicHours, toxicDays, toxicMonths filters
+    // PARITY: Match live engine's toxicHours, toxicDays filters
     // Use pre-baked metadata from trigger — avoids O(N) getActionCandle() call per evaluation
     const estHour = t.actionCandleEstHour ?? 0;
-    
+    const actionCandleTs = t.actionCandleTimestamp ?? 0;
+    const utcDay = t.actionCandleUtcDay ?? new Date(actionCandleTs).getUTCDay();
 
     if (config.toxicHours && config.toxicHours.includes(estHour)) continue;
+    if (config.toxicDays && isToxicDay(utcDay, config.toxicDays)) continue;
 
     // Use pre-baked timestamp for lastTradeCloseTimeMs comparison
-    const actionCandleTs = t.actionCandleTimestamp ?? 0;
     if (actionCandleTs < lastTradeCloseTimeMs) continue;
 
     const sweepHigh = t.actionCandleHigh ?? -Infinity;
@@ -298,7 +325,7 @@ export function evaluateExits(
 
     const direction = sweepHighTriggered ? "SELL" : "BUY";
     
-    // WBR Filter: wickPips / bodyPips >= 1.5
+    // WBR Filter: wickPips / bodyPips >= minWbr (default 1.5)
     const acOpen = (t as any).actionCandleOpen;
     const acClose = t.actionCandleClose;
     const bodyTop = Math.max(acOpen, acClose);
@@ -308,19 +335,33 @@ export function evaluateExits(
       ? (sweepHigh - bodyTop) / pipSize 
       : (bodyBottom - sweepLow) / pipSize;
       
-    if ((wickPips / bodyPips) < 1.5) {
+    const minWbr = (config as any).minWbr ?? 1.5;
+    if ((wickPips / bodyPips) < minWbr) {
       continue; // Strict rejection rule: skip full-bodied momentum candles
     }
 
-
+    if ((config as any).requireCloseLocationHalf && acClose !== undefined) {
+      const candleRange = sweepHigh - sweepLow;
+      if (candleRange > 0) {
+        const closePercentile = (acClose - sweepLow) / candleRange;
+        if (direction === "SELL" && closePercentile > 0.50) continue; // Must close in bottom half for SELL
+        if (direction === "BUY" && closePercentile < 0.50) continue; // Must close in top half for BUY
+      }
+    }
 
     if (config.maxBodyPips !== undefined && t.cBodyPips > config.maxBodyPips)
       continue;
 
     const maxSweepMultiplier = (config as any).maxSweepMultiplier ?? 3;
-    const sweepBufferVal = t.sweepBuffer ?? (sweepBuffer);
-    const maxSweepBuffer = sweepBufferVal * maxSweepMultiplier;
+    // Always use the config's sweep buffer in evaluateExits to support Super-Set Caching from the optimizer
+    const activeSweepBuffer = ((config as any).sweepPips ?? 0) * pipSize;
+    const maxSweepBuffer = activeSweepBuffer * maxSweepMultiplier;
 
+    // Minimum Sweep Filter (Crucial for Super-Set Caching where triggers might only have 0-pip sweeps)
+    if (direction === "BUY" && t.actionCandleLow !== undefined && t.actionCandleLow > t.orLow - activeSweepBuffer) continue;
+    if (direction === "SELL" && t.actionCandleHigh !== undefined && t.actionCandleHigh < t.orHigh + activeSweepBuffer) continue;
+
+    // Maximum Sweep Filter
     if (direction === "BUY" && t.actionCandleLow !== undefined && t.actionCandleLow < t.orLow - maxSweepBuffer) continue;
     if (direction === "SELL" && t.actionCandleHigh !== undefined && t.actionCandleHigh > t.orHigh + maxSweepBuffer) continue;
 
@@ -365,7 +406,7 @@ export function evaluateExits(
 
     const initialRiskPreCalc = Math.abs(limitPrice - proposedSl);
     let preCalcTpPrice = 0;
-    if (config.exitMode === "MIDPOINT") {
+    if (config.exitMode === "MIDPOINT" || config.exitMode === "ADTEL") {
       preCalcTpPrice = roundPrice((t.orHigh + t.orLow) / 2.0, pair);
     } else if (config.exitMode === "OPPOSITE_BOUNDARY") {
       preCalcTpPrice = roundPrice(direction === "BUY" ? t.orHigh : t.orLow, pair);
@@ -385,6 +426,7 @@ export function evaluateExits(
         pair
       );
     }
+
 
     // ALIGNMENT FIX: The Live Engine sets sageTradeTakenToday = true when it places the limit order,
     // not when the trade activates. Even if the limit order expires/misses, it locks out the day.
@@ -472,7 +514,13 @@ export function evaluateExits(
           break;
         }
 
-        if (pct === 0) {
+        const pEntry = direction === "BUY" ? limitBuyPrice : limitSellPrice;
+        const proximityThreshold = Math.max(1.5 * pipSize, (optCfg?.spread || 1) * 2.5 * pipSize, 0.10 * Math.abs(pEntry - proposedSl));
+        const currentPrice = direction === "BUY" ? m1.open[j] + spreadPts : m1.open[j];
+        const distFromEntry = direction === "BUY" ? (currentPrice - pEntry) : (pEntry - currentPrice);
+        const isWithinProximity = Math.abs(distFromEntry) <= proximityThreshold || (direction === "BUY" ? currentPrice <= pEntry : currentPrice >= pEntry);
+
+        if (pct === 0 || isWithinProximity) {
           tradeActive = true;
           entryTimeMs = m1.timestamp[j];
           actualEntryPrice = direction === "BUY" ? m1.open[j] + spreadPts : m1.open[j];
@@ -561,22 +609,52 @@ export function evaluateExits(
           }
 
           const currentR = (m1.high[j] - actualEntryPrice) / actualRisk;
-          const tTrig = config.trailingSlTrigger;
-          const tStep = config.trailingSlStep;
+          const isAdtel = !!(config.useAdtelTrailing || config.exitMode === "ADTEL");
+          const isTrailingEnabled = config.exitMode === "TRAILING" || config.exitMode === "MIDPOINT" || config.exitMode === "ADTEL" || isAdtel || (config.trailingSlTrigger !== undefined && config.trailingSlTrigger > 0);
 
-          if (config.exitMode === "TRAILING") {
-            if (tTrig !== undefined && currentR >= tTrig && currentSL < actualEntryPrice) {
-              currentSL = roundPrice(actualEntryPrice, pair);
-              lastTrailingLevel = 0;
-            }
-            if (tTrig !== undefined && tStep !== undefined && currentR >= tTrig + tStep) {
-              const numSteps = Math.floor((currentR - tTrig) / tStep);
-              const rLevelToLock = numSteps * tStep;
-              if (rLevelToLock > lastTrailingLevel) {
-                lastTrailingLevel = rLevelToLock;
-                const bd = getDigitsForPair(pair);
-                const proposedSL = Number((actualEntryPrice + rLevelToLock * actualRisk).toFixed(bd));
+          if (isTrailingEnabled) {
+            if (isAdtel) {
+              const beTrig = config.adtelBeTrigger ?? 0.40;
+              const beLock = config.adtelBeLock ?? 0.05;
+              const pTrig = config.adtelProfitLockTrigger ?? 0.75;
+              const pLock = config.adtelProfitLockLevel ?? 0.40;
+              const aStep = config.adtelStep ?? 0.25;
+
+              if (currentR >= beTrig && lastTrailingLevel < beLock) {
+                lastTrailingLevel = beLock;
+                const proposedSL = Number((actualEntryPrice + beLock * actualRisk).toFixed(getDigitsForPair(pair)));
                 if (proposedSL > currentSL) currentSL = roundPrice(proposedSL, pair);
+              }
+              if (currentR >= pTrig && lastTrailingLevel < pLock) {
+                lastTrailingLevel = pLock;
+                const proposedSL = Number((actualEntryPrice + pLock * actualRisk).toFixed(getDigitsForPair(pair)));
+                if (proposedSL > currentSL) currentSL = roundPrice(proposedSL, pair);
+              }
+              if (currentR >= pTrig + aStep) {
+                const numSteps = Math.floor((currentR - pTrig) / aStep);
+                const rLevelToLock = pLock + numSteps * aStep;
+                if (rLevelToLock > lastTrailingLevel) {
+                  lastTrailingLevel = rLevelToLock;
+                  const proposedSL = Number((actualEntryPrice + rLevelToLock * actualRisk).toFixed(getDigitsForPair(pair)));
+                  if (proposedSL > currentSL) currentSL = roundPrice(proposedSL, pair);
+                }
+              }
+            } else {
+              const tTrig = config.trailingSlTrigger;
+              const tStep = config.trailingSlStep;
+              if (tTrig !== undefined && tTrig > 0 && currentR >= tTrig && currentSL < actualEntryPrice) {
+                currentSL = roundPrice(actualEntryPrice, pair);
+                lastTrailingLevel = 0;
+              }
+              if (tTrig !== undefined && tTrig > 0 && tStep !== undefined && tStep > 0 && currentR >= tTrig + tStep) {
+                const numSteps = Math.floor((currentR - tTrig) / tStep);
+                const rLevelToLock = numSteps * tStep;
+                if (rLevelToLock > lastTrailingLevel) {
+                  lastTrailingLevel = rLevelToLock;
+                  const bd = getDigitsForPair(pair);
+                  const proposedSL = Number((actualEntryPrice + rLevelToLock * actualRisk).toFixed(bd));
+                  if (proposedSL > currentSL) currentSL = roundPrice(proposedSL, pair);
+                }
               }
             }
           }
@@ -603,22 +681,52 @@ export function evaluateExits(
 
           const currentR =
             (actualEntryPrice - (m1.low[j] + spreadPts)) / actualRisk;
-          const tTrig = config.trailingSlTrigger;
-          const tStep = config.trailingSlStep;
+          const isAdtel = !!(config.useAdtelTrailing || config.exitMode === "ADTEL");
+          const isTrailingEnabled = config.exitMode === "TRAILING" || config.exitMode === "MIDPOINT" || config.exitMode === "ADTEL" || isAdtel || (config.trailingSlTrigger !== undefined && config.trailingSlTrigger > 0);
 
-          if (config.exitMode === "TRAILING") {
-            if (tTrig !== undefined && currentR >= tTrig && currentSL > actualEntryPrice) {
-              currentSL = roundPrice(actualEntryPrice, pair);
-              lastTrailingLevel = 0;
-            }
-            if (tTrig !== undefined && tStep !== undefined && currentR >= tTrig + tStep) {
-              const numSteps = Math.floor((currentR - tTrig) / tStep);
-              const rLevelToLock = numSteps * tStep;
-              if (rLevelToLock > lastTrailingLevel) {
-                lastTrailingLevel = rLevelToLock;
-                const bd = getDigitsForPair(pair);
-                const proposedSL = Number((actualEntryPrice - rLevelToLock * actualRisk).toFixed(bd));
+          if (isTrailingEnabled) {
+            if (isAdtel) {
+              const beTrig = config.adtelBeTrigger ?? 0.40;
+              const beLock = config.adtelBeLock ?? 0.05;
+              const pTrig = config.adtelProfitLockTrigger ?? 0.75;
+              const pLock = config.adtelProfitLockLevel ?? 0.40;
+              const aStep = config.adtelStep ?? 0.25;
+
+              if (currentR >= beTrig && lastTrailingLevel < beLock) {
+                lastTrailingLevel = beLock;
+                const proposedSL = Number((actualEntryPrice - beLock * actualRisk).toFixed(getDigitsForPair(pair)));
                 if (proposedSL < currentSL) currentSL = roundPrice(proposedSL, pair);
+              }
+              if (currentR >= pTrig && lastTrailingLevel < pLock) {
+                lastTrailingLevel = pLock;
+                const proposedSL = Number((actualEntryPrice - pLock * actualRisk).toFixed(getDigitsForPair(pair)));
+                if (proposedSL < currentSL) currentSL = roundPrice(proposedSL, pair);
+              }
+              if (currentR >= pTrig + aStep) {
+                const numSteps = Math.floor((currentR - pTrig) / aStep);
+                const rLevelToLock = pLock + numSteps * aStep;
+                if (rLevelToLock > lastTrailingLevel) {
+                  lastTrailingLevel = rLevelToLock;
+                  const proposedSL = Number((actualEntryPrice - rLevelToLock * actualRisk).toFixed(getDigitsForPair(pair)));
+                  if (proposedSL < currentSL) currentSL = roundPrice(proposedSL, pair);
+                }
+              }
+            } else {
+              const tTrig = config.trailingSlTrigger;
+              const tStep = config.trailingSlStep;
+              if (tTrig !== undefined && tTrig > 0 && currentR >= tTrig && currentSL > actualEntryPrice) {
+                currentSL = roundPrice(actualEntryPrice, pair);
+                lastTrailingLevel = 0;
+              }
+              if (tTrig !== undefined && tStep !== undefined && currentR >= tTrig + tStep) {
+                const numSteps = Math.floor((currentR - tTrig) / tStep);
+                const rLevelToLock = numSteps * tStep;
+                if (rLevelToLock > lastTrailingLevel) {
+                  lastTrailingLevel = rLevelToLock;
+                  const bd = getDigitsForPair(pair);
+                  const proposedSL = Number((actualEntryPrice - rLevelToLock * actualRisk).toFixed(bd));
+                  if (proposedSL < currentSL) currentSL = roundPrice(proposedSL, pair);
+                }
               }
             }
           }
@@ -629,6 +737,7 @@ export function evaluateExits(
             break;
           }
         }
+
 
         const isNewsForceClose = m1.isNewsForceClose[j] === 1;
 

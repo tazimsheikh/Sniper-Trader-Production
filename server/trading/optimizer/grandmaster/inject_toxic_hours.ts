@@ -20,10 +20,9 @@ function safeWriteFileSync(filePath: string, content: string) {
 }
 
 const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-const MONTH_NAMES = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 async function runDynamicToxicFilterInjection() {
-  console.log(`\n☠️  [Toxic Filter Injector] Starting Constant Toxicity & Seasonality Analysis...`);
+  console.log(`\n☠️  [Toxic Filter Injector] Starting Constant Toxicity Analysis (Hours & Days)...`);
   
   const allPairs = Array.from(new Set([
     ...Object.keys(SAGE_PAIR_CONFIG),
@@ -32,13 +31,10 @@ async function runDynamicToxicFilterInjection() {
   
   const pairBannedHours: Record<string, number[]> = {};
   const pairBannedDays: Record<string, number[]> = {};
-  const pairBannedMonths: Record<string, number[]> = {};
 
   for (const pair of allPairs) {
     let startDate1Yr = "2025-05-01";
     let endDate1Yr = "2026-05-01";
-    let startDate3Yr = "2023-05-01";
-    let endDate3Yr = "2026-05-01";
 
     const csvDir = path.join(process.cwd(), "data", "csv");
     const csvFiles = fs.readdirSync(csvDir).filter((f) => f.startsWith(`${pair.split("_")[0]}`) && f.endsWith(".csv"));
@@ -47,15 +43,10 @@ async function runDynamicToxicFilterInjection() {
       const latestDate = getLatestDate(path.join(csvDir, csvFiles[0]));
       
       endDate1Yr = latestDate.toISOString().substring(0, 10);
-      endDate3Yr = endDate1Yr;
       
       const sd1 = new Date(latestDate.getTime());
       sd1.setFullYear(sd1.getFullYear() - 1);
       startDate1Yr = sd1.toISOString().substring(0, 10);
-      
-      const sd3 = new Date(latestDate.getTime());
-      sd3.setFullYear(sd3.getFullYear() - 3);
-      startDate3Yr = sd3.toISOString().substring(0, 10);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -134,7 +125,6 @@ async function runDynamicToxicFilterInjection() {
 
     const bannedHours: number[] = [];
     const bannedDays: number[] = [];
-    const bannedMonths: number[] = [];
 
     if (hasData1Yr) {
       const activeEntryHours = new Set<number>();
@@ -143,7 +133,7 @@ async function runDynamicToxicFilterInjection() {
         if (typeof startH === "number") activeEntryHours.add(startH);
       }
 
-      console.log(`\n--- Constant Toxicity Analysis (1-Year Window: 2025-05 to 2026-05) : ${pair} ---`);
+      console.log(`\n--- Constant Toxicity Analysis (1-Year Window: ${startDate1Yr} to ${endDate1Yr}) : ${pair} ---`);
 
       // Evaluate Hour Persistence
       for (let h = 0; h < 24; h++) {
@@ -170,10 +160,36 @@ async function runDynamicToxicFilterInjection() {
           }
         }
       }
+
+      // Evaluate Day Persistence
+      for (let d = 0; d < 7; d++) {
+        let activeMonths = 0;
+        let losingMonths = 0;
+        let totalNetR = 0;
+
+        for (let m = 1; m <= 12; m++) {
+          const stat = dailyMonthStats[d][m];
+          if (stat.trades > 0) {
+            activeMonths++;
+            totalNetR += stat.totalR;
+            if (stat.totalR < 0) losingMonths++;
+          }
+        }
+
+        if (totalNetR < 0 && activeMonths >= 3) {
+          const losingRatio = losingMonths / activeMonths;
+          if (losingRatio >= 0.65) {
+            bannedDays.push(d);
+            console.log(` 🚫 Constant Toxic Day [${DAY_NAMES[d]}] | Net R: ${totalNetR.toFixed(2)} | Active M: ${activeMonths} | Losing M: ${losingMonths} (${(losingRatio * 100).toFixed(0)}%)`);
+          }
+        }
+      }
     }
 
     pairBannedHours[pair] = bannedHours;
-    console.log(` Summary for ${pair} -> Toxic Hours: [${bannedHours.join(", ")}]`);
+    pairBannedDays[pair] = bannedDays;
+
+    console.log(` Summary for ${pair} -> Toxic Hours: [${bannedHours.join(", ")}], Toxic Days: [${bannedDays.map(d => DAY_NAMES[d]).join(", ")}]`);
   }
 
   // Inject into PairConfig.ts
@@ -187,32 +203,34 @@ async function runDynamicToxicFilterInjection() {
   
   for (const pair of allPairs) {
     const bannedHours = pairBannedHours[pair] || [];
-    if (bannedHours.length > 0) {
-      const parts = content.split(`'${pair}': [`);
-      for (let i = 1; i < parts.length; i++) {
-        const endIdx = parts[i].indexOf("]");
-        if (endIdx !== -1) {
-           let chunk = parts[i].substring(0, endIdx);
-           
-           // Strip existing toxic tags to prevent duplicate insertion
-           chunk = chunk.replace(/"toxicHours":\s*\[.*?\],\n?\s*/g, "");
+    const bannedDays = pairBannedDays[pair] || [];
 
-           let injections = "";
-           if (bannedHours.length > 0) {
-             injections += `"toxicHours": [${bannedHours.join(", ")}],\n      `;
-           }
+    const pairBlockRegex = new RegExp(`('${pair}':\\s*\\[)([\\s\\S]*?)(\\n\\s*\\])`, "g");
 
-           const newChunk = chunk.replace(/"session":/g, `${injections}"session":`);
-           parts[i] = newChunk + parts[i].substring(endIdx);
-        }
+    content = content.replace(pairBlockRegex, (match, openTag, innerContent, closeTag) => {
+      let cleaned = innerContent;
+      cleaned = cleaned.replace(/"toxicHours":\s*\[.*?\](,\n?\s*)?/g, "");
+      cleaned = cleaned.replace(/"toxicDays":\s*\[.*?\](,\n?\s*)?/g, "");
+
+      let injections = "";
+      if (bannedHours.length > 0) {
+        injections += `"toxicHours": [${bannedHours.join(", ")}],\n      `;
       }
-      content = parts.join(`'${pair}': [`);
+      if (bannedDays.length > 0) {
+        injections += `"toxicDays": [${bannedDays.join(", ")}],\n      `;
+      }
+
+      const updated = cleaned.replace(/"session":/g, `${injections}"session":`);
+      return `${openTag}${updated}${closeTag}`;
+    });
+
+    if (bannedHours.length > 0 || bannedDays.length > 0) {
       console.log(`✅ Successfully injected toxic filters into PairConfig.ts for ${pair}!`);
     }
   }
 
   safeWriteFileSync(PAIR_CONFIG_PATH, content);
-  console.log(`\n✅ Constant Toxic Hours, Toxic Days & Seasonality Toxic Months safely updated in PairConfig.ts!`);
+  console.log(`\n✅ Constant Toxic Hours & Toxic Days safely updated in PairConfig.ts!`);
 }
 
 runDynamicToxicFilterInjection().catch(console.error);

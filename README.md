@@ -48,16 +48,16 @@ When the user says **"be careful"**, the following mandatory behavior applies:
 
 ---
 
-## 🤖 The 4-Bot Framework
+## 🤖 The 3-Bot Framework
 
-The system is divided into four **completely isolated** bots. Never intertwine their logic.
+The system is divided into three **completely isolated** bots. Never intertwine their logic.
 
 | Bot | Strategy | Vision? | Engine File |
 |-----|----------|---------|-------------|
 | **MAGE** | Open Range Breakout (ORB) | ❌ | `MageEngine.ts` |
 | **SAGE** | Liquidity Sweep Reversals | ❌ | `SageEngine.ts` |
 | **SEER** | Stacy Burke Liquidity Hunts + False Breakouts | ✅ | `SeerEngine.ts` |
-| **BLACK SWAN** | Hybrid meta-engine, delegates Mage+Sage trailing for outlier moves | ❌ | `BlackSwanEngine.ts` |
+
 
 ---
 
@@ -154,7 +154,7 @@ The system is divided into four **completely isolated** bots. Never intertwine t
 | `MageEngine.ts` | Mage ORB breakout logic. Maintains an ORB range per pair per session. Detects breakouts and routes signals to `LiveOrchestrator` → `metaApiHandler`. |
 | `SageEngine.ts` | Sage reversal logic. Detects M5 liquidity sweeps of ORB range, confirms rejection via `actionCandle`, places limit orders. |
 | `SeerEngine.ts` | Seer liquidity hunt logic. Generates mathematical candidates → calls `ChartRenderer` → calls `VisionEvaluator` → routes approved setups. |
-| `BlackSwanEngine.ts` | Delegates trailing stop management to Mage/Sage logic specifically for outlier high-magnitude moves. |
+
 | `TickFeed.ts` | Connects to MetaApi streaming. Receives real-time ticks, aggregates M1 candles, and feeds them to `LiveOrchestrator`. Uses `getFixedEstDate()` for session gating. |
 
 #### `getFixedEstDate()` — The Timezone Cornerstone
@@ -218,11 +218,7 @@ These stubs **mirror** their production counterparts exactly. Any interface chan
 | `ChromosomeMapper.ts` | Maps a flat integer chromosome array (from the GA) to actual typed parameter values (e.g., index 3 → `minSl = 15`). Used by both Mage and Sage optimizers. |
 | `HybridGeneticOptimizer.ts` | The Genetic Algorithm engine. Population: 300 chromosomes, 80 generations. Uses tournament selection, crossover, mutation. Fitness = Walk-Forward OOS Net R. |
 | `WalkForwardEngine.ts` | Generates Walk-Forward Analysis (WFA) windows. Default: 6-month In-Sample, 2-month Out-of-Sample, rolling forward. |
-| `GpuFitnessBridge.ts` | TypeScript bridge to `gpu_evaluator.py`. Batches chromosome fitness evaluations and sends to Python GPU process via stdin/stdout IPC. |
-| `gpu_evaluator.py` | Python/PyTorch GPU evaluator. Runs massive batched fitness evaluations on CUDA GPU for extreme speed. |
-| `gpu_setup_check.py` | Diagnostic script to verify CUDA/PyTorch availability. |
-| `gpu_parity_test.ts` | Validates that GPU evaluations match CPU evaluations to 0.01R tolerance. |
-| `test_all_gpu_parity.ts` | Full GPU parity test suite across all pairs and bots. |
+
 
 #### `/server/trading/optimizer/mage/`
 
@@ -261,10 +257,8 @@ The Grandmaster is the meta-optimizer — it selects the best portfolio of alpha
 | `GrandmasterPreProcessor.ts` | Pre-processes raw alpha dumps before feeding to the GA: deduplication, Z-score normalization, outlier pruning. |
 | `grandmaster_cpcv.ts` | Implementation of Combinatorial Purged Cross-Validation for portfolio overfitting detection. |
 | `grandmaster_plwfo.ts` | Probabilistic Walk-Forward Optimization runner. |
-| `GrandmasterGpuBridge.ts` | GPU bridge specifically for Grandmaster portfolio fitness evaluation. |
-| `grandmaster_gpu_evaluator.py` | Python GPU evaluator for the Grandmaster GA. |
+
 | `inject_grandmaster.ts` | **The final injection step.** Takes the validated `grandmaster_portfolio.json` and writes each pair's top configuration into the `server/trading/output/` state files. These are the configs the live bot reads at runtime. |
-| `inject_blackswan.ts` | Same injection step for the Black Swan bot's portfolio. |
 | `test_grandmaster_parity.ts` | Validates Grandmaster-produced configs against Tier 1 and Tier 2 for parity. |
 
 #### `/server/trading/optimizer/pipelines/`

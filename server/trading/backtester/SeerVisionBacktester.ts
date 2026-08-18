@@ -24,6 +24,7 @@ import { VisionEvaluator, VisionDecision } from "../ai/VisionEvaluator.js";
 import { SEER_PAIR_CONFIG } from "../config/PairConfig.js";
 import { OPTIMIZER_CONFIG } from "../config/OptimizerPairConfig.js";
 import { isTradeAllowed } from "../market/MathFilters.js";
+import { getFixedEstDate } from "./math_core/MathCoreUtils.js";
 
 interface VisionTradeRecord {
   timestamp: number; // Precise epoch ms of the trigger candle — used for chronological cross-pair compounding
@@ -403,7 +404,7 @@ export async function runVisionBacktest(
 
     // ── Ask Vision AI ───────────────────────────────────────────
     console.log(
-      `\n👁️  [${new Date(c.timestamp).toISOString().split("T")[0]}] ${pair} ${setupType} — Asking Vision AI...`,
+      `\n👁️  [${getFixedEstDate(new Date(c.timestamp)).toISOString().split("T")[0]}] ${pair} ${setupType} — Asking Vision AI...`,
     );
 
     const sessionLabel = isLondon
@@ -472,7 +473,7 @@ export async function runVisionBacktest(
       hypotheticalPips?: number;
     } = {
       timestamp: c.timestamp,
-      date: new Date(c.timestamp).toISOString().split("T")[0],
+      date: getFixedEstDate(new Date(c.timestamp)).toISOString().split("T")[0],
       pair,
       setupType,
       sessionName: isLondon

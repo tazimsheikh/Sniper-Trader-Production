@@ -55,7 +55,7 @@ const TradeAnalytics = ({ diary, bots, selectedBotId, onSelectBot, analyticsData
       if (trade.profit > 0) wins++;
       if (totalProfit > peak) peak = totalProfit;
       
-      const drawdown = peak > 0 ? ((peak - totalProfit) / peak) * 100 : 0;
+      const drawdown = peak - totalProfit;
       if (drawdown > maxDD) maxDD = drawdown;
 
       return {
@@ -156,7 +156,7 @@ const TradeAnalytics = ({ diary, bots, selectedBotId, onSelectBot, analyticsData
         <div className="bg-slate-800/40 border border-white/10 rounded-xl p-4">
           <p className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-1">Max Drawdown</p>
           <p className="text-xl font-mono font-bold text-rose-400">
-            {Number(stats.maxDD).toFixed(1)}%
+            ${Number(stats.maxDD).toFixed(2)}
           </p>
         </div>
       </div>

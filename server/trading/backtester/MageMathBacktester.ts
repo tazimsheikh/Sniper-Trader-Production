@@ -13,12 +13,23 @@ import { TradeRecord, TradeOutcome, M1TypedArrays } from "../config/types.js";
 import { isNewsForceClose } from "../market/historicalNews.js";
 import { isEODSession } from "../market/MathFilters.js";
 import { preComputeTriggers, evaluateExits } from "./math_core/MageMathCore.js";
+import { getFixedEstDate } from "./math_core/MathCoreUtils.js";
 
 
 const backtestCache = new Map<
   string,
   { m5Candles: any[]; emaArr: any; ema200Arr: any; atrArr: any; m1Rows: any[] }
 >();
+
+export function clearMageBacktestCache(pair?: string) {
+  if (pair) {
+    for (const k of backtestCache.keys()) {
+      if (k.startsWith(pair)) backtestCache.delete(k);
+    }
+  } else {
+    backtestCache.clear();
+  }
+}
 
 export async function runMathBacktest(
   pair: string,
@@ -153,10 +164,11 @@ export async function runMathBacktest(
     m1Typed.minute[i] = r.minute;
     if (i > 0) {
       const prevH = m1Rows[i-1].estHour;
-      m1Typed.isSessionReset[i] = ((prevH < 17 && r.estHour >= 17) || (prevH > r.estHour && r.estHour >= 17) || (r.estHour === 17 && r.minute === 0)) ? 1 : 0;
-      m1Typed.isMidnightExpiry[i] = (prevH > r.estHour && r.estHour < 17) ? 1 : 0;
+      m1Typed.isSessionReset[i] = ((prevH < 15 && r.estHour >= 15) || (prevH > r.estHour && r.estHour >= 15) || (r.estHour === 15 && r.minute === 0)) ? 1 : 0;
+      m1Typed.isMidnightExpiry[i] = (prevH > r.estHour && r.estHour < 15) ? 1 : 0;
     }
-    const dStr = new Date(r.timestamp).toISOString().split("T")[0];
+    const estDate = getFixedEstDate(new Date(r.timestamp));
+    const dStr = estDate.toISOString().split("T")[0];
     m1Typed.isEOD_standard[i] = isEODSession(r.estHour, r.minute) ? 1 : 0;
     m1Typed.isEOD_standard[i] = isEODSession(r.estHour, r.minute) ? 1 : 0;
     m1Typed.isNewsForceClose[i] = isNewsForceClose(dStr, r.estHour, r.minute) ? 1 : 0;
@@ -178,7 +190,12 @@ export async function runMathBacktest(
       config.orbStartMin!,
       config.orbMinutes!,
       config.actionMinutes,
-      config.minBodyPips
+      config.minBodyPips,
+      config.minBodyRatio,
+      config.minCloseLoc,
+      config.htfTrendFilter ?? config.useHtfEma,
+      config.useHtfSar ?? config.useHtfSarFilter,
+      config
     );
     const startMs = startDate ? new Date(startDate).getTime() : 0;
     const validTriggers = triggers.filter(t => m5Candles[t.m5Index].timestamp >= startMs);
@@ -206,12 +223,10 @@ export async function runMathBacktest(
       r.reasoning = "Math Match";
       r.pips = r.rMultiple !== null && r.rMultiple !== undefined ? r.rMultiple * r.riskPips : null;
       if (enableTrace && r.outcome !== "SKIPPED") {
-        const trade = r as any;
-        const dStr = new Date(trade.timestamp).toISOString().split("T")[0];
-        const tStr = new Date(trade.timestamp).toISOString().substring(11, 19);
-        const exitTimeStr = trade.exitTime ? new Date(trade.exitTime).toISOString().substring(11, 19) : "N/A";
-        const outcome = trade.exitReason === "NEWS" ? "NEWS_CLOSE" : (trade.exitReason === "EOD" ? "EOD" : "SL");
-        console.log(`[T1] Date: ${dStr} | EntryTime: ${tStr} | Entry: ${trade.entry.toFixed(3)} | SL: ${trade.stopLoss.toFixed(3)} | TP: ${trade.takeProfit.toFixed(3)} | ExitTime: ${exitTimeStr} | Outcome: ${outcome} | R: ${trade.rMultiple?.toFixed(2)}`);
+        const dStr = getFixedEstDate(new Date(r.timestamp)).toISOString().split("T")[0];
+        const tStr = new Date(r.timestamp).toISOString().substring(11, 19);
+        const exitTimeStr = r.exitTimeMs ? new Date(r.exitTimeMs).toISOString().substring(11, 19) : "N/A";
+        console.log(`[T1] Date: ${dStr} | EntryTime: ${tStr} | Entry: ${r.entry.toFixed(3)} | SL: ${r.stopLoss.toFixed(3)} | TP: ${r.takeProfit.toFixed(3)} | ExitTime: ${exitTimeStr} | Outcome: ${r.outcome} | R: ${r.rMultiple?.toFixed(2)}`);
       }
     }
     for (const rec of evalRes.records) {

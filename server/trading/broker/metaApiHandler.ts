@@ -1458,8 +1458,9 @@ export async function getProfileTradeHistory(
       }
     }
 
-    const deals = (await connection.getDealsByTimeRange(start, now)) as any[];
-    if (!deals || !Array.isArray(deals)) return [];
+    const rawDeals = (await connection.getDealsByTimeRange(start, now)) as any;
+    const deals = Array.isArray(rawDeals) ? rawDeals : (rawDeals?.deals || []);
+    if (!deals || !Array.isArray(deals) || deals.length === 0) return [];
 
     const positions = new Map<string, any>();
 
@@ -1467,12 +1468,19 @@ export async function getProfileTradeHistory(
       if (!deal.positionId) continue;
 
       if (!positions.has(deal.positionId)) {
+        let botId = "manual";
+        const rawSig = deal.clientId || deal.brokerComment || deal.comment || "";
+        if (rawSig.startsWith("M_") || rawSig.toLowerCase().includes("mage")) botId = "mage";
+        else if (rawSig.startsWith("S_") || rawSig.toLowerCase().includes("sage")) botId = "sage";
+        else if (rawSig.startsWith("SEER") || rawSig.toLowerCase().includes("seer") || rawSig.includes("discretionary_trader")) botId = "seer";
+
         positions.set(deal.positionId, {
           id: deal.positionId,
           user_id: profile.user_id,
           profile_id: profileId,
-          bot_id: (deal.comment || "").replace(/[\[\]]/g, ""),
+          bot_id: botId,
           broker_symbol: deal.symbol,
+          raw_sig: rawSig,
           direction:
             deal.type === "DEAL_TYPE_BUY"
               ? deal.entryType === "DEAL_ENTRY_IN"
@@ -1483,7 +1491,7 @@ export async function getProfileTradeHistory(
                 : "BUY",
           entry_price: 0,
           exit_price: 0,
-          lots: deal.volume,
+          lots: deal.volume || 0,
           pips: 0,
           profit: 0,
           status: "OPEN",
@@ -1494,10 +1502,18 @@ export async function getProfileTradeHistory(
 
       const pos = positions.get(deal.positionId);
 
+      const dealSig = deal.clientId || deal.brokerComment || deal.comment || "";
+      if ((!pos.bot_id || pos.bot_id === "manual") && dealSig) {
+        if (dealSig.startsWith("M_") || dealSig.toLowerCase().includes("mage")) pos.bot_id = "mage";
+        else if (dealSig.startsWith("S_") || dealSig.toLowerCase().includes("sage")) pos.bot_id = "sage";
+        else if (dealSig.startsWith("SEER") || dealSig.toLowerCase().includes("seer") || dealSig.includes("discretionary_trader")) pos.bot_id = "seer";
+      }
+
       if (deal.entryType === "DEAL_ENTRY_IN") {
         pos.entry_price = deal.price;
         pos.open_time = new Date(deal.time).getTime();
         pos.direction = deal.type === "DEAL_TYPE_BUY" ? "BUY" : "SELL";
+        if (deal.volume) pos.lots = deal.volume;
       } else if (
         deal.entryType === "DEAL_ENTRY_OUT" ||
         deal.entryType === "DEAL_ENTRY_INOUT"
@@ -1516,13 +1532,60 @@ export async function getProfileTradeHistory(
 
     for (const trade of closedTrades) {
       const spec = getSymbolSpec(trade.broker_symbol);
+      const pipSize = spec.pipSize || 0.0001;
       const diff =
         trade.direction === "BUY"
           ? trade.exit_price - trade.entry_price
           : trade.entry_price - trade.exit_price;
-      trade.pips = parseFloat((diff / spec.pipSize).toFixed(1));
+      trade.pips = parseFloat((diff / pipSize).toFixed(1));
       trade.profit = parseFloat(trade.profit.toFixed(2));
+      trade.status = trade.profit >= 0 ? "CLOSED_WIN" : "CLOSED_LOSS";
     }
+
+    // Asynchronously sync to trade_diary table efficiently in background
+    (async () => {
+      try {
+        const existingRows = (await db
+          .prepare(
+            "SELECT open_time, bot_id, broker_symbol FROM trade_diary WHERE profile_id = ?"
+          )
+          .all(profileId)) as any[];
+        const existingSet = new Set(
+          (existingRows || []).map(
+            (r: any) => `${r.bot_id}_${r.broker_symbol}_${r.open_time}`
+          )
+        );
+
+        for (const trade of closedTrades) {
+          const key = `${trade.bot_id}_${trade.broker_symbol}_${trade.open_time}`;
+          if (!existingSet.has(key)) {
+            existingSet.add(key);
+            await db
+              .prepare(
+                `INSERT INTO trade_diary
+                  (user_id, profile_id, bot_id, broker_symbol, direction,
+                   entry_price, exit_price, lots, pips, profit, status, open_time, close_time)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+              )
+              .run(
+                trade.user_id,
+                trade.profile_id,
+                trade.bot_id,
+                trade.broker_symbol,
+                trade.direction,
+                trade.entry_price,
+                trade.exit_price,
+                trade.lots,
+                trade.pips,
+                trade.profit,
+                trade.status,
+                trade.open_time,
+                trade.close_time || Date.now()
+              );
+          }
+        }
+      } catch (_) {}
+    })().catch(() => {});
 
     return closedTrades.sort((a, b) => b.close_time - a.close_time);
   } catch (err: any) {

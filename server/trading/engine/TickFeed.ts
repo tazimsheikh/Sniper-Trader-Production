@@ -60,6 +60,7 @@ export class TickFeed {
   private baseToBrokerMap = new Map<string, string>();
   private brokerToBaseMap = new Map<string, string>();
   private lastTickTime = Date.now();
+  private lastReconnectAttempt = 0;
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private lastClosedM1Minute = new Map<string, number>();
 
@@ -546,10 +547,17 @@ export class TickFeed {
       // ── 1. Staleness Heartbeat Check (Watchdog) ──
       const isMarketOpen = this.isMarketOpen();
       const isStale = nowMs - this.lastTickTime > 60_000;
-      if (isStale && isMarketOpen && !this.pollTimer) {
-        logger.info(`[TickFeed] Staleness watchdog triggered: No ticks for 60s. Forcing REST polling fallback.`,);
-        this.startPollingFallback();
-        this.reconnectSocket();
+      if (isStale && isMarketOpen) {
+        if (!this.pollTimer) {
+          logger.info(`[TickFeed] Staleness watchdog triggered: No ticks for 60s. Forcing REST polling fallback.`,);
+          this.startPollingFallback();
+        }
+        
+        // Attempt to reconnect the socket if it's dead, but throttle to once per 60s
+        if (nowMs - this.lastReconnectAttempt > 60_000) {
+          this.lastReconnectAttempt = nowMs;
+          this.reconnectSocket();
+        }
       }
 
       // ── 2. Timer-driven Candle Closing ──

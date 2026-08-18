@@ -36,7 +36,7 @@ const MIN_BODY_VALS = [5, 6, 7.5, 10, 15, 20]; // Removed 3-pip (doji): minimum 
 const TRAILING_TRIGGERS = [0.5, 1.0, 1.5, 2.0]; // Clean active trailing triggers
 const TRAILING_STEPS = [0.5, 1.0, 1.5, 2.0]; // Clean real trailing steps (0.5R, 1.0R, 1.5R, 2.0R)
 const FORCE_CLOSE_HOURS = [8, 12, 16, 24]; // Added sub-24h options to discover same-session exits
-const EXIT_MODES = ["TRAILING", "MIDPOINT", "OPPOSITE_BOUNDARY"];
+const EXIT_MODES = ["TRAILING", "MIDPOINT", "OPPOSITE_BOUNDARY", "ADTEL_AGGRESSIVE", "ADTEL_MODERATE", "ADTEL_CONSERVATIVE"];
 const PULLBACK_PERCENTAGES = [0.0, 0.3, 0.6]; // Removed 1.0 & 1.5: beyond 0.6 is mean-reversion, not breakout
 const ORB_MINUTES_GRID = [10, 15, 30, 45, 60];
 const ACTION_MINUTES_GRID = [60, 120, 180]; // Capped at 180 min: beyond this bleeds pre-market data into trigger
@@ -191,6 +191,8 @@ if (isMainThread && process.argv[1] === currentFile) {
 
     const basePair = OPTIMIZER_CONFIG[symbol] ? symbol : (OPTIMIZER_CONFIG[symbol.replace(".Daily", "")] ? symbol.replace(".Daily", "") : symbol + ".Daily");
     let configTemplate = OPTIMIZER_CONFIG[basePair];
+    
+    // Structural filters moved into the session loop below
 
     if (!configTemplate) {
       parentPort?.postMessage(
@@ -387,8 +389,8 @@ if (isMainThread && process.argv[1] === currentFile) {
       m1Typed.isEOD_standard[i] = isEODSession(h, m) ? 1 : 0;
       if (i > 0) {
         const prevH = m1Rows[i-1].estHour;
-        m1Typed.isSessionReset[i] = ((prevH < 17 && h >= 17) || (prevH > h && h >= 17)) ? 1 : 0;
-        m1Typed.isMidnightExpiry[i] = (prevH > h && h < 17) ? 1 : 0;
+        m1Typed.isSessionReset[i] = ((prevH < 15 && h >= 15) || (prevH > h && h >= 15) || (h === 15 && m === 0)) ? 1 : 0;
+        m1Typed.isMidnightExpiry[i] = (prevH > h && h < 15) ? 1 : 0;
       }
       
       const dateStr = new Date(r.timestamp).toISOString().split('T')[0];
@@ -433,6 +435,30 @@ if (isMainThread && process.argv[1] === currentFile) {
     }
 
     for (const session of sessions) {
+      const isAsiaSession = session === "asia";
+      const isCrypto = symbol.includes("BTC") || symbol.includes("ETH");
+      const isIndex = ["US30", "NAS100", "SPX500", "GER40", "UK100", "JPN225"].some(idx => symbol.includes(idx));
+      const isJpyCross = symbol.includes("JPY");
+
+      let useHtfSar = true;
+      if (isCrypto) useHtfSar = false;
+      if (isIndex && isAsiaSession) useHtfSar = false;
+      if (isJpyCross && !symbol.includes("GBP")) useHtfSar = false; // CHFJPY false, GBPJPY true
+      if (symbol === "NZDUSD") useHtfSar = false;
+
+      let reqCloseHalf = false;
+      if (isIndex && !isAsiaSession) reqCloseHalf = true;
+      if (symbol === "USDCAD" || symbol === "GBPJPY" || symbol === "BTCUSD") reqCloseHalf = true;
+
+      const wbr = (symbol.includes("EURUSD") || (symbol.includes("CHFJPY") && !isAsiaSession)) ? 1.75 : 1.5;
+
+      const liveStaticValues = {
+        useHtfSarFilter: useHtfSar,
+        requireCloseLocationHalf: reqCloseHalf,
+        minWbr: wbr,
+        maxH1EmaSlope: 20
+      };
+
       const startTimes = startTimesMap[session];
       
       // Build parameters grid definition
@@ -505,6 +531,7 @@ if (isMainThread && process.argv[1] === currentFile) {
 
           const triggers = getCachedTriggers(isM5, isM1, startTime, orbMinutes, actionMinutes);
           const overrideConfig: PairConfig = {
+            ...liveStaticValues,
             minSlDist: minSl,
             maxSlDist: maxSl,
             minBodyPips: minBody,
@@ -594,8 +621,14 @@ if (isMainThread && process.argv[1] === currentFile) {
         ];
 
         // Decode diverse champions from previous dump for this session
+        // Temporal DNA filter: only use DNA entries discovered BEFORE this window's IS start.
+        // This prevents DNA from later windows seeding earlier windows in next run (temporal leakage).
+        const windowIsStartStr = window.inSampleStart.toISOString().split("T")[0];
+        const temporallyValidDna = prevDumpAlphas.filter((a: any) =>
+          !a.oosEndDate || a.oosEndDate < windowIsStartStr
+        );
         const championChromosomes: number[][] = [];
-        for (const alpha of prevDumpAlphas) {
+        for (const alpha of temporallyValidDna) {
           if (championChromosomes.length >= 10) break;
           const chrom = decodeMageSetup(
             alpha.setup, session,
@@ -618,6 +651,11 @@ if (isMainThread && process.argv[1] === currentFile) {
           mutationRate: 0.15,
           fitnessMode: 'blended',
           seedChromosomes: finalSeedChromosomes,
+          epochs: [
+            { generations: 30, activeGenes: [0, 1, 2, 9, 10] }, // Tier 1 & 2: Session, SL, ORB/Act Mins
+            { generations: 30, activeGenes: [5, 6, 7] },        // Tier 3: ExitModes, Trigger, Step
+            { generations: 20, activeGenes: [3, 4, 8] }         // Tier 4 & 5: Pre-filters, FC
+          ],
           fitnessFnBatch: async (paramsBatch: any[][]) => {
             const groups = new Map<string, { chromosomes: any[], indices: number[], triggers: any[] }>();
             for (let idx = 0; idx < paramsBatch.length; idx++) {
@@ -668,6 +706,7 @@ if (isMainThread && process.argv[1] === currentFile) {
                   group.triggers,
                   symbol,
                   {
+                    ...liveStaticValues,
                     ...chromo,
                     orbEnabled: true,
                   },
@@ -707,8 +746,8 @@ if (isMainThread && process.argv[1] === currentFile) {
             if (topIS.fitness <= 0) continue;
             
             // Evaluate Out-Of-Sample
-            const oosM5 = m5Candles.filter(c => c.timestamp >= window.outOfSampleStart.getTime() && c.timestamp <= window.outOfSampleEnd.getTime());
-            const oosM1 = m1Rows.filter(r => r.timestamp >= window.outOfSampleStart.getTime() && r.timestamp <= window.outOfSampleEnd.getTime());
+            const oosM5 = m5Candles.filter(c => c.timestamp > window.outOfSampleStart.getTime() && c.timestamp <= window.outOfSampleEnd.getTime());
+            const oosM1 = m1Rows.filter(r => r.timestamp > window.outOfSampleStart.getTime() && r.timestamp <= window.outOfSampleEnd.getTime());
             const oosTyped = WalkForwardEngine.sliceTypedArrays(m1Typed, window.outOfSampleStartIndex, window.outOfSampleEndIndex);
 
             const [
@@ -724,6 +763,7 @@ if (isMainThread && process.argv[1] === currentFile) {
             );
 
             const overrideConfig: PairConfig = {
+              ...liveStaticValues,
               minSlDist: minSl,
               maxSlDist: maxSl,
               minBodyPips: minBody,
@@ -770,6 +810,7 @@ if (isMainThread && process.argv[1] === currentFile) {
                 oosNetR: oosRes.totalNetR,        // Schema compatibility
                 isNetR: topIS.result.totalNetR,   // IS Net R — used to rank DNA seeds
                 isMaxDd: topIS.result.maxDrawdown, // IS Max DD — used to compute IS Calmar for seeding
+                oosEndDate: window.outOfSampleEnd.toISOString().split("T")[0], // temporal tag for DNA filtering
                 records: []
               });
             }

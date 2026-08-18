@@ -15,6 +15,7 @@ import { sendOtpEmail } from './email.js';
 import { deleteProfileTradeState } from '../manager/tradeManager.js';
 import { verifyMetaApiAccount, verifyMetaApiConnection, getSharedConnection, getProfileTradeHistory, clearSharedConnection } from '../trading/broker/metaApiHandler.js';
 import { discoverBrokerSymbols } from '../utils/discoverSymbols.js';
+import { registerProfileName } from '../utils/logger.js';
 
 const jwtLib = jwtPkg as any;
 
@@ -363,6 +364,9 @@ authRouter.get('/profiles', requireAuth, async (req: AuthRequest, res) => {
     const profiles = await deduplicateRequest(`get_profiles_${userId}`, 2000, async () => {
       return await db.prepare('SELECT id, profile_name, metaapi_account_id, risk_multiplier, bot_risks, automation_active, ai_sniper_active, diary_reset_time, locked_pairs, created_at, base_risk_balance, dwcb_enabled, dwcb_peak_balance, institutional_enabled, institutional_daily_cap, institutional_peak_to_draw, institutional_daily_start_balance FROM trading_profiles WHERE user_id = ? ORDER BY created_at ASC').all(userId);
     });
+    profiles.forEach((p: any) => {
+      if (p.id && p.profile_name) registerProfileName(Number(p.id), p.profile_name);
+    });
     const enrichedProfiles = profiles.map((p: any) => ({
       ...p,
       locked_pairs: (() => { try { return JSON.parse(p.locked_pairs || '[]'); } catch { return []; } })(),
@@ -395,6 +399,7 @@ authRouter.post('/profiles', requireAuth, async (req: AuthRequest, res) => {
     `).run(req.user.id, profile_name.trim(), encrypt(cleanAccountId));
 
     const profileId = result.lastInsertRowid;
+    registerProfileName(Number(profileId), profile_name.trim());
 
     // Auto-discover symbols immediately on profile creation
     const user = await db.prepare('SELECT metaapi_token FROM users WHERE id = ?').get(req.user.id) as any;
@@ -456,7 +461,7 @@ authRouter.delete('/profiles/:id', requireAuth, async (req: AuthRequest, res) =>
 authRouter.post('/profiles/:id/settings', requireAuth, tradeLimiter, async (req: AuthRequest, res) => {
   try {
     const profileId = Number(req.params.id);
-    const existing = await db.prepare('SELECT profile_name, metaapi_account_id, risk_multiplier, automation_active, ai_sniper_active, base_risk_balance, institutional_enabled, dwcb_enabled, dwcb_peak_balance FROM trading_profiles WHERE id = ? AND user_id = ?').get(profileId, req.user.id) as any;
+    const existing = await db.prepare('SELECT profile_name, metaapi_account_id, risk_multiplier, automation_active, ai_sniper_active, base_risk_balance, institutional_enabled, institutional_daily_cap, institutional_peak_to_draw, dwcb_enabled, dwcb_peak_balance FROM trading_profiles WHERE id = ? AND user_id = ?').get(profileId, req.user.id) as any;
     
     if (!existing) return res.status(404).json({ success: false, error: 'Profile not found.' });
 
@@ -534,6 +539,10 @@ authRouter.post('/profiles/:id/settings', requireAuth, tradeLimiter, async (req:
       profileId, 
       req.user.id
     );
+
+    if (finalName) {
+      registerProfileName(Number(profileId), finalName);
+    }
 
     // ✅ Initialize DWCB Peak Balance to live equity immediately if missing
     let newDwcbPeakBalance: number | null = null;
@@ -732,7 +741,11 @@ authRouter.get('/profiles/:id/diary', requireAuth, async (req: AuthRequest, res:
     }
 
     const trades = await db.prepare('SELECT * FROM trade_diary WHERE profile_id = ? ORDER BY close_time DESC').all(profileId);
-    const filteredTrades = resetTime ? trades.filter((t: any) => new Date(t.close_time).getTime() >= new Date(resetTime).getTime()) : trades;
+    const resetMs = resetTime ? (Number.isFinite(Number(resetTime)) ? Number(resetTime) : new Date(resetTime).getTime()) : 0;
+    const filteredTrades = resetTime ? trades.filter((t: any) => {
+      const closeMs = Number.isFinite(Number(t.close_time)) ? Number(t.close_time) : (t.close_time ? new Date(t.close_time).getTime() : 0);
+      return closeMs >= resetMs;
+    }) : trades;
     
     res.json({ success: true, trades: filteredTrades });
   } catch (e: any) {
@@ -749,13 +762,24 @@ authRouter.get('/profiles/:id/leaderboard', requireAuth, async (req: AuthRequest
     if (!profileRow) return res.status(404).json({ success: false, error: 'Profile not found.' });
 
     const resetTime = profileRow.diary_reset_time || undefined;
-    const trades = await db.prepare('SELECT bot_id, broker_symbol, profit, close_time, open_time FROM trade_diary WHERE profile_id = ?').all(profileId) as any[];
+    let trades = await db.prepare('SELECT bot_id, broker_symbol, profit, close_time, open_time FROM trade_diary WHERE profile_id = ?').all(profileId) as any[];
     
+    if (!trades || trades.length === 0) {
+      const liveTrades = await getProfileTradeHistory(profileId, 30, resetTime);
+      if (liveTrades && liveTrades.length > 0) {
+        trades = liveTrades;
+      }
+    }
+    
+    const resetMs = resetTime ? (Number.isFinite(Number(resetTime)) ? Number(resetTime) : new Date(resetTime).getTime()) : 0;
     // Filter by resetTime if available
-    const filteredTrades = resetTime ? trades.filter((t: any) => new Date(t.close_time || t.open_time || Date.now()).getTime() >= new Date(resetTime).getTime()) : trades;
+    const filteredTrades = resetTime ? trades.filter((t: any) => {
+      const tMs = Number(t.close_time || t.open_time) || (t.close_time || t.open_time ? new Date(t.close_time || t.open_time).getTime() : 0);
+      return tMs >= resetMs;
+    }) : trades;
     
     // Sort chronologically for drawdown calculation
-    filteredTrades.sort((a, b) => (a.close_time || a.open_time || 0) - (b.close_time || b.open_time || 0));
+    filteredTrades.sort((a, b) => (Number(a.close_time || a.open_time) || 0) - (Number(b.close_time || b.open_time) || 0));
 
     // Aggregate
     const stats: Record<string, { profit: number, wins: number, total: number, peak: number, maxDD: number }> = {};
@@ -892,9 +916,9 @@ authRouter.get('/portfolio-metrics', requireAuth, async (req: AuthRequest, res: 
     const winRate = totalTrades > 0 ? (wins / totalTrades) * 100 : 0;
     
     // Calculate span in years
-    const firstTradeMs = new Date(allTrades[0].exitTime).getTime();
-    const lastTradeMs = new Date(allTrades[allTrades.length - 1].exitTime).getTime();
-    const msSpan = lastTradeMs - firstTradeMs;
+    const firstTradeMs = Number.isFinite(Number(allTrades[0].exitTime)) ? Number(allTrades[0].exitTime) : new Date(allTrades[0].exitTime).getTime();
+    const lastTradeMs = Number.isFinite(Number(allTrades[allTrades.length - 1].exitTime)) ? Number(allTrades[allTrades.length - 1].exitTime) : new Date(allTrades[allTrades.length - 1].exitTime).getTime();
+    const msSpan = Math.max((isNaN(lastTradeMs) || isNaN(firstTradeMs)) ? 0 : lastTradeMs - firstTradeMs, 0);
     const yearsSpan = Math.max(msSpan / (1000 * 60 * 60 * 24 * 365), 0.1); // min 0.1 years to avoid div/0
 
     const tradesPerYear = Math.round(totalTrades / yearsSpan);

@@ -213,6 +213,8 @@ if (isMainThread && process.argv[1] && (process.argv[1] === currentFile || path.
 
     const basePair = OPTIMIZER_CONFIG[symbol] ? symbol : (OPTIMIZER_CONFIG[symbol.replace(".Daily", "")] ? symbol.replace(".Daily", "") : symbol + ".Daily");
     const configTemplate = OPTIMIZER_CONFIG[basePair];
+    
+    // Structural filters moved into the session loop below
 
     if (!configTemplate) {
       parentPort?.postMessage(
@@ -507,8 +509,8 @@ if (isMainThread && process.argv[1] && (process.argv[1] === currentFile || path.
       m1Typed.isEOD_standard[i] = isEODSession(h, m) ? 1 : 0;
       if (i > 0) {
         const prevH = m1Rows[i-1].estHour;
-        m1Typed.isSessionReset[i] = ((prevH < 17 && h >= 17) || (prevH > h && h >= 17)) ? 1 : 0;
-        m1Typed.isMidnightExpiry[i] = (prevH > h && h < 17) ? 1 : 0;
+        m1Typed.isSessionReset[i] = ((prevH < 15 && h >= 15) || (prevH > h && h >= 15) || (h === 15 && m === 0)) ? 1 : 0;
+        m1Typed.isMidnightExpiry[i] = (prevH > h && h < 15) ? 1 : 0;
       }
       
       const dateStr = new Date(r.timestamp).toISOString().split('T')[0];
@@ -553,6 +555,30 @@ if (isMainThread && process.argv[1] && (process.argv[1] === currentFile || path.
     }
 
     for (const session of sessions) {
+      const isAsiaSession = session === "asia";
+      const isCrypto = symbol.includes("BTC") || symbol.includes("ETH");
+      const isIndex = ["US30", "NAS100", "SPX500", "GER40", "UK100", "JPN225"].some(idx => symbol.includes(idx));
+      const isJpyCross = symbol.includes("JPY");
+
+      let useHtfSar = true;
+      if (isCrypto) useHtfSar = false;
+      if (isIndex && isAsiaSession) useHtfSar = false;
+      if (isJpyCross && !symbol.includes("GBP")) useHtfSar = false; // CHFJPY false, GBPJPY true
+      if (symbol === "NZDUSD") useHtfSar = false;
+
+      let reqCloseHalf = false;
+      if (isIndex && !isAsiaSession) reqCloseHalf = true;
+      if (symbol === "USDCAD" || symbol === "GBPJPY" || symbol === "BTCUSD") reqCloseHalf = true;
+
+      const wbr = (symbol.includes("EURUSD") || (symbol.includes("CHFJPY") && !isAsiaSession)) ? 1.75 : 1.5;
+
+      const liveStaticValues = {
+        useHtfSarFilter: useHtfSar,
+        requireCloseLocationHalf: reqCloseHalf,
+        minWbr: wbr,
+        maxH1EmaSlope: 20
+      };
+
       const startTimes = startTimesMap[session];
 
       // --- CROSS-WINDOW FULL-YEAR CACHES ---
@@ -599,12 +625,9 @@ if (isMainThread && process.argv[1] && (process.argv[1] === currentFile || path.
         function getCachedTriggers(
           tSpec: { h: number; m: number },
           orbMins: number,
-          sweepPipsVal: number,
-          actMins: number,
-          maxSweepMult: number,
-          reqCloseInside: boolean
+          actMins: number
         ) {
-          const cacheKey = `${tSpec.h}_${tSpec.m}_${orbMins}_${sweepPipsVal}_${actMins}_${maxSweepMult}_${reqCloseInside}`;
+          const cacheKey = `${tSpec.h}_${tSpec.m}_${orbMins}_${actMins}`;
           if (!triggerCache.has(cacheKey)) {
             const t = preComputeTriggers(
               isM5,
@@ -617,10 +640,10 @@ if (isMainThread && process.argv[1] && (process.argv[1] === currentFile || path.
               tSpec.h,
               tSpec.m,
               orbMins,
-              sweepPipsVal,
+              0, // sweepPips: 0 for Super-Set
               actMins,
-              maxSweepMult,
-              reqCloseInside
+              999, // maxSweepMult: 999 for Super-Set
+              false // reqCloseInside: false for Super-Set
             );
             triggerCache.set(cacheKey, t);
           }
@@ -639,8 +662,9 @@ if (isMainThread && process.argv[1] && (process.argv[1] === currentFile || path.
             return { totalNetR: 0, trades: 0, maxDrawdown: 0, rawResult: null };
           }
 
-          const triggers = getCachedTriggers(startTime, orbMinutes, sweepPips, actionMinutes, maxSweepMult, reqCloseInside);
+          const triggers = getCachedTriggers(startTime, orbMinutes, actionMinutes);
           const overrideConfig: SageOptimizerConfig = {
+              ...liveStaticValues,
             minSlDist: minSl,
             maxSlDist: maxSl,
             sweepPips: sweepPips,
@@ -746,8 +770,14 @@ if (isMainThread && process.argv[1] && (process.argv[1] === currentFile || path.
         ];
 
         // Decode diverse champions from previous dump for this session
+        // Temporal DNA filter: only use DNA entries discovered BEFORE this window's IS start.
+        // This prevents DNA from later windows seeding earlier windows in next run (temporal leakage).
+        const windowIsStartStr = window.inSampleStart.toISOString().split("T")[0];
+        const temporallyValidDna = prevDumpAlphas.filter((a: any) =>
+          !a.oosEndDate || a.oosEndDate < windowIsStartStr
+        );
         const championChromosomes: number[][] = [];
-        for (const alpha of prevDumpAlphas) {
+        for (const alpha of temporallyValidDna) {
           if (championChromosomes.length >= 10) break;
           const chrom = decodeSageSetup(
             alpha.setup, session,
@@ -763,16 +793,16 @@ if (isMainThread && process.argv[1] && (process.argv[1] === currentFile || path.
         const allSeedChromosomes = [...championChromosomes, ...seedChromosomes];
 
         // === WFA-INTEGRATED FITNESS: Pre-compute OOS slices before the GA runs ===
-        const oosM5_wfa = m5Candles.filter(c => c.timestamp >= window.outOfSampleStart.getTime() && c.timestamp <= window.outOfSampleEnd.getTime());
-        const oosM1_wfa = m1Rows.filter(r => r.timestamp >= window.outOfSampleStart.getTime() && r.timestamp <= window.outOfSampleEnd.getTime());
+        const oosM5_wfa = m5Candles.filter(c => c.timestamp > window.outOfSampleStart.getTime() && c.timestamp <= window.outOfSampleEnd.getTime());
+        const oosM1_wfa = m1Rows.filter(r => r.timestamp > window.outOfSampleStart.getTime() && r.timestamp <= window.outOfSampleEnd.getTime());
         const oosTyped_wfa = WalkForwardEngine.sliceTypedArrays(m1Typed, window.outOfSampleStartIndex, window.outOfSampleEndIndex);
 
         // Removed unused oosTriggerCache and getOosCachedTriggers
 
-        // Instantiate Hybrid GA Optimizer (150 pop Ãƒâ€” 60 gen = 9,000 evals/window)
+        // Instantiate Hybrid GA Optimizer (150 pop, 80 gen)
         const optimizer = new HybridGeneticOptimizer(mapper, fitnessFn, {
           populationSize: 150,
-          generations: 60,
+          generations: 80,
           mutationRate: 0.15,
           fitnessMode: 'calmar',
           seedChromosomes: allSeedChromosomes,
@@ -794,7 +824,7 @@ if (isMainThread && process.argv[1] && (process.argv[1] === currentFile || path.
               
               const key = `${startTime.h}_${startTime.m}_${orbMinutes}_${sweepPips}_${actionMinutes}_${maxSweepMult}_${reqCloseInside}`;
               if (!groups.has(key)) {
-                const triggers = getCachedTriggers(startTime, orbMinutes, sweepPips, actionMinutes, maxSweepMult, reqCloseInside);
+                const triggers = getCachedTriggers(startTime, orbMinutes, actionMinutes);
                 groups.set(key, { chromosomes: [], indices: [], triggers });
               }
               const group = groups.get(key)!;
@@ -829,7 +859,9 @@ if (isMainThread && process.argv[1] && (process.argv[1] === currentFile || path.
               for (let i = 0; i < group.chromosomes.length; i++) {
                 const idx = group.indices[i];
                 const chromo = group.chromosomes[i];
-                const configObj = { ...chromo, reversalEnabled: true };
+                
+                // Inject static filters (HTF, WBR) natively evaluated without PairConfig circular dependency
+                const configObj = { ...liveStaticValues, ...chromo, reversalEnabled: true };
 
                 // --- IS Evaluation ---
                 const isRes = evaluateExits(isTyped, isM5, group.triggers, symbol, configObj, session, isForex);
@@ -868,8 +900,8 @@ if (isMainThread && process.argv[1] && (process.argv[1] === currentFile || path.
             if (topIS.fitness <= 0) continue;
             
             // Evaluate Out-Of-Sample
-            const oosM5 = m5Candles.filter(c => c.timestamp >= window.outOfSampleStart.getTime() && c.timestamp <= window.outOfSampleEnd.getTime());
-            const oosM1 = m1Rows.filter(r => r.timestamp >= window.outOfSampleStart.getTime() && r.timestamp <= window.outOfSampleEnd.getTime());
+            const oosM5 = m5Candles.filter(c => c.timestamp > window.outOfSampleStart.getTime() && c.timestamp <= window.outOfSampleEnd.getTime());
+            const oosM1 = m1Rows.filter(r => r.timestamp > window.outOfSampleStart.getTime() && r.timestamp <= window.outOfSampleEnd.getTime());
             const oosTyped = WalkForwardEngine.sliceTypedArrays(m1Typed, window.outOfSampleStartIndex, window.outOfSampleEndIndex);
 
             const [
@@ -882,10 +914,11 @@ if (isMainThread && process.argv[1] && (process.argv[1] === currentFile || path.
               oosM5, oosM1, symbol,
               configTemplate.spread * configTemplate.pipSize,
               session, isForex, configTemplate.pipSize,
-              startTime.h, startTime.m, orbMinutes, sweepPips, actionMinutes, maxSweepMult, reqCloseInside
+              startTime.h, startTime.m, orbMinutes, 0, actionMinutes, 999, false
             );
 
             const overrideConfig: SageOptimizerConfig = {
+                ...liveStaticValues,
               minSlDist: minSl,
               maxSlDist: maxSl,
               sweepPips: sweepPips,
@@ -935,6 +968,7 @@ if (isMainThread && process.argv[1] && (process.argv[1] === currentFile || path.
                 oosNetR: oosRes.totalNetR,        // Schema compatibility
                 isNetR: topIS.result.totalNetR,   // IS Net R — used to rank DNA seeds
                 isMaxDd: topIS.result.maxDrawdown, // IS Max DD — used to compute IS Calmar for seeding
+                oosEndDate: window.outOfSampleEnd.toISOString().split("T")[0], // temporal tag for DNA filtering
                 records: []
               });
             }

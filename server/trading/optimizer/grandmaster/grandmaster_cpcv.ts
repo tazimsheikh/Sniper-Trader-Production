@@ -58,57 +58,60 @@ function extractDaysFromWindows(
 function calcMetricsOnDays(
   components: IndependentSynthesisComponent[],
   globalDates: string[],
-  days: number[]
+  days: number[],
+  useUniformRisk: boolean = false
 ) {
   let totalR = 0;
   let peakR = 0;
   let maxDD = 0;
   const numDays = days.length;
+  if (numDays === 0 || components.length === 0) return { totalR: 0, maxDD: 0, sharpe: 0 };
   
   const dailyReturnsArray = new Float64Array(numDays);
   
-  for (let i = 0; i < numDays; i++) {
-    const d = days[i];
-    let dailyR = 0;
-    const dateStr = globalDates[d];
-    for (const c of components) {
-      dailyR += (c.dailyReturns[dateStr] || 0) * (c.riskPct || 1.0);
+  for (const c of components) {
+    const risk = useUniformRisk ? 1.0 : (c.riskPct || 1.0);
+    const dArray = c.dailyRArray;
+    if (dArray) {
+      for (let i = 0; i < numDays; i++) {
+        dailyReturnsArray[i] += dArray[days[i]] * risk;
+      }
+    } else {
+      for (let i = 0; i < numDays; i++) {
+        const dateStr = globalDates[days[i]];
+        dailyReturnsArray[i] += (c.dailyReturns[dateStr] || 0) * risk;
+      }
     }
-    
+  }
+
+  let activeCount = 0;
+  for (let i = 0; i < numDays; i++) {
+    const dailyR = dailyReturnsArray[i];
     totalR += dailyR;
-    dailyReturnsArray[i] = dailyR;
-    
     if (totalR > peakR) peakR = totalR;
     const dd = peakR - totalR;
     if (dd > maxDD) maxDD = dd;
+    if (dailyR !== 0) activeCount++;
   }
-  
-  // Only compute Sharpe on days where at least one component had a trade.
-  // Including zero-return days artificially suppresses stdDev and inflates Sharpe.
-  const activeDailyReturns: number[] = [];
-  for (let i = 0; i < numDays; i++) {
-    if (dailyReturnsArray[i] !== 0) activeDailyReturns.push(dailyReturnsArray[i]);
-  }
-  const nActive = activeDailyReturns.length;
 
-  // Guard: if no active days or no calendar days, Sharpe is 0 (undefined period)
-  if (nActive === 0 || numDays === 0) {
+  if (activeCount === 0) {
     return { totalR, maxDD, sharpe: 0 };
   }
 
-  const mean = totalR / nActive;
+  const mean = totalR / activeCount;
   let varSum = 0;
-  for (const r of activeDailyReturns) {
-    varSum += (r - mean) * (r - mean);
+  for (let i = 0; i < numDays; i++) {
+    const r = dailyReturnsArray[i];
+    if (r !== 0) {
+      varSum += (r - mean) * (r - mean);
+    }
   }
-  const stdDev = Math.sqrt(varSum / nActive);
+  const stdDev = Math.sqrt(varSum / activeCount);
 
-  // Guard: if stdDev is effectively zero (all returns identical), Sharpe is 0
   if (stdDev < 1e-12) {
     return { totalR, maxDD, sharpe: 0 };
   }
 
-  // Annualize by trades-per-year rate — clamp to [1, 252] to prevent Inf/NaN
   let activeDaysPerYear = 252;
   if (numDays > 1) {
     const start = new Date(globalDates[days[0]]).getTime();
@@ -116,13 +119,12 @@ function calcMetricsOnDays(
     const calYears = (end - start) / (1000 * 60 * 60 * 24 * 365.25);
     if (calYears > 0.1) activeDaysPerYear = numDays / calYears;
   }
-  const calendarDaysPerActive = numDays / nActive;
+  const calendarDaysPerActive = numDays / activeCount;
   const tradesPerYear = calendarDaysPerActive > 0
     ? Math.min(252, Math.max(1, activeDaysPerYear / calendarDaysPerActive))
     : 1;
 
   const sharpe = (mean / stdDev) * Math.sqrt(tradesPerYear);
-  // Final safety clamp: reject any NaN or Inf that slipped through
   const safeSharpe = isFinite(sharpe) ? sharpe : 0;
   
   return { totalR, maxDD, sharpe: safeSharpe };
@@ -133,25 +135,44 @@ function calculateCorrelationPenaltyDays(
   globalDates: string[],
   days: number[]
 ): number {
-  if (components.length <= 1) return 1.0;
   const n = components.length;
+  if (n <= 1) return 1.0;
+  const numDays = days.length;
+  if (numDays === 0) return 1.0;
+
   let totalCorr = 0;
   let pairs = 0;
-  const numDays = days.length;
 
   for (let i = 0; i < n; i++) {
+    const arrI = components[i].dailyRArray;
+    const rI = components[i].riskPct || 1.0;
     for (let j = i + 1; j < n; j++) {
+      const arrJ = components[j].dailyRArray;
+      const rJ = components[j].riskPct || 1.0;
+      
       let sumI = 0, sumJ = 0, sumI2 = 0, sumJ2 = 0, pSum = 0;
-      for (let idx = 0; idx < numDays; idx++) {
-        const dateStr = globalDates[days[idx]];
-        const rI = (components[i].dailyReturns[dateStr] || 0) * (components[i].riskPct || 1.0);
-        const rJ = (components[j].dailyReturns[dateStr] || 0) * (components[j].riskPct || 1.0);
-        
-        sumI += rI;
-        sumJ += rJ;
-        sumI2 += rI * rI;
-        sumJ2 += rJ * rJ;
-        pSum += rI * rJ;
+      if (arrI && arrJ) {
+        for (let idx = 0; idx < numDays; idx++) {
+          const d = days[idx];
+          const valI = arrI[d] * rI;
+          const valJ = arrJ[d] * rJ;
+          sumI += valI;
+          sumJ += valJ;
+          sumI2 += valI * valI;
+          sumJ2 += valJ * valJ;
+          pSum += valI * valJ;
+        }
+      } else {
+        for (let idx = 0; idx < numDays; idx++) {
+          const dateStr = globalDates[days[idx]];
+          const valI = (components[i].dailyReturns[dateStr] || 0) * rI;
+          const valJ = (components[j].dailyReturns[dateStr] || 0) * rJ;
+          sumI += valI;
+          sumJ += valJ;
+          sumI2 += valI * valI;
+          sumJ2 += valJ * valJ;
+          pSum += valI * valJ;
+        }
       }
       
       const num = pSum - (sumI * sumJ) / numDays;
@@ -173,7 +194,7 @@ function scorePortfolioISDays(
   isDays: number[],
   category: string
 ): number {
-  const metrics = calcMetricsOnDays(components, globalDates, isDays);
+  const metrics = calcMetricsOnDays(components, globalDates, isDays, true);
   const corrPenalty = calculateCorrelationPenaltyDays(components, globalDates, isDays);
   
   const returnToDD = metrics.maxDD > 0 ? metrics.totalR / metrics.maxDD : metrics.totalR * 10;
@@ -217,7 +238,15 @@ export function runCPCV(
     
     // Extract OOS days first, then purge them from IS to prevent look-ahead data leakage
     const oosDays = extractDaysFromWindows(windows, oosWindows, 'OOS');
-    const oosDaysSet = new Set(oosDays);
+    // Build embargoed purge set: exclude 5 trading days before and after each OOS block
+    // to prevent serial autocorrelation leaking across the IS/OOS boundary.
+    const EMBARGO_DAYS = 5;
+    const oosDaysSet = new Set<number>();
+    for (const d of oosDays) {
+      for (let e = d - EMBARGO_DAYS; e <= d + EMBARGO_DAYS; e++) {
+        if (e >= 0) oosDaysSet.add(e);
+      }
+    }
     const isDays = extractDaysFromWindows(windows, isWindows, 'IS', oosDaysSet);
     
     // Greedy IS selection

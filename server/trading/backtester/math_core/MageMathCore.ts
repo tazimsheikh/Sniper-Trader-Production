@@ -4,8 +4,9 @@ import { OPTIMIZER_CONFIG } from '../../config/OptimizerPairConfig.js';
 import { PairConfigManager } from '../../config/PairConfig.js';
 import { TriggerEvent, M1TypedArrays, PairConfig, TradeRecord } from '../../config/types.js';
 import { isNewsForceClose } from '../../market/historicalNews.js';
-import { isRolloverCircuitBreaker } from '../../market/MathFilters.js';
+import { isRolloverCircuitBreaker, isToxicDay } from '../../market/MathFilters.js';
 import { buildAtrArray } from '../../market/Indicators.js';
+import { getFixedEstDate } from './MathCoreUtils.js';
 
 
 export function preComputeTriggers(
@@ -21,6 +22,11 @@ export function preComputeTriggers(
   orbMinutes: number = 15,
   actionMinutes: number = 5,
   minBodyPips?: number,
+  minBodyRatio?: number,
+  minCloseLoc?: number,
+  htfTrendFilter?: boolean,
+  useHtfSar?: boolean,
+  config?: PairConfig,
 ): TriggerEvent[] {
   const startMins = orbTimeHour * 60 + orbTimeMin;
 
@@ -39,6 +45,18 @@ export function preComputeTriggers(
   const atrArr = buildAtrArray(m5Candles, 14);
   const htfData = HTFContextTracker.precomputeHTFData(m5Candles);
   let m1Idx = 0;
+
+  const mageCfgs = PairConfigManager.getMageConfigs(pair);
+  const mCfg = config || mageCfgs.find(c => c.session === sessionName) || mageCfgs[0];
+
+  const _minBodyRatio = minBodyRatio ?? mCfg?.minBodyRatio;
+  const _minCloseLoc = minCloseLoc ?? mCfg?.minCloseLoc;
+  const _requireCloseExtremity = mCfg?.requireCloseExtremity;
+  const _htfTrendFilter = htfTrendFilter ?? mCfg?.htfTrendFilter ?? mCfg?.useHtfEma;
+  const _useHtfSar = useHtfSar ?? mCfg?.useHtfSar ?? mCfg?.useHtfSarFilter;
+  const _minAtrRatio = mCfg?.minAtrRatio ?? 0.35;
+  const _maxAtrRatio = mCfg?.maxAtrRatio ?? 1.50;
+  const _maxWbr = mCfg?.maxWbr;
 
   for (let i = 2; i < m5Candles.length - 1; i++) {
     const c = m5Candles[i];
@@ -95,7 +113,7 @@ export function preComputeTriggers(
       prevC
     ) {
       // 🚫 Prop Firm Compliance: Blackout Windows 🚫
-      const dateStr = new Date(c.timestamp).toISOString().split("T")[0];
+      const dateStr = getFixedEstDate(new Date(c.timestamp)).toISOString().split("T")[0];
       if (
         isRolloverCircuitBreaker(c.estHour, estMin) ||
         isNewsForceClose(dateStr, c.estHour, estMin)
@@ -103,18 +121,14 @@ export function preComputeTriggers(
         continue;
       }
 
-      const mageCfgs = PairConfigManager.getMageConfigs(pair);
-      const mCfg = mageCfgs.find(c => c.session === sessionName) || mageCfgs[0];
-      const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-      const MONTH_NAMES = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
       const candleDate = new Date(c.timestamp);
       const utcDay = candleDate.getUTCDay();
-      const monthNum = candleDate.getUTCMonth() + 1;
-        if (mCfg) {
+      if (mCfg) {
         if (mCfg.toxicHours && mCfg.toxicHours.includes(c.estHour)) continue;
+        if (mCfg.toxicDays && isToxicDay(utcDay, mCfg.toxicDays)) continue;
       }
 
-      // MATHEMATICAL PARITY FIX: Use closed M5 candle c (matches MageEngine.ts:L359 state.m5Buffer[len-1])
+      // Action candle: closed M5 candle c
       const actionCandle = c;
       const actionCandleMins = actionCandle.estHour * 60 + (actionCandle.estMin || 0);
       if (actionCandleMins < startMins + orbMinutes) continue;
@@ -133,69 +147,102 @@ export function preComputeTriggers(
       if (buyTriggered && Math.max(actionCandle.open, actionCandle.close) < orHigh) continue;
       if (sellTriggered && Math.min(actionCandle.open, actionCandle.close) > orLow) continue;
 
-        const cBodyPips = parseFloat((Math.abs(actionCandle.close - actionCandle.open) / pipSize).toFixed(1));
-        
-        const dateIso = new Date(actionCandle.timestamp).toISOString();
-        const isApril9 = dateIso.includes('2026-04-09') && buyTriggered;
-        
-        if (isApril9 && (global as any).__SIM_ENABLE_TRACE__) {
-            console.log(`[TRACE April 9] trigger reached. cBodyPips=${cBodyPips}, minBodyPips=${minBodyPips}`);
-        }
+      const direction: "BUY" | "SELL" = buyTriggered ? "BUY" : "SELL";
 
-        if (minBodyPips !== undefined && typeof minBodyPips === 'number' && cBodyPips < minBodyPips) {
-            if (isApril9 && (global as any).__SIM_ENABLE_TRACE__) console.log(`[TRACE April 9] SKIPPED BY minBodyPips`);
-            continue;
-        }
-
-        const minRatio = 0.35;
-        const maxRatio = 1.5;
-        const orPips = (orHigh - orLow) / pipSize;
-        
-        // ATR-Relative OR filter: use pre-built ATR array (closed candles only, i-1 = last closed)
-        const atrVal = i >= 1 ? atrArr[i - 1] : 0;
-        if (atrVal > 0) {
-          const atr14Pips = atrVal / pipSize;
-          const ratio = Math.round((orPips / atr14Pips) * 100) / 100;
-          if (ratio < minRatio || ratio > maxRatio) {
-            if (isApril9 && (global as any).__SIM_ENABLE_TRACE__) console.log(`[TRACE April 9] SKIPPED BY ATR RATIO: ratio=${ratio}, atr14Pips=${atr14Pips}, orPips=${orPips}`);
-            continue;
-          }
-        } else {
-            if (isApril9 && (global as any).__SIM_ENABLE_TRACE__) console.log(`[TRACE April 9] atrVal is 0! i=${i}`);
-        }
-
-        if (mCfg && mCfg.maxSlDist !== undefined) {
-          const maxSlPips = mCfg.maxSlDist;
-          if (orPips + (spreadPts / pipSize) > maxSlPips) {
-            if (isApril9 && (global as any).__SIM_ENABLE_TRACE__) console.log(`[TRACE April 9] SKIPPED BY maxSlDist: orPips=${orPips}, maxSlPips=${maxSlPips}`);
-            continue;
-          }
-          if (isForex && (orPips + 10) > maxSlPips + 0.001) {
-            if (isApril9 && (global as any).__SIM_ENABLE_TRACE__) console.log(`[TRACE April 9] SKIPPED BY maxSlDist+10: orPips=${orPips}, maxSlPips=${maxSlPips}`);
-            continue;
-          }
-        }
-
-        if (isApril9 && (global as any).__SIM_ENABLE_TRACE__) console.log(`[TRACE April 9] Passed all filters! mageTradeTaken=${mageTradeTaken}`);
-
-        mageTradeTaken = true;
-
-        const rOrHigh = roundPrice(orHigh, pair);
-        const rOrLow  = roundPrice(orLow, pair);
-        const boxSize = roundPrice(Math.abs(rOrHigh - rOrLow), pair);
-
-        triggers.push({
-          m5Index: i,
-          m1Index: Math.min(m1Rows.length - 1, m1Idx + 5),
-          direction: buyTriggered ? "BUY" : "SELL",
-          orHigh: rOrHigh,
-          orLow: rOrLow,
-          boxSize,
-          cBodyPips,
-          orStartTimestamp,
-        } as any);
+      // ── HTF Trend Filter (H1 50 EMA) ──
+      const h1Idx = htfData.h1IndexMap[i];
+      if (_htfTrendFilter && h1Idx >= 50 && htfData.h1Candles && htfData.ema50) {
+        const h1Close = htfData.h1Candles[h1Idx]?.close;
+        const h1Ema = htfData.ema50[h1Idx];
+        if (direction === "BUY" && h1Close < h1Ema) continue;
+        if (direction === "SELL" && h1Close > h1Ema) continue;
       }
+
+      // ── HTF Parabolic SAR Anti-Acceleration Veto ──
+      if (_useHtfSar && HTFContextTracker.isSarAcceleratingFast(htfData, i, direction)) {
+        continue;
+      }
+
+      // ── Action Candle Quality Gate ──
+      const candleRange = actionCandle.high - actionCandle.low;
+      const bodyTop = Math.max(actionCandle.open, actionCandle.close);
+      const bodyBottom = Math.min(actionCandle.open, actionCandle.close);
+      const candleBody = Math.abs(actionCandle.close - actionCandle.open);
+      const cBodyPips = parseFloat((candleBody / pipSize).toFixed(1));
+
+      if (_minBodyRatio !== undefined && _minBodyRatio > 0 && candleRange > 0) {
+        if ((candleBody / candleRange) < _minBodyRatio) continue;
+      } else if (minBodyPips !== undefined && typeof minBodyPips === 'number' && cBodyPips < minBodyPips) {
+        continue;
+      }
+
+      if (_maxWbr !== undefined) {
+        const bodyPips = Math.max(cBodyPips, 0.1); // prevent division by zero
+        const breakoutWick = direction === "BUY" ? actionCandle.high - bodyTop : bodyBottom - actionCandle.low;
+        const breakoutWickPips = breakoutWick / pipSize;
+        if ((breakoutWickPips / bodyPips) > _maxWbr) {
+          continue;
+        }
+      }
+
+      // Close Location Ratio (minCloseLoc or requireCloseExtremity)
+      if (_minCloseLoc !== undefined && candleRange > 0) {
+        const closePercentile = (actionCandle.close - actionCandle.low) / candleRange;
+        const buyMin = _minCloseLoc > 0.5 ? _minCloseLoc : (1 - _minCloseLoc);
+        const sellMax = _minCloseLoc < 0.5 ? _minCloseLoc : (1 - _minCloseLoc);
+        if (direction === "BUY" && closePercentile < buyMin) continue;
+        if (direction === "SELL" && closePercentile > sellMax) continue;
+      } else if (_requireCloseExtremity && candleRange > 0) {
+        const closePercentile = (actionCandle.close - actionCandle.low) / candleRange;
+        if (direction === "BUY" && closePercentile < 0.70) continue;
+        if (direction === "SELL" && closePercentile > 0.30) continue;
+      }
+
+      // ── ATR-Relative OR Filter ──
+      const orPips = (orHigh - orLow) / pipSize;
+      const atrVal = i >= 1 ? atrArr[i - 1] : 0;
+      if (atrVal > 0) {
+        const ratio = (orPips / (atrVal / pipSize));
+        if (ratio < _minAtrRatio || ratio > _maxAtrRatio) {
+          continue;
+        }
+      }
+
+      // ── Max SL Distance Check (for legacy mode) ──
+      if (mCfg && mCfg.maxSlDist !== undefined && !mCfg.slMode) {
+        const maxSlPips = mCfg.maxSlDist;
+        if (orPips + (spreadPts / pipSize) > maxSlPips) {
+          continue;
+        }
+        if (isForex && (orPips + 10) > maxSlPips + 0.001) {
+          continue;
+        }
+      }
+
+      mageTradeTaken = true;
+
+      const rOrHigh = roundPrice(orHigh, pair);
+      const rOrLow  = roundPrice(orLow, pair);
+      const boxSize = roundPrice(Math.abs(rOrHigh - rOrLow), pair);
+
+      triggers.push({
+        m5Index: i,
+        m1Index: Math.min(m1Rows.length - 1, m1Idx + 5),
+        direction,
+        orHigh: rOrHigh,
+        orLow: rOrLow,
+        boxSize,
+        cBodyPips,
+        orStartTimestamp,
+        actionCandleHigh: actionCandle.high,
+        actionCandleLow: actionCandle.low,
+        actionCandleOpen: actionCandle.open,
+        actionCandleClose: actionCandle.close,
+        dateStr: getFixedEstDate(new Date(actionCandle.timestamp)).toISOString().split("T")[0],
+        tradingDayId: 0,
+      });
     }
+  }
   return triggers;
 }
 
@@ -238,12 +285,13 @@ export function evaluateExits(
       continue;
     }
 
-    if (config.minBodyPips !== undefined && t.cBodyPips < config.minBodyPips)
+    if (!config.slMode && config.minBodyPips !== undefined && t.cBodyPips < config.minBodyPips)
       continue;
 
-    // M-4 Parity: ORB range circuit breaker
+    // M-4 Parity: ORB range circuit breaker (only for legacy full-box SL mode)
     const orRangePips = t.boxSize / pipSize;
     if (
+      !config.slMode &&
       isForex &&
       config.maxSlDist !== undefined &&
       orRangePips + 10 > config.maxSlDist + 0.001
@@ -258,10 +306,26 @@ export function evaluateExits(
     let entryPrice = direction === "BUY" ? limitBuyPrice : limitSellPrice;
     const slBuffer = 0;
 
-    let proposedSl =
-      direction === "BUY"
-        ? t.orLow - slBuffer
-        : t.orHigh + spreadPts + slBuffer;
+    // Configurable Stop Loss Geometry
+    const slMode = (config.slMode || "OPPOSITE_BOUNDARY").toUpperCase();
+    let proposedSl = 0;
+    if (slMode === "MIDPOINT") {
+      const midpoint = (t.orHigh + t.orLow) / 2.0;
+      proposedSl = direction === "BUY" ? midpoint : midpoint + spreadPts;
+    } else if (slMode === "BREAKOUT_BAR_LOW") {
+      const buffer = 2 * pipSize;
+      const barLow = t.actionCandleLow ?? t.orLow;
+      const barHigh = t.actionCandleHigh ?? t.orHigh;
+      proposedSl = direction === "BUY" ? barLow - buffer : barHigh + buffer + spreadPts;
+    } else if (slMode === "BOX_30PCT") {
+      proposedSl = direction === "BUY" ? t.orHigh - 0.30 * t.boxSize : t.orLow + 0.30 * t.boxSize + spreadPts;
+    } else {
+      // Default: "OPPOSITE_BOUNDARY"
+      proposedSl =
+        direction === "BUY"
+          ? t.orLow - slBuffer
+          : t.orHigh + spreadPts + slBuffer;
+    }
 
     if (config.minSlDist !== undefined) {
       if (
@@ -279,7 +343,7 @@ export function evaluateExits(
     const slPrice = roundPrice(proposedSl, pair);
     let initialRisk = Math.abs(entryPrice - slPrice);
 
-    if (config.maxSlDist !== undefined && initialRisk > (config.maxSlDist + 0.001) * pipSize) {
+    if (initialRisk <= 0 || (config.maxSlDist !== undefined && initialRisk > (config.maxSlDist + 0.001) * pipSize)) {
       continue; // SKIPPED
     }
 
@@ -293,8 +357,12 @@ export function evaluateExits(
     } else if (config.exitMode === "OPPOSITE_BOUNDARY") {
       tpPrice = roundPrice(direction === "BUY" ? t.orHigh : t.orLow, pair);
     } else if (config.exitMode === "ORB_EXTENSION") {
-      const ext = t.boxSize * 2;
+      const mult = config.tpAtrMultiplier ?? 2.0;
+      const ext = t.boxSize * mult;
       tpPrice = roundPrice(direction === "BUY" ? entryPrice + ext : entryPrice - ext, pair);
+    } else if (config.exitMode === "FIXED_R") {
+      const mult = config.tpAtrMultiplier ?? 1.0;
+      tpPrice = roundPrice(direction === "BUY" ? entryPrice + mult * initialRisk : entryPrice - mult * initialRisk, pair);
     }
 
     let missedTrade = false;
@@ -306,38 +374,22 @@ export function evaluateExits(
     let entryTimeMs = 0;
 
     // isInstantFill logic matching MageEngine (fallback to market)
-    const proximityBuffer = spreadPts * 1.5;
+    const proximityThreshold = Math.max(1.5 * pipSize, (optCfg?.spread || 1) * 2.5 * pipSize, 0.10 * Math.abs(entryPrice - slPrice));
     const currentM5Close = m5Candles[t.m5Index].close;
     const m5CurrentPrice = direction === "BUY" ? currentM5Close + spreadPts : currentM5Close;
-    let isInstantFill = false;
-    if (direction === "BUY" && m5CurrentPrice <= entryPrice + proximityBuffer) isInstantFill = true;
-    if (direction === "SELL" && m5CurrentPrice >= entryPrice - proximityBuffer) isInstantFill = true;
+    const distFromEntry = direction === "BUY" ? (m5CurrentPrice - entryPrice) : (entryPrice - m5CurrentPrice);
+    const isWithinProximity = Math.abs(distFromEntry) <= proximityThreshold || (direction === "BUY" ? m5CurrentPrice <= entryPrice : m5CurrentPrice >= entryPrice);
+    let isInstantFill = (pbPct === 0) || isWithinProximity;
 
     let exitTimeMs = 0;
+    const startJ = isInstantFill ? t.m1Index : t.m1Index + 1;
     // Using M1 Precision! Max 5000 minutes (approx 1000 M5 candles)
     for (
-      let j = t.m1Index;
+      let j = startJ;
       j < Math.min(m1.length, t.m1Index + 5000);
       j++
     ) {
       if (tradeActive) exitTimeMs = m1.timestamp[j];
-      const isEOD = false; // Mage holds overnight until SL, TP, or forceCloseHours
-
-      if (isEOD) {
-        if (tradeActive) {
-          outcome = "EOD";
-          const exitPrice =
-            direction === "BUY" ? m1.close[j] : m1.close[j] + spreadPts;
-          rMultiple =
-            (direction === "BUY"
-              ? exitPrice - entryPrice
-              : entryPrice - exitPrice) / initialRisk;
-        } else {
-          outcome = "SKIPPED";
-          rMultiple = 0;
-        }
-        break;
-      }
 
         if (!tradeActive && !missedTrade) {
           const fcHours = config.forceCloseHours;
@@ -370,30 +422,17 @@ export function evaluateExits(
             break;
           }
 
-          const pbPct = config.orbPullbackPct ?? 0.0;
-          const isInstant = pbPct === 0 || isInstantFill;
-
           if (direction === "BUY") {
-            if (isInstant || m1.open[j] + spreadPts <= limitBuyPrice) {
+            if (isInstantFill || m1.open[j] + spreadPts <= limitBuyPrice || m1.low[j] + spreadPts <= limitBuyPrice) {
               entryTimeMs = m1.timestamp[j];
-              const filledPrice = isInstant ? m1.open[j] + spreadPts : Math.min(m1.open[j] + spreadPts, limitBuyPrice);
-              if (filledPrice <= slPrice) { tradeActive = true; outcome = "SL"; rMultiple = -1.0; break; }
-              else { tradeActive = true; entryPrice = filledPrice; initialRisk = Math.abs(entryPrice - slPrice); }
-            } else if (m1.low[j] + spreadPts <= limitBuyPrice) {
-              entryTimeMs = m1.timestamp[j];
-              const filledPrice = Math.min(m1.open[j] + spreadPts, limitBuyPrice);
+              const filledPrice = isInstantFill ? m1.open[j] + spreadPts : Math.min(m1.open[j] + spreadPts, limitBuyPrice);
               if (filledPrice <= slPrice) { tradeActive = true; outcome = "SL"; rMultiple = -1.0; break; }
               else { tradeActive = true; entryPrice = filledPrice; initialRisk = Math.abs(entryPrice - slPrice); }
             }
           } else if (direction === "SELL") {
-            if (isInstant || m1.open[j] >= limitSellPrice) {
+            if (isInstantFill || m1.open[j] >= limitSellPrice || m1.high[j] >= limitSellPrice) {
               entryTimeMs = m1.timestamp[j];
-              const filledPrice = isInstant ? m1.open[j] : Math.max(m1.open[j], limitSellPrice);
-              if (filledPrice + spreadPts >= slPrice) { tradeActive = true; outcome = "SL"; rMultiple = -1.0; break; }
-              else { tradeActive = true; entryPrice = filledPrice; initialRisk = Math.abs(entryPrice - slPrice); }
-            } else if (m1.high[j] >= limitSellPrice) {
-              entryTimeMs = m1.timestamp[j];
-              const filledPrice = Math.max(m1.open[j], limitSellPrice);
+              const filledPrice = isInstantFill ? m1.open[j] : Math.max(m1.open[j], limitSellPrice);
               if (filledPrice + spreadPts >= slPrice) { tradeActive = true; outcome = "SL"; rMultiple = -1.0; break; }
               else { tradeActive = true; entryPrice = filledPrice; initialRisk = Math.abs(entryPrice - slPrice); }
             }
@@ -420,8 +459,17 @@ export function evaluateExits(
         let slHit = false;
         let tpHit = false;
 
+        const isEntryBar = (entryTimeMs === m1.timestamp[j]);
+
+        // ─── STEP 1: CHECK SL/TP AGAINST THE PRE-UPDATE STOP ─────────────────
+        // For non-entry bars, SL hit is strictly checked against the pre-update stop.
+        // For the entry bar of a directional breakout (close >= open for BUY),
+        // the impulse happens first, matching LiveOrchestrator tick execution.
         if (direction === "BUY") {
-          slHit = m1.low[j] <= currentSL;
+          const isBullishEntry = isEntryBar && m1.close[j] >= m1.open[j];
+          if (!isBullishEntry) {
+            slHit = m1.low[j] <= currentSL;
+          }
           tpHit = m1.high[j] >= tpPrice;
           if (slHit && tpHit) {
             slHit = true;
@@ -435,32 +483,16 @@ export function evaluateExits(
             break;
           }
 
-          const currentR = (m1.high[j] - entryPrice) / initialRisk;
-          const tTrig = config.trailingSlTrigger;
-          const tStep = config.trailingSlStep;
-
-          if (tTrig !== undefined && currentR >= tTrig && currentSL < entryPrice) {
-            currentSL = roundPrice(entryPrice, pair);
-            lastTrailingLevel = 0;
-          }
-          if (tTrig !== undefined && tStep !== undefined && currentR >= tTrig + tStep) {
-            const numSteps = Math.floor((currentR - tTrig) / tStep);
-            const rLevelToLock = numSteps * tStep;
-            if (rLevelToLock > lastTrailingLevel) {
-              lastTrailingLevel = rLevelToLock;
-              const bd = getDigitsForPair(pair);
-              const proposedSL = Number((entryPrice + rLevelToLock * initialRisk).toFixed(bd));
-              if (proposedSL > currentSL) currentSL = roundPrice(proposedSL, pair);
-            }
-          }
-
           if (tpHit) {
             outcome = "TP";
             rMultiple = (tpPrice - entryPrice) / initialRisk;
             break;
           }
         } else {
-          slHit = m1.high[j] + spreadPts >= currentSL;
+          const isBearishEntry = isEntryBar && m1.close[j] <= m1.open[j];
+          if (!isBearishEntry) {
+            slHit = m1.high[j] + spreadPts >= currentSL;
+          }
           tpHit = m1.low[j] + spreadPts <= tpPrice;
           if (slHit && tpHit) {
             slHit = true;
@@ -474,25 +506,6 @@ export function evaluateExits(
             break;
           }
 
-          const currentR = (entryPrice - (m1.low[j] + spreadPts)) / initialRisk;
-          const tTrig = config.trailingSlTrigger;
-          const tStep = config.trailingSlStep;
-
-          if (tTrig !== undefined && currentR >= tTrig && currentSL > entryPrice) {
-            currentSL = roundPrice(entryPrice, pair);
-            lastTrailingLevel = 0;
-          }
-          if (tTrig !== undefined && tStep !== undefined && currentR >= tTrig + tStep) {
-            const numSteps = Math.floor((currentR - tTrig) / tStep);
-            const rLevelToLock = numSteps * tStep;
-            if (rLevelToLock > lastTrailingLevel) {
-              lastTrailingLevel = rLevelToLock;
-              const bd = getDigitsForPair(pair);
-              const proposedSL = Number((entryPrice - rLevelToLock * initialRisk).toFixed(bd));
-              if (proposedSL < currentSL) currentSL = roundPrice(proposedSL, pair);
-            }
-          }
-
           if (tpHit) {
             outcome = "TP";
             rMultiple = (entryPrice - tpPrice) / initialRisk;
@@ -500,6 +513,98 @@ export function evaluateExits(
           }
         }
 
+        // ─── STEP 2: UPDATE TRAILING STOP FOR FUTURE BARS ────────────────────
+        // Only reached if trade is still alive. The SL update here only affects
+        // bars AFTER this one.
+        const currentR = direction === "BUY"
+          ? (m1.high[j] - entryPrice) / initialRisk
+          : (entryPrice - (m1.low[j] + spreadPts)) / initialRisk;
+
+        const isAdtel = !!(config.adtelEnabled || config.useAdtelTrailing || config.exitMode?.startsWith("ADTEL"));
+
+        if (isAdtel) {
+          let beTrig = config.adtelBeTrigger ?? 0.25;
+          let beLock = config.adtelBeLock ?? 0.10;
+          let pTrig1 = config.adtelProfitLockTrigger ?? 0.75;
+          let pLock1 = config.adtelProfitLockLevel ?? 0.50;
+          let pTrig2 = config.adtelProfitLockTrigger2 ?? 1.10;
+          let pLock2 = config.adtelProfitLockLevel2 ?? 0.80;
+          let aStep = config.adtelStep ?? 0.25;
+
+          if (config.exitMode === "ADTEL_AGGRESSIVE") {
+            beTrig = 0.25; beLock = 0.05; pTrig1 = 0.6; pLock1 = 0.4; pTrig2 = 1.5; pLock2 = 1.2; aStep = 0.5;
+          } else if (config.exitMode === "ADTEL_MODERATE") {
+            beTrig = 0.50; beLock = 0.10; pTrig1 = 1.0; pLock1 = 0.75; pTrig2 = 2.0; pLock2 = 1.5; aStep = 0.5;
+          } else if (config.exitMode === "ADTEL_CONSERVATIVE") {
+            beTrig = 0.75; beLock = 0.25; pTrig1 = 1.5; pLock1 = 1.0; pTrig2 = 2.5; pLock2 = 2.0; aStep = 1.0;
+          }
+
+          // Tier 1: Early Break-Even trigger
+          if (currentR >= beTrig && lastTrailingLevel < beLock) {
+            lastTrailingLevel = beLock;
+            const proposed = direction === "BUY" ? entryPrice + beLock * initialRisk : entryPrice - beLock * initialRisk;
+            currentSL = roundPrice(proposed, pair);
+          }
+          // Tier 2: Mid-profit lock
+          if (currentR >= pTrig1 && lastTrailingLevel < pLock1) {
+            lastTrailingLevel = pLock1;
+            const proposed = direction === "BUY" ? entryPrice + pLock1 * initialRisk : entryPrice - pLock1 * initialRisk;
+            currentSL = roundPrice(proposed, pair);
+          }
+          // Tier 3: High-profit lock
+          if (currentR >= pTrig2 && lastTrailingLevel < pLock2) {
+            lastTrailingLevel = pLock2;
+            const proposed = direction === "BUY" ? entryPrice + pLock2 * initialRisk : entryPrice - pLock2 * initialRisk;
+            currentSL = roundPrice(proposed, pair);
+          }
+          // Tier 4: Stepped trailing beyond Tier 3
+          if (currentR >= pTrig2 + aStep) {
+            const steps = Math.floor((currentR - pTrig2) / aStep);
+            const level = pLock2 + steps * aStep;
+            if (level > lastTrailingLevel) {
+              lastTrailingLevel = level;
+              const proposed = direction === "BUY" ? entryPrice + level * initialRisk : entryPrice - level * initialRisk;
+              currentSL = roundPrice(proposed, pair);
+            }
+          }
+        } else {
+          const tTrig = config.trailingSlTrigger;
+          const tStep = config.trailingSlStep;
+
+          if (direction === "BUY") {
+            if (tTrig !== undefined && currentR >= tTrig && currentSL < entryPrice) {
+              currentSL = roundPrice(entryPrice, pair);
+              lastTrailingLevel = 0;
+            }
+            if (tTrig !== undefined && tStep !== undefined && currentR >= tTrig + tStep) {
+              const numSteps = Math.floor((currentR - tTrig) / tStep);
+              const rLevelToLock = numSteps * tStep;
+              if (rLevelToLock > lastTrailingLevel) {
+                lastTrailingLevel = rLevelToLock;
+                const bd = getDigitsForPair(pair);
+                const proposedSL = Number((entryPrice + rLevelToLock * initialRisk).toFixed(bd));
+                if (proposedSL > currentSL) currentSL = roundPrice(proposedSL, pair);
+              }
+            }
+          } else {
+            if (tTrig !== undefined && currentR >= tTrig && currentSL > entryPrice) {
+              currentSL = roundPrice(entryPrice, pair);
+              lastTrailingLevel = 0;
+            }
+            if (tTrig !== undefined && tStep !== undefined && currentR >= tTrig + tStep) {
+              const numSteps = Math.floor((currentR - tTrig) / tStep);
+              const rLevelToLock = numSteps * tStep;
+              if (rLevelToLock > lastTrailingLevel) {
+                lastTrailingLevel = rLevelToLock;
+                const bd = getDigitsForPair(pair);
+                const proposedSL = Number((entryPrice - rLevelToLock * initialRisk).toFixed(bd));
+                if (proposedSL < currentSL) currentSL = roundPrice(proposedSL, pair);
+              }
+            }
+          }
+        }
+
+        // ─── STEP 3: FORCE-CLOSE CHECKS (News / Time-based) ──────────────────
         const isNewsForceClose = m1.isNewsForceClose[j] === 1;
 
         const fcHours = config.forceCloseHours;
@@ -533,7 +638,7 @@ export function evaluateExits(
       }
     }
 
-    const dateStr = new Date(m5Candles[t.m5Index].timestamp)
+    const dateStr = getFixedEstDate(new Date(m5Candles[t.m5Index].timestamp))
       .toISOString()
       .split("T")[0];
     records.push({

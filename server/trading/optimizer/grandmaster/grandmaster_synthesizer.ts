@@ -9,6 +9,7 @@ import { runCPCV } from "./grandmaster_cpcv.js";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { getAllOptimizationRunDirs, getAllStateFiles } from "../core/DumpScanner.js";
 
 const OPTIMIZER_DIR = path.join(process.cwd(), "server", "trading", "optimizer");
 const MAGE_DUMP_DIR_BASE = path.join(OPTIMIZER_DIR, "mage", "mage_optimizer_dump");
@@ -35,14 +36,11 @@ function safeWriteFileSync(filePath: string, content: string) {
   }
 }
 
-const MIN_TRADES = 20; // Minimum 20 trades across 3-year lookback to preserve high-expectancy session setups
-const MAX_DRAWDOWN = 70; // Updated to match GrandmasterMetrics.ts — inverse-variance sizing handles high-DD at portfolio level
+const MIN_TRADES = 3;
+const MAX_DRAWDOWN = 70;
 const BLACK_SWAN_MAX_DD = 20.0;
-const BLACK_SWAN_MIN_TRADES = 50;
-// Minimum total OOS Net R for a config to enter the Black Swan pool.
-// Prevents noise-level performers (e.g. XTIUSD 6.5R) from entering even if
-// their structural metrics (Sortino, Recovery) look clean.
-const BLACK_SWAN_MIN_NET_R = 15;
+const BLACK_SWAN_MIN_TRADES = 30;
+const BLACK_SWAN_MIN_NET_R = 10;
 
 
 async function runSynthesis() {
@@ -55,30 +53,20 @@ async function runSynthesis() {
     return;
   }
 
-  function getFlatStateFiles(dir: string): string[] {
+  function getFlatStateFiles(dir: string, botName: string): string[] {
     if (!fs.existsSync(dir)) {
       throw new Error(`❌ FATAL: Dump directory not found: ${dir}\n   Run the optimizer first before the synthesizer.`);
     }
-    // FLAT read only — never descend into subdirectories (e.g. last_optimization_run).
-    // If we recurse, stale backup files contaminate the synthesis with old/999 setups.
-    let files = fs.readdirSync(dir)
-      .filter(f => f.startsWith("state_") && f.endsWith(".json"))
-      .map(f => path.join(dir, f));
-
-    const currentSymbols = new Set(files.map(f => path.basename(f).replace('state_', '').replace('.json', '')));
-    const fallbackDir = path.join(dir, "last_optimization_run");
-    
-    if (fs.existsSync(fallbackDir)) {
-      const fallbackFiles = fs.readdirSync(fallbackDir)
-        .filter(f => f.startsWith("state_") && f.endsWith(".json"));
-      
-      for (const f of fallbackFiles) {
-        const sym = f.replace('state_', '').replace('.json', '');
-        if (!currentSymbols.has(sym)) {
-          files.push(path.join(fallbackDir, f));
-        }
-      }
+    const runDirs = getAllOptimizationRunDirs(dir);
+    console.log(`[DumpScanner] Discovered ${runDirs.length} run folder(s) for ${botName}:`);
+    for (const d of runDirs) {
+      const folderName = d === dir ? "Root Dump" : path.basename(d);
+      const count = fs.existsSync(d) ? fs.readdirSync(d).filter(f => f.startsWith("state_") && f.endsWith(".json")).length : 0;
+      console.log(`  📁 ${folderName}: ${count} state files`);
     }
+
+    const files = getAllStateFiles(dir);
+    console.log(`[DumpScanner] Total ${botName} state files loaded: ${files.length}`);
 
     if (files.length === 0) {
       throw new Error(`❌ FATAL: No state_*.json files found in: ${dir}\n   The optimizer dump is empty. Run the optimizer first.`);
@@ -86,8 +74,8 @@ async function runSynthesis() {
     return files;
   }
 
-  const allMageFiles = getFlatStateFiles(MAGE_DUMP_DIR);
-  const allSageFiles = getFlatStateFiles(SAGE_DUMP_DIR);
+  const allMageFiles = getFlatStateFiles(MAGE_DUMP_DIR, "Mage");
+  const allSageFiles = getFlatStateFiles(SAGE_DUMP_DIR, "Sage");
 
   const extractSymbol = (file: string) => {
     const filename = path.basename(file);
@@ -139,40 +127,21 @@ async function runSynthesis() {
   let rawNormalPool: IndependentSynthesisComponent[] = [];
   let totalRawValidCount = 0;
 
-  const getCoreSignature = (setup: string, botType: "Mage" | "Sage") => {
-    const parts = setup.split("_");
-    let session = parts[0];
-    if (parts[0] === "NY") {
-      session = `NY_${parts[1]}`;
-    }
-
-    const fcPart = parts.find((p) => p.startsWith("FC")) || "NoFC";
-
-    if (botType === "Sage") {
-      const sweepPart = parts.find((p) => p.startsWith("Sweep")) || "NoSweep";
-      const exitPart = parts.find((p) => p.startsWith("Exit")) || "NoExit";
-      return `${session}_${sweepPart}_${exitPart}_${fcPart}`;
-    } else {
-      const bodyPart = parts.find((p) => p.startsWith("Body")) || "NoBody";
-      const bypassPart = parts.find((p) => p.endsWith("%")) || "0%";
-      return `${session}_${bypassPart}_${bodyPart}_${fcPart}`;
-    }
-  };
-
+  // Exact-setup lossless stitcher: preserves full parameter tuples across multi-slice OOS windows
   const stitchOOSSlices = (rawData: any[], botType: "Mage" | "Sage") => {
     const mergedMap = new Map<string, any>();
     for (const item of rawData) {
       if (!item.setup) continue;
       
-      const coreSig = getCoreSignature(item.setup, botType);
-      const existing = mergedMap.get(coreSig);
+      const setupKey = item.setup.trim();
+      const existing = mergedMap.get(setupKey);
       if (existing) {
         existing.trades = (existing.trades || 0) + (item.trades || 0);
         existing.totalNetR = (existing.totalNetR || 0) + (item.totalNetR || 0);
         existing.oosNetR = (existing.oosNetR || 0) + (item.oosNetR || 0);
         existing.dailyNetR = { ...(existing.dailyNetR || {}), ...(item.dailyNetR || {}) };
       } else {
-        mergedMap.set(coreSig, {
+        mergedMap.set(setupKey, {
           ...item,
           dailyNetR: { ...(item.dailyNetR || {}) }
         });
@@ -181,7 +150,27 @@ async function runSynthesis() {
     return Array.from(mergedMap.values());
   };
 
-  for (const symbol of allSymbols) {
+  console.log(`[PHASE 1] Pre-processing & auditing candidate configs across ${allSymbols.length} symbols with concurrency = 4...`);
+
+  async function asyncPool<T, R>(
+    concurrency: number,
+    items: T[],
+    fn: (item: T, index: number) => Promise<R>
+  ): Promise<R[]> {
+    const results: R[] = new Array(items.length);
+    let currentIndex = 0;
+    const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+      while (currentIndex < items.length) {
+        const idx = currentIndex++;
+        results[idx] = await fn(items[idx], idx);
+      }
+    });
+    await Promise.all(workers);
+    return results;
+  }
+
+  let completedSymbols = 0;
+  const symbolResults = await asyncPool(4, allSymbols, async (symbol) => {
     const mageDataRaw = loadStateData(allMageFiles, symbol);
     const sageDataRaw = loadStateData(allSageFiles, symbol);
 
@@ -199,54 +188,89 @@ async function runSynthesis() {
       MIN_TRADES,
     );
 
-    totalRawValidCount += rawValidCount || 0;
-
     // Hydrate list
-    const hydrateList = (list: IndependentSynthesisComponent[]) =>
-      list.map((p) => {
-        const dataList = p.botType === "Mage" ? mageData : sageData;
-        const state = dataList.find((s: any) => s.setup === p.setup);
-        const hyd = evaluateComponent(state as any, symbol, p.botType, globalDates, true);
-        if (hyd) {
-          hyd.hedgeScore = p.hedgeScore;
-          return hyd;
-        }
-        return p;
-      });
+    const hydratedList = normalList.map((p) => {
+      const dataList = p.botType === "Mage" ? mageData : sageData;
+      const state = dataList.find((s: any) => s.setup === p.setup);
+      const hyd = evaluateComponent(state as any, symbol, p.botType, globalDates, true);
+      if (hyd) {
+        hyd.hedgeScore = p.hedgeScore;
+        return hyd;
+      }
+      return p;
+    });
 
-    rawNormalPool = rawNormalPool.concat(hydrateList(normalList));
+    completedSymbols++;
+    console.log(`  [${completedSymbols.toString().padStart(2, ' ')}/${allSymbols.length}] ${symbol.padEnd(12)}: ${hydratedList.length.toString().padStart(2, ' ')} elite candidates (from ${rawValidCount.toString().padStart(3, ' ')} audited)`);
+
+    return { hydratedList, rawValidCount };
+  });
+
+  for (const res of symbolResults) {
+    rawNormalPool.push(...res.hydratedList);
+    totalRawValidCount += res.rawValidCount;
   }
 
   console.log(`[PHASE 1] Raw Normal Pool (Elites): ${rawNormalPool.length} (from ${totalRawValidCount} raw valid configs)`);
 
-  // Run individual Monte Carlo evaluations to set basic metrics
+  // Run individual Monte Carlo evaluations using only the IS portion (first 80% of dates)
+  // to avoid future tail-risk events from the OOS window contaminating position sizing decisions.
+  const mcCutoffIdx = Math.floor(globalDates.length * 0.80);
+  const mcDates = globalDates.slice(0, mcCutoffIdx);
   for (const p of rawNormalPool) {
     const dailyReturnsArray: number[] = [];
-    for (const d of globalDates) dailyReturnsArray.push(p.dailyReturns[d] || 0);
+    for (const d of mcDates) dailyReturnsArray.push(p.dailyReturns[d] || 0);
     p.monteCarloDrawdown99 = runMonteCarlo(dailyReturnsArray, 10000);
   }
   // PHASE 2: Clustering & Selection (De-correlation)
-  console.log(`\n⚙️ PHASE 2: DETERMINISTIC DE-CORRELATION CLUSTERING (Relaxed for Inverse-Variance)`);
+  console.log(`\n⚙️ PHASE 2: DETERMINISTIC DE-CORRELATION CLUSTERING (Hierarchical Risk Parity)`);
   
   const normalBannedSessions = new Set<string>();
-  const selectedNormal = admitAllWithCorrelationPenalty(rawNormalPool, globalDates, 1, normalBannedSessions);
+  let selectedNormal = admitAllWithCorrelationPenalty(rawNormalPool, globalDates, 1, normalBannedSessions);
 
   console.log(`Selected Holy Grail Portfolio: ${selectedNormal.length} configs`);
 
-  const normalSizing = computeMasterRiskSizing(selectedNormal, globalDates, 1.0, 0.10);
+  // Build active calendar strictly from dates where selected components traded
+  const portfolioDatesSet = new Set<string>();
+  for (const c of selectedNormal) {
+    for (const d of Object.keys(c.dailyReturns || {})) {
+      portfolioDatesSet.add(d);
+    }
+  }
+  const portfolioDates = Array.from(portfolioDatesSet).sort();
+
+  for (const c of selectedNormal) {
+    c.dailyRArray = new Float64Array(portfolioDates.length);
+    for (let i = 0; i < portfolioDates.length; i++) {
+      c.dailyRArray[i] = c.dailyReturns[portfolioDates[i]] || 0;
+    }
+  }
+
+  const normalSizing = computeMasterRiskSizing(selectedNormal, portfolioDates, 1.0, 0.10);
   console.log(`[SIZING] 🌌 Holy Grail Portfolio Master MC DD 99%: ${normalSizing.masterMcDrawdown99.toFixed(2)} R. Global Risk Factor: ${normalSizing.globalRiskPct.toFixed(3)}.`);
 
   console.log(`\n⚙️ PHASE 4: PORTFOLIO CPCV VALIDATION`);
-  const windows = generateRollingWindows(globalDates.length, 6, 560, 140, 5);
+  const windows = generateRollingWindows(portfolioDates.length, 6, 560, 140, 5);
   
-  const normalCpcv = runCPCV(selectedNormal, globalDates, "The Holy Grail", windows);
+  const normalCpcv = runCPCV(selectedNormal, portfolioDates, "The Holy Grail", windows);
 
   console.log(`[CPCV] Normal Pool CPCV Passed: ${normalCpcv.passed} (${normalCpcv.pathsPassed}/${normalCpcv.totalPaths} paths, Min Sharpe: ${normalCpcv.minSharpe.toFixed(2)}, Max DD: ${normalCpcv.maxDD.toFixed(2)}R)`);
 
+  // ── CPCV Hard Gate ──────────────────────────────────────────────────────────
+  // If the portfolio fails CPCV structural validation, abort the JSON/MD output.
+  // No stale or curve-fitted portfolio should ever be deployed without passing this gate.
+  if (!normalCpcv.passed) {
+    console.error(`\n🛑 CPCV GATE FAILED: The Holy Grail portfolio did not pass CPCV validation.`);
+    console.error(`   Paths passed: ${normalCpcv.pathsPassed}/${normalCpcv.totalPaths} (need ≥ 10)`);
+    console.error(`   Max DD: ${normalCpcv.maxDD.toFixed(2)}R (need < 12.0R)`);
+    console.error(`   The portfolio JSON will NOT be written. Re-run the optimizer with updated data.`);
+    return;
+  }
+  // ────────────────────────────────────────────────────────────────────────────
   // Write synthesis report
   let markdown = `# 🏆 ENTERPRISE INDEPENDENT SYNTHESIS REPORT\n\n`;
   markdown += `This report outlines the institutional-grade components.\n`;
-  markdown += `**Quantitative Constraints:** Min Trades ≥ ${MIN_TRADES} | Max DD ≤ ${MAX_DRAWDOWN}R | Last 6 Months ≥ 0R (regime guard)\n\n`;
+  markdown += `**Quantitative Constraints:** Min Trades ≥ ${MIN_TRADES} | Max DD ≤ ${MAX_DRAWDOWN}R | Continuous Soft Confidence & HRP\n\n`;
   
   markdown += `## 📊 Portfolio-Level CPCV Performance Gates\n`;
   markdown += `- **Normal Portfolio CPCV**: ${normalCpcv.passed ? 'PASSED' : 'FAILED'} (${normalCpcv.pathsPassed}/${normalCpcv.totalPaths} paths passed, Min Sharpe: ${normalCpcv.minSharpe.toFixed(2)}, Max DD: ${normalCpcv.maxDD.toFixed(2)}R)\n\n`;

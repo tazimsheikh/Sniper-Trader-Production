@@ -33,8 +33,17 @@ async function registerStubs() {
   (global as any).__SIM_ADD_BOT_LOG__ = () => {};
   (global as any).__SIM_TIME_PROVIDER__ = (date?: Date | number) => {
     const d = date ? (typeof date === "number" ? new Date(date) : date) : ((global as any).__SIM_CURRENT_TIME__ || new Date());
-    const estStr = d.toLocaleString("en-US", { timeZone: "America/New_York" });
-    return new Date(estStr + " UTC");
+    const y = d.getUTCFullYear();
+    const marchFirst = new Date(Date.UTC(y, 2, 1));
+    const daysToFirstSunday = (7 - marchFirst.getUTCDay()) % 7;
+    const secondSundayMarch = new Date(Date.UTC(y, 2, 1 + daysToFirstSunday + 7, 7, 0, 0));
+    const novFirst = new Date(Date.UTC(y, 10, 1));
+    const daysToFirstSunNov = (7 - novFirst.getUTCDay()) % 7;
+    const firstSundayNov = new Date(Date.UTC(y, 10, 1 + daysToFirstSunNov, 6, 0, 0));
+    const t = d.getTime();
+    const isDst = t >= secondSundayMarch.getTime() && t < firstSundayNov.getTime();
+    const offsetHours = isDst ? -4 : -5;
+    return new Date(t + offsetHours * 60 * 60 * 1000);
   };
 }
 
@@ -68,10 +77,10 @@ export async function runPortfolioShadowBacktest(startDate: string, endDate: str
 
   // Gather active pairs from configs
   const activePairs = new Set<string>();
-  Object.keys(MAGE_PAIR_CONFIG).forEach(p => activePairs.add(p.replace('.Daily', '')));
-  Object.keys(SAGE_PAIR_CONFIG).forEach(p => activePairs.add(p.replace('.Daily', '')));
+  Object.keys(MAGE_PAIR_CONFIG).forEach(p => activePairs.add(p.split('.')[0]));
+  Object.keys(SAGE_PAIR_CONFIG).forEach(p => activePairs.add(p.split('.')[0]));
 
-  console.log(`\n📡 Gathered ${activePairs.size} active pairs for portfolio simulation...`);
+  process.stdout.write(`\n📡 Gathered ${activePairs.size} active pairs for portfolio simulation...\n`);
 
   const allTicks: { symbol: string, tick: any }[] = [];
   const startD = new Date(new Date(startDate).getTime() - 15 * 86400000); // 15 days pre-load
@@ -82,7 +91,7 @@ export async function runPortfolioShadowBacktest(startDate: string, endDate: str
   // Load and merge CSVs
   for (const pair of activePairs) {
     // Enable bot configs for the session states
-    const sessionPairs = Array.from(orch.states.keys()).filter(k => (k as string).replace('.Daily', '') === pair);
+    const sessionPairs = Array.from(orch.states.keys()).filter(k => (k as string).split('.')[0] === pair);
     for (const sessionPair of sessionPairs) {
       const state = orch.states.get(sessionPair);
       if (state) {
@@ -98,21 +107,21 @@ export async function runPortfolioShadowBacktest(startDate: string, endDate: str
     
     mockAccount.registerSymbol(pair, actualSpread, pipSize);
 
-    const csvFiles = fs.readdirSync(csvDir).filter(f => f.startsWith(pair.split('_')[0]) && f.endsWith('.csv'));
+    const csvFiles = fs.readdirSync(csvDir).filter(f => f.startsWith(pair) && f.endsWith('.csv'));
     if (csvFiles.length > 0) {
       const csvPath = path.join(csvDir, csvFiles[0]);
       const m1Candles = await loadCsv(csvPath, actualSpread, startD, endD);
-      console.log(`   📁 Loaded ${m1Candles.length} M1 candles for ${pair}`);
+      process.stdout.write(`   📁 Loaded ${m1Candles.length} M1 candles for ${pair}\n`);
       for (const tick of m1Candles) {
         allTicks.push({ symbol: pair, tick });
       }
     } else {
-      console.warn(`   ⚠️ Warning: No CSV found for ${pair}`);
+      process.stdout.write(`   ⚠️ Warning: No CSV found for ${pair}\n`);
     }
   }
 
   // Chronological sort
-  console.log(`\n⏳ Sorting ${allTicks.length} total ticks chronologically...`);
+  process.stdout.write(`\n⏳ Sorting ${allTicks.length} total ticks chronologically...\n`);
   allTicks.sort((a, b) => a.tick.timestamp - b.tick.timestamp);
 
   console.log(`\n▶️ Starting execution...`);
@@ -128,6 +137,8 @@ export async function runPortfolioShadowBacktest(startDate: string, endDate: str
 
   let peakFloatingR = 0;
   let maxIntradayDrawdownR = 0;
+  let runningClosedNetR = 0;
+  let lastTradeLogLen = 0;
 
   for (const { symbol, tick } of allTicks) {
     const ts = tick.timestamp;
@@ -140,14 +151,9 @@ export async function runPortfolioShadowBacktest(startDate: string, endDate: str
       originalLog(`   ⏳ Progress: ${new Date(ts).toISOString()} | Equity: $${orch.cachedEquity.toFixed(2)}`);
     }
 
-    const estHour = tick.eetHour;
-    
-    const formatter = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: 'numeric', hour12: false });
-    const parts = formatter.formatToParts(new Date(ts));
-    const hrPart = parts.find(p => p.type === 'hour')?.value;
-    const mnPart = parts.find(p => p.type === 'minute')?.value;
-    const explicitEstHour = hrPart ? parseInt(hrPart, 10) : tick.eetHour;
-    const explicitEstMin = mnPart ? parseInt(mnPart, 10) : tick.eetMin;
+    const estDate = (global as any).__SIM_TIME_PROVIDER__(new Date(ts));
+    const explicitEstHour = estDate.getUTCHours();
+    const explicitEstMin = estDate.getUTCMinutes();
 
     mockAccount.setCurrentCandle(symbol, tick.open, tick.high, tick.low, tick.close, tick.timestamp, explicitEstHour, explicitEstMin);
 
@@ -169,10 +175,18 @@ export async function runPortfolioShadowBacktest(startDate: string, endDate: str
           currentUnrealizedR += floatR;
         }
       }
-      const closedNetR = mockAccount.tradeLog
-        .filter(t => t.openTime >= targetStartMs && t.rMultiple !== undefined && t.rMultiple !== null && t.rMultiple !== -1.0)
-        .reduce((sum, t) => sum + t.rMultiple, 0);
-      const totalFloatingNetR = closedNetR + currentUnrealizedR;
+
+      if (mockAccount.tradeLog.length > lastTradeLogLen) {
+        for (let i = lastTradeLogLen; i < mockAccount.tradeLog.length; i++) {
+          const t = mockAccount.tradeLog[i];
+          if (t.openTime >= targetStartMs && t.rMultiple !== undefined && t.rMultiple !== null && t.rMultiple !== -1.0) {
+            runningClosedNetR += t.rMultiple;
+          }
+        }
+        lastTradeLogLen = mockAccount.tradeLog.length;
+      }
+
+      const totalFloatingNetR = runningClosedNetR + currentUnrealizedR;
       if (totalFloatingNetR > peakFloatingR) {
         peakFloatingR = totalFloatingNetR;
       }
@@ -191,6 +205,11 @@ export async function runPortfolioShadowBacktest(startDate: string, endDate: str
       1,
       ts
     );
+
+    if ((orch as any).pendingPromises && (orch as any).pendingPromises.length > 0) {
+      await Promise.all((orch as any).pendingPromises);
+      (orch as any).pendingPromises = [];
+    }
   }
 
   // Restore console.log

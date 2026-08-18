@@ -649,7 +649,9 @@ export async function runPreFlightFilter(
           if (profile.institutional_enabled === 1) {
             const dailyCapPct = profile.institutional_daily_cap ? profile.institutional_daily_cap / 100 : 0.025;
             const peakToDrawPct = profile.institutional_peak_to_draw ? profile.institutional_peak_to_draw / 100 : 0.055;
-            const todayDateStr = getFixedEstDate().toISOString().split('T')[0];
+            const estDate = getFixedEstDate();
+            const tradingDayDate = new Date(estDate.getTime() + 7 * 60 * 60 * 1000);
+            const brokerTradingDayStr = tradingDayDate.toISOString().split('T')[0];
             
             // Absolute Drawdown Limit
             let currentInstPeak = profile.institutional_peak_balance;
@@ -678,9 +680,9 @@ export async function runPreFlightFilter(
             // Daily Loss Limit
             let dailyStartBal = profile.institutional_daily_start_balance;
             let dailyDate = profile.institutional_daily_date;
-            if (dailyDate !== todayDateStr || !dailyStartBal) {
+            if (dailyDate !== brokerTradingDayStr || !dailyStartBal) {
               dailyStartBal = effectiveBalance;
-              dailyDate = todayDateStr;
+              dailyDate = brokerTradingDayStr;
               await db.prepare("UPDATE trading_profiles SET institutional_daily_start_balance = ?, institutional_daily_date = ? WHERE id = ?").run(dailyStartBal, dailyDate, orch.profileId);
             } else {
               const dailyDrawdown = (dailyStartBal - effectiveBalance) / dailyStartBal;

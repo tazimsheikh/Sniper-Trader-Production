@@ -5,7 +5,7 @@ import { Play, Square, Eye, Activity, Settings, X, Trash2, ChevronDown, ChevronR
 import { useWebSocket } from '../context/WebSocketContext';
 import { useSound } from '../hooks/useSound';
 import TradeAnalytics from './TradeAnalytics';
-import { formatTime, formatDateTime } from '../utils/timezone';
+import { getBrokerTradingDayStr, formatTime, formatDateTime } from '../utils/timezone';
 import { MAGE_BOT, SAGE_BOT, SEER_BOT } from '../App';
 
 export default function BotDashboard({ bot }: { bot: any }) {
@@ -147,21 +147,27 @@ export default function BotDashboard({ bot }: { bot: any }) {
   const [botDailyPl, setBotDailyPl] = useState<number>(0);
   
   useEffect(() => {
-    if (!botBalance || diary.length === 0) return;
+    if (!botBalance || diary.length === 0) {
+      setBotDailyPl(0);
+      return;
+    }
     const now = new Date();
-    const estDate = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
-    const estDateString = estDate.toISOString().split('T')[0];
+    const estDateStr = getBrokerTradingDayStr(now);
+    const currentBotId = (bot?.id || '').toLowerCase();
     
     // Filter for TODAY and for THIS SPECIFIC BOT
     let dailyProfit = 0;
     diary.forEach(trade => {
-      // Must match active bot ID to filter P/L specifically to this bot
-      if (trade.bot_id !== bot.id) return;
+      const tradeBotId = (trade.bot_id || '').toLowerCase();
+      if (tradeBotId !== currentBotId && !(currentBotId === 'seer' && tradeBotId === 'discretionary_trader')) return;
       
-      const tradeCloseEst = new Date(new Date(trade.close_time).toLocaleString('en-US', { timeZone: 'America/New_York' }));
-      const tradeEstDateString = tradeCloseEst.toISOString().split('T')[0];
-      if (tradeEstDateString === estDateString) {
-        dailyProfit += trade.profit;
+      const rawClose = Number(trade.close_time) || Date.parse(trade.close_time);
+      if (!rawClose || isNaN(rawClose)) return;
+      
+      const tradeDate = new Date(rawClose);
+      const tradeEstDateStr = getBrokerTradingDayStr(tradeDate);
+      if (tradeEstDateStr === estDateStr) {
+        dailyProfit += (Number(trade.profit) || 0);
       }
     });
     
@@ -169,7 +175,7 @@ export default function BotDashboard({ bot }: { bot: any }) {
     const startingBalance = botBalance - dailyProfit; // rough estimate of start of day balance
     const pct = startingBalance > 0 ? (dailyProfit / startingBalance) * 100 : 0;
     setBotDailyPl(pct);
-  }, [diary, botBalance, bot.id]);
+  }, [diary, botBalance, bot?.id]);
 
   const categorizePair = (pair: string) => {
     const p = pair.split('.')[0].toUpperCase();
@@ -249,8 +255,8 @@ export default function BotDashboard({ bot }: { bot: any }) {
             const dbBotId = (t.bot_id || '').toLowerCase();
             if (dbBotId === currentBotId) return true;
             if (currentBotId === 'seer' && (dbBotId === 'discretionary_trader' || dbBotId === 'seer')) return true;
-            if (currentBotId === 'mage' && dbBotId.startsWith('m_')) return true;
-            if (currentBotId === 'sage' && dbBotId.startsWith('s_')) return true;
+            if (currentBotId === 'mage' && (dbBotId === 'mage' || dbBotId === 'orb' || dbBotId.startsWith('m_'))) return true;
+            if (currentBotId === 'sage' && (dbBotId === 'sage' || dbBotId === 'reversal' || dbBotId.startsWith('s_'))) return true;
             return false;
           }));
         }
@@ -271,6 +277,39 @@ export default function BotDashboard({ bot }: { bot: any }) {
       })
       .catch(() => {});
   }, [profileId, mainTab, bot?.id]);
+
+  const [isRefreshingAnalytics, setIsRefreshingAnalytics] = useState(false);
+  const refreshAnalytics = useCallback(async () => {
+    if (!profileId) return;
+    setIsRefreshingAnalytics(true);
+    try {
+      const [diaryRes, analyticsRes] = await Promise.allSettled([
+        fetch(`/api/auth/profiles/${profileId}/diary`, { credentials: 'same-origin' }).then(r => r.json()),
+        fetch(`/api/auth/profiles/${profileId}/metaapi/analytics?force=true`, { credentials: 'same-origin' }).then(r => r.json())
+      ]);
+      if (diaryRes.status === 'fulfilled' && diaryRes.value?.success && diaryRes.value?.trades) {
+        setAllTrades(diaryRes.value.trades);
+        const currentBotId = (bot?.id || '').toLowerCase();
+        setDiary(diaryRes.value.trades.filter((t: any) => {
+          const dbBotId = (t.bot_id || '').toLowerCase();
+          if (dbBotId === currentBotId) return true;
+          if (currentBotId === 'seer' && (dbBotId === 'discretionary_trader' || dbBotId === 'seer')) return true;
+          if (currentBotId === 'mage' && (dbBotId === 'mage' || dbBotId === 'orb' || dbBotId.startsWith('m_'))) return true;
+          if (currentBotId === 'sage' && (dbBotId === 'sage' || dbBotId === 'reversal' || dbBotId.startsWith('s_'))) return true;
+          return false;
+        }));
+      }
+      if (analyticsRes.status === 'fulfilled' && analyticsRes.value?.success && analyticsRes.value?.account) {
+        setAnalyticsData(analyticsRes.value);
+        if (analyticsRes.value.account.balance) {
+          setBotBalance(analyticsRes.value.account.balance);
+          setBotCurrency(analyticsRes.value.account.currency || 'USD');
+        }
+      }
+    } finally {
+      setIsRefreshingAnalytics(false);
+    }
+  }, [profileId, bot?.id]);
 
   // Poll Safety Status
   useEffect(() => {
@@ -492,13 +531,15 @@ export default function BotDashboard({ bot }: { bot: any }) {
   const staticBots = useMemo(() => [MAGE_BOT, SAGE_BOT, SEER_BOT], []);
 
   const masterTimeline = useMemo(() => diary.filter(t => {
-    if (diaryFilter === 'WIN') return t.profit > 0 || t.status === 'CLOSED_WIN';
-    if (diaryFilter === 'LOSS') return t.profit < 0 || t.status === 'CLOSED_LOSS';
+    if (diaryFilter === 'WIN') return t.profit > 0 || t.status === 'CLOSED_WIN' || t.status === 'WON';
+    if (diaryFilter === 'LOSS') return t.profit < 0 || t.status === 'CLOSED_LOSS' || t.status === 'LOST';
     if (diaryFilter === 'FAILED') return t.status === 'FAILED';
     return true;
   }).map(t => ({...t, _type: 'TRADE'})).sort((a, b) => {
-    if (diarySort === 'NEWEST') return new Date(b.close_time).getTime() - new Date(a.close_time).getTime();
-    if (diarySort === 'OLDEST') return new Date(a.close_time).getTime() - new Date(b.close_time).getTime();
+    const bTime = typeof b.close_time === 'number' ? b.close_time : (new Date(b.close_time).getTime() || 0);
+    const aTime = typeof a.close_time === 'number' ? a.close_time : (new Date(a.close_time).getTime() || 0);
+    if (diarySort === 'NEWEST') return bTime - aTime;
+    if (diarySort === 'OLDEST') return aTime - bTime;
     if (diarySort === 'PROFIT_HIGH') return b.profit - a.profit;
     if (diarySort === 'PROFIT_LOW') return a.profit - b.profit;
     return 0;
@@ -896,6 +937,8 @@ export default function BotDashboard({ bot }: { bot: any }) {
               selectedBotId={analyticsBotId} 
               onSelectBot={setAnalyticsBotId} 
               analyticsData={analyticsData}
+              onRefresh={refreshAnalytics}
+              isRefreshing={isRefreshingAnalytics}
             />
           )}
 
