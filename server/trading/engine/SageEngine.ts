@@ -980,6 +980,19 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
 
     if (orderRes && orderRes.orderId) {
       ss.limitOrderId = executeAsMarket ? null : orderRes.orderId;
+      
+      if (!executeAsMarket && orderRes && orderRes.orderId) {
+        try {
+          await db.prepare(`
+            UPDATE bot_trade_states 
+            SET meta_order_id = ? 
+            WHERE client_id = ? AND status = 'PLACING'
+          `).run(orderRes.orderId, shortClientId);
+        } catch (e: any) {
+          logger.error(`[SageEngine] Failed to update meta_order_id for limit order: ${e.message}`);
+        }
+      }
+
       ss.fired = true;
       globalTradeGate.release(orch.profileId, preRegKey);
       globalTradeGate.register(
@@ -1362,8 +1375,8 @@ export async function checkSageLimitFill(orch, sessionPair, state, c, targetBotI
             const upgradeRes = await db.prepare(`
               UPDATE bot_trade_states 
               SET status = 'OPEN', meta_order_id = ?, entry_price = ?, sl_price = ?, tp_price = ?, lots = ? 
-              WHERE (client_id = ? OR meta_order_id = ?) AND status = 'PLACING' RETURNING id
-            `).all(pos.id, pos.openPrice, ss.slPrice, ss.tpPrice, pos.volume, pos.clientId || sig, ss.limitOrderId);
+              WHERE (client_id = ? OR client_id LIKE ? OR meta_order_id = ?) AND status = 'PLACING' RETURNING id
+            `).all(pos.id, pos.openPrice, ss.slPrice, ss.tpPrice, pos.volume, pos.clientId || sig, `S_${getShortHash(sig)}%`, ss.limitOrderId);
             
             if (upgradeRes && upgradeRes.length > 0) {
               dbId = upgradeRes[0].id;

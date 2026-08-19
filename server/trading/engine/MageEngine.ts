@@ -995,6 +995,18 @@ async function placeMageLimitOrder(orch: any, symbol: string, state: any, c: any
         // Save limitOrderId only for pending limit orders (null for direct market fills)
         os.limitOrderId = executeAsMarket ? null : res.orderId;
         os.limitPlacedAt = c.timestamp;
+
+        if (!executeAsMarket && res && res.orderId) {
+          try {
+            await db.prepare(`
+              UPDATE bot_trade_states 
+              SET meta_order_id = ? 
+              WHERE client_id = ? AND status = 'PLACING'
+            `).run(res.orderId, shortClientId);
+          } catch (e: any) {
+            logger.error(`[MageEngine] Failed to update meta_order_id for limit order: ${e.message}`);
+          }
+        }
         
         os.fired = true;  // Set only after successful broker confirmation
         os.tradeTakenDate = os.currentDateStr;
@@ -1156,8 +1168,8 @@ export async function checkMageLimitFill(orch: any, sessionPair: string, state: 
             const upgradeRes = await db.prepare(`
               UPDATE bot_trade_states 
               SET status = 'OPEN', meta_order_id = ?, entry_price = ?, sl_price = ?, tp_price = ?, lots = ? 
-              WHERE (client_id = ? OR meta_order_id = ?) AND status = 'PLACING' RETURNING id
-            `).all(pos.id, pos.openPrice, os.slPrice, os.tpPrice, pos.volume, pos.clientId || sig, os.limitOrderId);
+              WHERE (client_id = ? OR client_id LIKE ? OR meta_order_id = ?) AND status = 'PLACING' RETURNING id
+            `).all(pos.id, pos.openPrice, os.slPrice, os.tpPrice, pos.volume, pos.clientId || sig, `M_${getShortHash(sig)}%`, os.limitOrderId);
             
             if (upgradeRes && upgradeRes.length > 0) {
               dbId = upgradeRes[0].id;
@@ -1561,7 +1573,7 @@ export async function cancelMagePendingOnNews(orch: any, sessionPair: string, st
 
   for (const sig of Object.keys(state.orbStates)) {
     const os = state.orbStates[sig];
-    if (os && os.limitOrderId && (!state.activeTrades || !state.activeTrades.find(t => t.clientId === sig))) {
+    if (os && os.limitOrderId && (!state.activeTrades || !state.activeTrades.find(t => t.clientId === sig || t.metaOrderId === os.limitOrderId))) {
       try {
         const conn = await getSharedConnection(orch.token, orch.accountId);
         const orderId = os.limitOrderId;
