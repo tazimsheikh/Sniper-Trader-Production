@@ -58,9 +58,9 @@ async function runAll() {
         const t1 = tier1Match ? `T1: ${tier1Match[1]}T, ${tier1Match[2]}R` : "T1: N/A";
         const t2 = tier2Match ? `T2: ${tier2Match[1]}T, ${tier2Match[2]}R` : "T2: N/A";
         
-        const countMatch = output.includes("Trade Count Match : ✅") ? "✅" : "❌";
-        const rMatch = output.includes("Net R Match       : ✅") ? "✅" : "❌";
-        const microMatch = output.includes("Micro Details Match : ✅") ? "✅" : "❌";
+        const countMatch = /Trade Count Match\s*:\s*✅/.test(output) ? "✅" : "❌";
+        const rMatch = /Net R Match\s*:\s*✅/.test(output) ? "✅" : "❌";
+        const microMatch = /Micro Details Match\s*:\s*✅/.test(output) ? "✅" : "❌";
         
         const checks = `Count: ${countMatch} | R: ${rMatch} | Micro: ${microMatch}`;
         const summaryStr = `${t1} | ${t2} | ${checks}`;

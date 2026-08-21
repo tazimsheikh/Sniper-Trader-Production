@@ -38,9 +38,9 @@ const TRAILING_TRIGGERS = [0.25, 0.5, 1.0, 1.5, 2.0]; // Added 0.25
 const TRAILING_STEPS = [0.5, 1.0, 2.0];
 const FORCE_CLOSE_HOURS = [8, 12, 16];
 const EXIT_MODES = ["MIDPOINT", "OPPOSITE_BOUNDARY", "TRAILING"];
-const ORB_MINUTES_GRID = [15, 30, 60, 120];
+const ORB_MINUTES_GRID = [30, 60];
 const ACTION_MINUTES_GRID = [5, 10, 15, 30];
-const MAX_SWEEP_MULTIPLIERS = [1.5, 2, 3];
+const MAX_SWEEP_MULTIPLIERS = [1.5, 2.0];
 const REQUIRE_CLOSE_INSIDE = [true, false];
 const SIM_YEARS = 3.0; // Dynamic 3-year lookback
 
@@ -264,6 +264,7 @@ if (isMainThread && process.argv[1] && (process.argv[1] === currentFile || path.
     let exitModesGrid = EXIT_MODES;
     let orbMinutesGrid = ORB_MINUTES_GRID;
     let actionMinutesGrid = ACTION_MINUTES_GRID;
+    let maxSweepMultipliersGrid = MAX_SWEEP_MULTIPLIERS;
 
     const MAJORS = ["GBPUSD", "EURUSD"];
     const SLOW_FOREX = ["USDCAD", "USDCHF", "USDJPY"];
@@ -274,28 +275,24 @@ if (isMainThread && process.argv[1] && (process.argv[1] === currentFile || path.
       minSlGrid = [5, 7, 10, 15, 20];
       maxSlGrid = [30, 40, 50, 60, 80]; // Pruned 100 (dead)
       sweepGrid = [2, 3, 5, 20]; // Pruned 10, 30, 50
-      orbMinutesGrid = [30, 60, 120];
       actionMinutesGrid = [10, 15, 30];
       trailingTriggersGrid = [0.5, 1.0, 1.5, 2.0]; // Pruned 999
     } else if (SLOW_FOREX.includes(symbol)) {
       minSlGrid = [5, 10, 15, 20, 25, 30]; // Pruned 40, 60, 100+
       maxSlGrid = [25, 30, 35, 50, 80]; // Pruned 20, 100, 150, 200+
       sweepGrid = [2, 3, 5, 10]; // Pruned 20, 30, 50
-      orbMinutesGrid = [15, 30, 60, 120];
       actionMinutesGrid = [10, 15, 30];
       trailingTriggersGrid = [0.5, 1.0, 1.5, 2.0]; // Pruned 999
     } else if (PACIFIC_PAIRS.includes(symbol)) {
       minSlGrid = [5, 10, 15, 20, 30];
       maxSlGrid = [30, 50, 80, 100];
       sweepGrid = [2, 3, 5, 10]; // Pruned 20, 30, 50
-      orbMinutesGrid = [15, 30, 60, 120];
       actionMinutesGrid = [10, 15, 30];
       trailingTriggersGrid = [0.5, 1.0, 1.5, 2.0];
     } else if (VOLATILE_CROSSES.includes(symbol)) {
-      minSlGrid = [20, 30, 40, 50, 60, 70, 80]; // Pruned 3, 5, 10 (<1%)
-      maxSlGrid = [40, 60, 80, 100]; // Capped at 100 pips: beyond daily range on volatile crosses
+      minSlGrid = [20, 30, 40, 50, 60]; // Pruned 70, 80 to prevent overlap
+      maxSlGrid = [60, 80, 100]; // Capped at 100 pips: beyond daily range on volatile crosses
       sweepGrid = [3, 5, 10, 20, 30, 50]; // Pruned 2 (dead)
-      orbMinutesGrid = [15, 30, 60, 120];
       actionMinutesGrid = [15, 30];
       trailingTriggersGrid = [0.5, 1.0, 1.5, 2.0];
     } else if (symbol.includes("BTC")) {
@@ -315,20 +312,17 @@ if (isMainThread && process.argv[1] && (process.argv[1] === currentFile || path.
     ) {
       minSlGrid = [10, 15, 20, 40, 70, 120]; // Added 10,15 — boundary pressure at 20
       maxSlGrid = [80, 150, 200, 300]; // Realigned
-      orbMinutesGrid = [15, 30, 60]; // Added 60
     } else if (symbol.includes("SPX")) {
       minSlGrid = [5, 10, 20, 30]; // Added 5 — boundary at 10
       maxSlGrid = [40, 80, 120, 200];
-      orbMinutesGrid = [15, 30, 60];
       actionMinutesGrid = [5, 10, 15, 30, 60, 90]; // Added 90
-      entryPenetrationsGrid = [0.0, 0.2];
+      entryPenetrationsGrid = [0, 20];
       trailingTriggersGrid = [0.5, 1.0, 1.5, 2.0]; // Pruned 999
     } else if (symbol.includes("JPN")) {
       minSlGrid = [30, 50, 80, 120];
       maxSlGrid = [100, 150, 200, 250];
-      orbMinutesGrid = [15, 30, 60, 120];
       actionMinutesGrid = [5, 10, 15, 30, 60];
-      entryPenetrationsGrid = [0.0, 0.2];
+      entryPenetrationsGrid = [0, 20];
       trailingTriggersGrid = [0.5, 1.0, 1.5, 2.0]; // Pruned 999
     } else if (symbol.includes("XAU") || symbol.includes("XTI")) {
       minSlGrid = [10, 15, 30, 40];
@@ -337,7 +331,13 @@ if (isMainThread && process.argv[1] && (process.argv[1] === currentFile || path.
       trailingTriggersGrid = [0.5, 1.0, 1.5, 2.0]; // Pruned 999
     }
 
-    sweepGrid = SWEEP_BUFFERS;
+    if (["GBPNZD", "EURNZD", "AUDJPY", "GBPAUD"].includes(symbol)) {
+      orbMinutesGrid = [30, 60, 120];
+    }
+    if (symbol.includes("GER40") || symbol.includes("NAS100")) {
+      maxSweepMultipliersGrid = [1.5, 2.0, 3.0];
+    }
+
     if (VOLATILE_CROSSES.includes(symbol)) {
       sweepGrid = [3, 5, 10, 20, 30, 50]; // Added 3
     } else if (symbol.includes("BTC")) {
@@ -444,7 +444,7 @@ if (isMainThread && process.argv[1] && (process.argv[1] === currentFile || path.
     }
 
     // Session overrides for NZD and AUD crosses (add early Asia Sydney/Wellington open)
-    if (symbol === "EURNZD" || symbol === "GBPNZD" || symbol === "EURAUD" || symbol === "GBPAUD") {
+    if (symbol === "EURNZD" || symbol === "GBPNZD" || symbol === "EURAUD" || symbol === "GBPAUD" || symbol === "NZDUSD" || symbol === "AUDUSD") {
       startTimesMap.asia = [
         ...startTimesMap.asia,
         { h: 22, m: 0 },
@@ -604,7 +604,7 @@ if (isMainThread && process.argv[1] && (process.argv[1] === currentFile || path.
         startTimes,            // 9: categorical
         orbMinutesGrid,        // 10: discrete
         actionMinutesGrid,     // 11: discrete
-        MAX_SWEEP_MULTIPLIERS, // 12: discrete
+        maxSweepMultipliersGrid, // 12: discrete
         REQUIRE_CLOSE_INSIDE,  // 13: discrete (boolean)
       ];
 
@@ -725,7 +725,7 @@ if (isMainThread && process.argv[1] && (process.argv[1] === currentFile || path.
             0,                                                          // [9] startTime = first slot
             orbMinutesGrid.length - 1,                                  // [10] orbMins = LARGEST (long ORB builds meaningful range)
             Math.floor(actionMinutesGrid.length / 2),                   // [11] actionMins = MID (NOT min Ã¢â‚¬â€ gives real trade opportunities)
-            Math.floor(MAX_SWEEP_MULTIPLIERS.length / 2),               // [12] maxSweepMult = mid (3x)
+            Math.floor(maxSweepMultipliersGrid.length / 2),               // [12] maxSweepMult = mid (3x)
             1                                                           // [13] requireCloseInside = false (idx 1, more lenient entry)
           ],
 
@@ -784,7 +784,7 @@ if (isMainThread && process.argv[1] && (process.argv[1] === currentFile || path.
             minSlGrid, maxSlGrid, sweepGrid, maxBodyGrid,
             entryPenetrationsGrid, trailingTriggersGrid, trailingStepsGrid,
             forceCloseHoursGrid, exitModesGrid, startTimesMap[session],
-            orbMinutesGrid, actionMinutesGrid, MAX_SWEEP_MULTIPLIERS, REQUIRE_CLOSE_INSIDE
+            orbMinutesGrid, actionMinutesGrid, maxSweepMultipliersGrid, REQUIRE_CLOSE_INSIDE
           );
           if (!chrom) continue;
           const isDiverse = championChromosomes.every(e => hammingDistance(chrom, e) >= 3);

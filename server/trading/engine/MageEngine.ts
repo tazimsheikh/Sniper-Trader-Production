@@ -45,6 +45,12 @@ const isBrokerPriceOrStopsError = (...args: any[]) =>
   ((global as any).__SIM_METAAPI__?.isBrokerPriceOrStopsError || r10)(...args);
 const calculateStopsLevelSafePrices = (...args: any[]) =>
   ((global as any).__SIM_METAAPI__?.calculateStopsLevelSafePrices || r11)(...args);
+
+// ── Epsilon-aware floating-point comparison helpers (inline to respect engine air-gap rule) ──
+const PRICE_EPSILON = 1e-9;
+const gte = (a: number, b: number): boolean => (a - b) >= -PRICE_EPSILON;
+const lte = (a: number, b: number): boolean => (b - a) >= -PRICE_EPSILON;
+
 import { OPTIMIZER_CONFIG, getDynamicPipSize } from "../config/OptimizerPairConfig.js";
 import { PairConfigManager } from "../config/PairConfig.js";
 import { enqueueMetaApiRequest as realQueue } from "../../utils/MetaApiQueue.js";
@@ -414,7 +420,7 @@ export async function _runMageBotForConfig(orch: any, symbol: string, state: any
   const thisConfigActive = (state.activeTrades ?? []).some((t: any) => {
     if (t.clientId === sig) return true;
     if (orch.sigMap && orch.sigMap[t.clientId] === sig) return true;
-    if (t.clientId?.startsWith("M_" + getShortHash(sig))) return true;
+    if (t.clientId?.includes(getShortHash(sig))) return true;
     return false;
   });
   if (thisConfigActive) return;
@@ -501,8 +507,8 @@ export async function _runMageBotForConfig(orch: any, symbol: string, state: any
       if (actionCandle.close < os.orLow) sellTriggered = true;
     } else {
       const reqBuyHigh = roundPrice(os.orHigh + spreadPts, symbol);
-      if (actionCandle.high >= reqBuyHigh) buyTriggered = true;
-      if (actionCandle.low <= os.orLow) sellTriggered = true;
+      if (gte(actionCandle.high, reqBuyHigh)) buyTriggered = true;
+      if (lte(actionCandle.low, os.orLow)) sellTriggered = true;
     }
 
     if (symbol.includes("XTIUSD") && dateStr === "2026-06-01" && estHour === 7) {
@@ -686,7 +692,7 @@ export async function _runMageBotForConfig(orch: any, symbol: string, state: any
         );
       }
       os.visionApproved = true;
-      placeMageLimitOrder(orch, symbol, state, c, sig, config, botId).catch((e) => {
+      await placeMageLimitOrder(orch, symbol, state, c, sig, config, botId).catch((e) => {
         console.error("[MAGE LIMIT ORDER EXCEPTION]", e);
         logger.error("Swallowed error caught: ", e);
       });
@@ -908,7 +914,9 @@ async function placeMageLimitOrder(orch: any, symbol: string, state: any, c: any
     const preRegKey = `PRE_${sig}`;
     globalTradeGate.register(orch.profileId, preRegKey, symbol, os.breakoutDir, "ALGO");
 
-    enqueueMetaApiRequest(
+    const shortClientId = `P${orch.profileId}_M_${getShortHash(sig)}_${Date.now()}`;
+
+    await enqueueMetaApiRequest(
       async () => {
         const conn = await getSharedConnection(token, accId);
         if (!conn) throw new Error("No shared connection available.");
@@ -918,7 +926,6 @@ async function placeMageLimitOrder(orch: any, symbol: string, state: any, c: any
         
         let res: any;
         const pullbackPct = _mCfg.orbPullbackPct || 0;
-        const shortClientId = "M_" + getShortHash(sig) + "_" + Date.now();
         (global as any).__SIM_ORCH_STATE__ = state;
 
         const isBuy = os.breakoutDir === "BUY";
@@ -1135,6 +1142,8 @@ Risk: ${riskPct.toFixed(2)}%`;
       // Reset fired flag so the day is not permanently locked on broker failure
       os.fired = false;
       os.mageTradeTakenToday = false;
+      // Mark the PLACING record as FAILED so it does not linger as an orphan for TradeManager
+      db.prepare("UPDATE bot_trade_states SET status = 'FAILED' WHERE client_id = ? AND status = 'PLACING'").run(shortClientId).catch(() => {});
       addBotLog(
         orch.profileId,
         botId,
@@ -1175,7 +1184,7 @@ export async function checkMageLimitFill(orch: any, sessionPair: string, state: 
             if (p.id === os.limitOrderId) return true;
             if (p.clientId === sig) return true;
             if (orch.sigMap && orch.sigMap[p.clientId] === sig) return true;
-            if (p.clientId?.startsWith("M_" + getShortHash(sig))) return true;
+            if (p.clientId?.includes(getShortHash(sig))) return true;
             return false;
           }
         );
@@ -1195,7 +1204,7 @@ export async function checkMageLimitFill(orch: any, sessionPair: string, state: 
               UPDATE bot_trade_states 
               SET status = 'OPEN', meta_order_id = ?, entry_price = ?, sl_price = ?, tp_price = ?, lots = ? 
               WHERE (client_id = ? OR client_id LIKE ? OR meta_order_id = ?) AND status IN ('PLACING', 'FAILED', 'PENDING_VERIFICATION') RETURNING id
-            `).all(pos.id, pos.openPrice, os.slPrice, os.tpPrice, pos.volume, pos.clientId || sig, `M_${getShortHash(sig)}%`, os.limitOrderId);
+            `).all(pos.id, pos.openPrice, os.slPrice, os.tpPrice, pos.volume, pos.clientId || sig, `%${getShortHash(sig)}%`, os.limitOrderId);
             
             if (upgradeRes && upgradeRes.length > 0) {
               dbId = upgradeRes[0].id;

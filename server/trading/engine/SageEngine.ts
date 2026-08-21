@@ -48,6 +48,11 @@ const roundPrice = (...args: any[]) => ((global as any).__SIM_METAAPI__?.roundPr
 const isBrokerPriceOrStopsError = (...args: any[]) => ((global as any).__SIM_METAAPI__?.isBrokerPriceOrStopsError || r10)(...args);
 const calculateStopsLevelSafePrices = (...args: any[]) => ((global as any).__SIM_METAAPI__?.calculateStopsLevelSafePrices || r11)(...args);
 
+// ── Epsilon-aware floating-point comparison helpers (inline to respect engine air-gap rule) ──
+const PRICE_EPSILON = 1e-9;
+const gte = (a: number, b: number): boolean => (a - b) >= -PRICE_EPSILON;
+const lte = (a: number, b: number): boolean => (b - a) >= -PRICE_EPSILON;
+
 logger.info("[SAGE ENGINE TS LOADED!]");
 
 function getFixedEstDate(date = new Date()) {
@@ -405,8 +410,8 @@ export async function _runSageBotForConfig(orch: any, sessionPair: string, state
     ? rSessionLow - sweepBuffer
     : rSessionLow - sweepBuffer;
 
-  const sweepHighTriggered = roundPrice(actionCandle.high, sessionPair) >= reqSweepHigh;
-  const sweepLowTriggered = roundPrice(actionCandle.low, sessionPair) <= reqSweepLow;
+  const sweepHighTriggered = gte(roundPrice(actionCandle.high, sessionPair), reqSweepHigh);
+  const sweepLowTriggered = lte(roundPrice(actionCandle.low, sessionPair), reqSweepLow);
 
   // Log scanning activity for visibility on dev console
   logger.info(`[SageEngine] 🔍 Scanning ${sessionPair} [${new Date(actionCandle.timestamp).toISOString().substring(11, 16)} EST] | ` +
@@ -626,6 +631,7 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
     return;
   }
   const baseSymbol = PairConfigManager.getBaseSymbol(sessionPair);
+  const shortClientId = `P${orch.profileId}_S_${getShortHash(sig)}_${Date.now()}`;
   const newsCheck = isNewsBlackout(baseSymbol, new Date(c.timestamp));
   if (newsCheck.blocked) return;
 
@@ -828,6 +834,7 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
       return;
     }
 
+    const preRegKey = `PRE_${sig}`;
     const check = globalTradeGate.canTrade(
       orch.profileId,
       symbol,
@@ -839,7 +846,6 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
       return;
     }
 
-    const preRegKey = `PRE_${sig}`;
     globalTradeGate.register(orch.profileId, preRegKey, symbol, ss.direction, "ALGO");
 
     const conn = await getSharedConnection(token, accId);
@@ -852,7 +858,6 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
     const pSl = roundPrice(ss.slPrice, symbol.split("_")[0]);
     const pTp = roundPrice(ss.tpPrice, symbol.split("_")[0]);
 
-    const shortClientId = "S_" + getShortHash(sig) + "_" + Date.now();
     const penetrationPct = sageCfg.entryPenetrationPct ?? 0;
     const optCfg = PairConfigManager.getRepresentativeConfig(symbol);
     const proximityThreshold = Math.max(2.5 * pipSize, (optCfg?.spread || 1) * 2.5 * pipSize, 0.10 * Math.abs(pEntry - pSl));
@@ -1061,10 +1066,12 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
       addBotLog(orch.profileId, botId, brokerSymbol, "TRADE_ENTERED", summary);
     } else {
       globalTradeGate.release(orch.profileId, preRegKey);
+      db.prepare("UPDATE bot_trade_states SET status = 'FAILED' WHERE client_id = ? AND status = 'PLACING'").run(shortClientId).catch(() => {});
       logger.error(`[PLACE_LIMIT] FAILED order placement: ${JSON.stringify(orderRes)}`);
       addBotLog(orch.profileId, botId, baseSymbol, "ERROR", `Failed to place limit: ${JSON.stringify(orderRes)}`);
     }
   } catch (err: any) {
+    db.prepare("UPDATE bot_trade_states SET status = 'FAILED' WHERE client_id = ? AND status = 'PLACING'").run(shortClientId).catch(() => {});
     logger.error(`[PLACE_LIMIT] ERROR:`, err);
     addBotLog(orch.profileId, botId, baseSymbol, "ERROR", `Error in place stop: ${err.message}`);
   }
@@ -1384,7 +1391,7 @@ export async function checkSageLimitFill(orch, sessionPair, state, c, targetBotI
             if (p.id === ss.limitOrderId) return true;
             if (p.clientId === sig) return true;
             if (orch.sigMap && orch.sigMap[p.clientId] === sig) return true;
-            if (p.clientId?.startsWith("S_" + getShortHash(sig))) return true;
+            if (p.clientId?.includes(getShortHash(sig))) return true;
             return false;
           }
         );
@@ -1406,7 +1413,7 @@ export async function checkSageLimitFill(orch, sessionPair, state, c, targetBotI
               UPDATE bot_trade_states 
               SET status = 'OPEN', meta_order_id = ?, entry_price = ?, sl_price = ?, tp_price = ?, lots = ? 
               WHERE (client_id = ? OR client_id LIKE ? OR meta_order_id = ?) AND status IN ('PLACING', 'FAILED', 'PENDING_VERIFICATION') RETURNING id
-            `).all(pos.id, pos.openPrice, ss.slPrice, ss.tpPrice, pos.volume, pos.clientId || sig, `S_${getShortHash(sig)}%`, ss.limitOrderId);
+            `).all(pos.id, pos.openPrice, ss.slPrice, ss.tpPrice, pos.volume, pos.clientId || sig, `%${getShortHash(sig)}%`, ss.limitOrderId);
             
             if (upgradeRes && upgradeRes.length > 0) {
               dbId = upgradeRes[0].id;

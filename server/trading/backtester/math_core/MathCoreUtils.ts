@@ -1,3 +1,10 @@
+// ── Epsilon-aware floating-point comparison helpers ──
+// IEEE 754 float math produces values like 1.2503000000000002 instead of 1.2503.
+// These helpers prevent fractional SL hits and trade misses from sub-nano jitter.
+export const PRICE_EPSILON = 1e-9;
+export const gte = (a: number, b: number): boolean => (a - b) >= -PRICE_EPSILON;
+export const lte = (a: number, b: number): boolean => (b - a) >= -PRICE_EPSILON;
+
 import { isNewsForceClose } from "../../market/historicalNews.js";
 export function getFixedEstDate(date = new Date()): Date {
   if ((global as any).__SIM_TIME_PROVIDER__) {

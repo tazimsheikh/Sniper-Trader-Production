@@ -28,6 +28,7 @@ export function deleteProfileTradeState(profileId: number) {
 
 const lastPollTimes = new Map<number, number>();
 const emptyProfileState = new Map<number, boolean>();
+const ghostTradeTracker = new Map<string, number>();
 
 async function withRetry<T>(
   operation: () => Promise<T>,
@@ -515,12 +516,29 @@ export async function monitorOpenTrades(currentSession: string) {
                 );
 
                 if (!matchedHistoryOrder && !closingDeal) {
-                  console.warn(
-                    `[TradeManager] 👻 GHOST TRADE DETECTED! Position ${id} vanished from getPositions() but isn't in historyOrders or deals! Delaying DB close...`,
-                  );
-                  continue; // Do not close in DB yet!
+                  const ghostKey = `${profile.id}_${id}`;
+                  const ghostCount = (ghostTradeTracker.get(ghostKey) || 0) + 1;
+                  ghostTradeTracker.set(ghostKey, ghostCount);
+
+                  // Allow up to 12 cycles (~2 minutes) of grace period for broker deals to populate
+                  if (ghostCount <= 12) {
+                    console.warn(
+                      `[TradeManager] 👻 GHOST TRADE DETECTED! Position ${id} vanished from getPositions() but isn't in historyOrders or deals! (Attempt ${ghostCount}/12 - Delaying DB close...)`,
+                    );
+                    continue; // Do not close in DB yet!
+                  } else {
+                    console.warn(
+                      `[TradeManager] 🧹 GHOST TRADE TIMEOUT: Position ${id} on Profile ${profile.id} never appeared in broker history after 12 checks. Cleaning DB record to CLOSED.`,
+                    );
+                    ghostTradeTracker.delete(ghostKey);
+                    await closeTrade(id, "CLOSED");
+                    continue;
+                  }
                 }
               }
+
+              // Reset ghost counter if trade successfully matched
+              ghostTradeTracker.delete(`${profile.id}_${id}`);
 
               const profileState = positionState.get(profile.id);
               const state = profileState?.get(id);

@@ -159,7 +159,13 @@ export default function BotDashboard({ bot }: { bot: any }) {
     let dailyProfit = 0;
     diary.forEach(trade => {
       const tradeBotId = (trade.bot_id || '').toLowerCase();
-      if (tradeBotId !== currentBotId && !(currentBotId === 'seer' && tradeBotId === 'discretionary_trader')) return;
+      const matchesBot = (
+        tradeBotId === currentBotId ||
+        (currentBotId === 'seer' && (tradeBotId === 'discretionary_trader' || tradeBotId === 'seer' || tradeBotId.startsWith('seer_'))) ||
+        (currentBotId === 'mage' && (tradeBotId === 'mage' || tradeBotId === 'orb' || tradeBotId.startsWith('m_'))) ||
+        (currentBotId === 'sage' && (tradeBotId === 'sage' || tradeBotId === 'reversal' || tradeBotId.startsWith('s_')))
+      );
+      if (!matchesBot) return;
       
       const rawClose = Number(trade.close_time) || Date.parse(trade.close_time);
       if (!rawClose || isNaN(rawClose)) return;

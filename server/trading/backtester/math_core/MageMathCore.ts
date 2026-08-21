@@ -6,7 +6,7 @@ import { TriggerEvent, M1TypedArrays, PairConfig, TradeRecord } from '../../conf
 import { isNewsForceClose } from '../../market/historicalNews.js';
 import { isRolloverCircuitBreaker, isToxicDay } from '../../market/MathFilters.js';
 import { buildAtrArray } from '../../market/Indicators.js';
-import { getFixedEstDate } from './MathCoreUtils.js';
+import { getFixedEstDate, gte, lte, PRICE_EPSILON } from './MathCoreUtils.js';
 
 
 export function preComputeTriggers(
@@ -246,7 +246,7 @@ export function preComputeTriggers(
 }
 
 function getDigitsForPair(pair: string): number {
-  const optCfg = OPTIMIZER_CONFIG[pair.replace(".Daily", "")];
+  const optCfg = OPTIMIZER_CONFIG[pair.replace(".Daily", "").split("_")[0]];
   const tickSize = optCfg?.tickSize ?? 0.00001;
   const tickStr = tickSize.toString();
   return tickStr.includes('.') ? tickStr.split('.')[1].length : 0;
@@ -374,6 +374,8 @@ export function evaluateExits(
     let outcome: "SKIPPED" | "TP" | "SL" | "EOD" | "EXPIRED" | "NEWS_CLOSE" | null = null;
     let rMultiple = 0;
     let entryTimeMs = 0;
+    let highestReached = -Infinity;
+    let lowestReached = Infinity;
 
     // isInstantFill logic matching MageEngine (fallback to market)
     const proximityThreshold = Math.max(2.5 * pipSize, (optCfg?.spread || 1) * 2.5 * pipSize, 0.10 * Math.abs(entryPrice - slPrice));
@@ -424,18 +426,18 @@ export function evaluateExits(
           }
 
           if (direction === "BUY") {
-            if (isInstantFill || m1.open[j] + spreadPts <= limitBuyPrice || m1.low[j] + spreadPts <= limitBuyPrice) {
+            if (isInstantFill || lte(m1.open[j] + spreadPts, limitBuyPrice) || lte(m1.low[j] + spreadPts, limitBuyPrice)) {
               entryTimeMs = m1.timestamp[j];
               const filledPrice = isInstantFill ? m1.open[j] + spreadPts : Math.min(m1.open[j] + spreadPts, limitBuyPrice);
               if (filledPrice <= slPrice) { tradeActive = true; outcome = "SL"; rMultiple = -1.0; break; }
-              else { tradeActive = true; entryPrice = filledPrice; initialRisk = Math.abs(entryPrice - slPrice); }
+              else { tradeActive = true; entryPrice = roundPrice(filledPrice, pair); initialRisk = Math.abs(entryPrice - slPrice); }
             }
           } else if (direction === "SELL") {
-            if (isInstantFill || m1.open[j] >= limitSellPrice || m1.high[j] >= limitSellPrice) {
+            if (isInstantFill || gte(m1.open[j], limitSellPrice) || gte(m1.high[j], limitSellPrice)) {
               entryTimeMs = m1.timestamp[j];
               const filledPrice = isInstantFill ? m1.open[j] : Math.max(m1.open[j], limitSellPrice);
               if (filledPrice + spreadPts >= slPrice) { tradeActive = true; outcome = "SL"; rMultiple = -1.0; break; }
-              else { tradeActive = true; entryPrice = filledPrice; initialRisk = Math.abs(entryPrice - slPrice); }
+              else { tradeActive = true; entryPrice = roundPrice(filledPrice, pair); initialRisk = Math.abs(entryPrice - slPrice); }
             }
           }
 
@@ -492,7 +494,7 @@ export function evaluateExits(
         } else {
           const isBearishEntry = isEntryBar && m1.close[j] <= m1.open[j];
           if (!isBearishEntry) {
-            slHit = m1.high[j] + spreadPts >= currentSL;
+            slHit = gte(m1.high[j] + spreadPts, currentSL);
           }
           tpHit = m1.low[j] + spreadPts <= tpPrice;
           if (slHit && tpHit) {
@@ -517,18 +519,24 @@ export function evaluateExits(
         // ─── STEP 2: UPDATE TRAILING STOP FOR FUTURE BARS ────────────────────
         // Only reached if trade is still alive. The SL update here only affects
         // bars AFTER this one.
+        if (direction === "BUY") {
+          highestReached = Math.max(highestReached === -Infinity ? entryPrice : highestReached, m1.high[j]);
+        } else {
+          lowestReached = Math.min(lowestReached === Infinity ? entryPrice : lowestReached, m1.low[j]);
+        }
+
         const intendedEntry = (pbPct > 0)
           ? (direction === "BUY" ? limitBuyPrice : limitSellPrice)
           : entryPrice;
         const intendedRisk = Math.abs(intendedEntry - slPrice);
 
         const actualR = direction === "BUY"
-          ? (m1.high[j] - entryPrice) / initialRisk
-          : (entryPrice - (m1.low[j] + spreadPts)) / initialRisk;
+          ? (highestReached - entryPrice) / initialRisk
+          : (entryPrice - (lowestReached + spreadPts)) / initialRisk;
 
         const theoreticalR = direction === "BUY"
-          ? (m1.high[j] - intendedEntry) / (intendedRisk > 0 ? intendedRisk : initialRisk)
-          : (intendedEntry - (m1.low[j] + spreadPts)) / (intendedRisk > 0 ? intendedRisk : initialRisk);
+          ? (highestReached - intendedEntry) / (intendedRisk > 0 ? intendedRisk : initialRisk)
+          : (intendedEntry - (lowestReached + spreadPts)) / (intendedRisk > 0 ? intendedRisk : initialRisk);
 
         const currentR = Math.max(actualR, theoreticalR);
 
@@ -552,26 +560,26 @@ export function evaluateExits(
           }
 
           // Tier 1: Early Break-Even trigger
-          if (currentR >= beTrig && lastTrailingLevel < beLock) {
+          if (gte(currentR, beTrig) && lastTrailingLevel < beLock) {
             lastTrailingLevel = beLock;
             const proposed = direction === "BUY" ? entryPrice + beLock * initialRisk : entryPrice - beLock * initialRisk;
             currentSL = roundPrice(proposed, pair);
           }
           // Tier 2: Mid-profit lock
-          if (currentR >= pTrig1 && lastTrailingLevel < pLock1) {
+          if (gte(currentR, pTrig1) && lastTrailingLevel < pLock1) {
             lastTrailingLevel = pLock1;
             const proposed = direction === "BUY" ? entryPrice + pLock1 * initialRisk : entryPrice - pLock1 * initialRisk;
             currentSL = roundPrice(proposed, pair);
           }
           // Tier 3: High-profit lock
-          if (currentR >= pTrig2 && lastTrailingLevel < pLock2) {
+          if (gte(currentR, pTrig2) && lastTrailingLevel < pLock2) {
             lastTrailingLevel = pLock2;
             const proposed = direction === "BUY" ? entryPrice + pLock2 * initialRisk : entryPrice - pLock2 * initialRisk;
             currentSL = roundPrice(proposed, pair);
           }
           // Tier 4: Stepped trailing beyond Tier 3
-          if (currentR >= pTrig2 + aStep) {
-            const steps = Math.floor((currentR - pTrig2) / aStep);
+          if (gte(currentR, pTrig2 + aStep)) {
+            const steps = Math.floor((currentR - pTrig2 + PRICE_EPSILON) / aStep);
             const level = pLock2 + steps * aStep;
             if (level > lastTrailingLevel) {
               lastTrailingLevel = level;
@@ -582,14 +590,15 @@ export function evaluateExits(
         } else {
           const tTrig = config.trailingSlTrigger;
           const tStep = config.trailingSlStep;
+          const tickSize = OPTIMIZER_CONFIG[pair.replace('.Daily','').split('_')[0]]?.tickSize ?? 0.00001;
 
           if (direction === "BUY") {
-            if (tTrig !== undefined && currentR >= tTrig && currentSL < entryPrice) {
+            if (tTrig !== undefined && gte(currentR, tTrig) && currentSL < entryPrice) {
               currentSL = roundPrice(entryPrice, pair);
               lastTrailingLevel = 0;
             }
-            if (tTrig !== undefined && tStep !== undefined && currentR >= tTrig + tStep) {
-              const numSteps = Math.floor((currentR - tTrig) / tStep);
+            if (tTrig !== undefined && tStep !== undefined && gte(currentR, tTrig + tStep)) {
+              const numSteps = Math.floor((currentR - tTrig + PRICE_EPSILON) / tStep);
               const rLevelToLock = numSteps * tStep;
               if (rLevelToLock > lastTrailingLevel) {
                 lastTrailingLevel = rLevelToLock;
@@ -599,12 +608,12 @@ export function evaluateExits(
               }
             }
           } else {
-            if (tTrig !== undefined && currentR >= tTrig && currentSL > entryPrice) {
+            if (tTrig !== undefined && gte(currentR, tTrig) && currentSL > entryPrice) {
               currentSL = roundPrice(entryPrice, pair);
               lastTrailingLevel = 0;
             }
-            if (tTrig !== undefined && tStep !== undefined && currentR >= tTrig + tStep) {
-              const numSteps = Math.floor((currentR - tTrig) / tStep);
+            if (tTrig !== undefined && tStep !== undefined && gte(currentR, tTrig + tStep)) {
+              const numSteps = Math.floor((currentR - tTrig + PRICE_EPSILON) / tStep);
               const rLevelToLock = numSteps * tStep;
               if (rLevelToLock > lastTrailingLevel) {
                 lastTrailingLevel = rLevelToLock;

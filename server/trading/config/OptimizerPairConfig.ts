@@ -25,7 +25,7 @@ export const OPTIMIZER_CONFIG: Record<string, BasePhysicalConfig> = {
     tickSize: 0.1,
     pipSize: 1.0,
     spread: 3.0,
-    maxSpreadLimit: 1.71,
+    maxSpreadLimit: 4.5,
   },
   EURAUD: {
     tickSize: 0.00001,

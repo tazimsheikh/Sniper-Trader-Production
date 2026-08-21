@@ -34,11 +34,11 @@ const MIN_SL_VALS = [1.5, 2.5, 5, 7.5, 10, 15, 20];
 const MAX_SL_VALS = [25, 30, 40, 50, 60, 80, 100, 150, 200];
 const MIN_BODY_VALS = [5, 6, 7.5, 10, 15, 20]; // Removed 3-pip (doji): minimum meaningful breakout body
 const TRAILING_TRIGGERS = [0.5, 1.0, 1.5, 2.0]; // Clean active trailing triggers
-const TRAILING_STEPS = [0.5, 1.0, 1.5, 2.0]; // Clean real trailing steps (0.5R, 1.0R, 1.5R, 2.0R)
+const TRAILING_STEPS = [1.0, 1.5, 2.0]; // Removed 0.5R
 const FORCE_CLOSE_HOURS = [8, 12, 16, 24]; // Added sub-24h options to discover same-session exits
-const EXIT_MODES = ["TRAILING", "MIDPOINT", "OPPOSITE_BOUNDARY", "ADTEL_AGGRESSIVE", "ADTEL_MODERATE", "ADTEL_CONSERVATIVE"];
-const PULLBACK_PERCENTAGES = [0.0, 0.3, 0.6]; // Removed 1.0 & 1.5: beyond 0.6 is mean-reversion, not breakout
-const ORB_MINUTES_GRID = [10, 15, 30, 45, 60];
+const EXIT_MODES = ["TRAILING", "ADTEL_MODERATE"];
+const PULLBACK_PERCENTAGES = [0.0, 0.15, 0.3]; // Breakout constraints
+const ORB_MINUTES_GRID = [10, 15];
 const ACTION_MINUTES_GRID = [60, 120, 180]; // Capped at 180 min: beyond this bleeds pre-market data into trigger
 const SIM_YEARS = 3.0; // Dynamic 3-year lookback from latest date
 
@@ -206,8 +206,10 @@ if (isMainThread && process.argv[1] === currentFile) {
     let minSlGrid = MIN_SL_VALS;
     let maxSlGrid = MAX_SL_VALS;
     let trailingTriggersGrid = TRAILING_TRIGGERS;
-
     let minBodyGrid = MIN_BODY_VALS;
+    
+    let forceCloseHoursGrid = FORCE_CLOSE_HOURS;
+    let orbMinutesGrid = ORB_MINUTES_GRID;
 
     const MAJORS = ["GBPUSD", "EURUSD"];
     const JPY_CROSSES = ["GBPJPY", "CHFJPY", "CADJPY", "EURJPY", "AUDJPY", "USDJPY"];
@@ -219,14 +221,15 @@ if (isMainThread && process.argv[1] === currentFile) {
       maxSlGrid = [20, 30, 40, 50, 60, 80];
       minBodyGrid = [5, 8, 10, 12, 15, 20];
       trailingTriggersGrid = [0.5, 1.0, 1.5, 2.0];
+      forceCloseHoursGrid = [4, 8, 12, 16];
     } else if (JPY_CROSSES.includes(symbol)) {
       minSlGrid = [15, 20, 25, 30, 40]; // Pruned micro-SLs <15 pips (stopped out by spread); retained empirical wins
       maxSlGrid = [30, 40, 50, 60, 70, 80, 100, 150];
       minBodyGrid = [4, 5, 6, 8, 10, 12, 15, 20];
       trailingTriggersGrid = [0.5, 1.0, 1.5, 2.0, 3.0];
     } else if (VOLATILE_CROSSES.includes(symbol)) {
-      minSlGrid = [15, 20, 25, 30, 40]; // Minimum 15.0 pips prevents live spread-trapping
-      maxSlGrid = [20, 30, 40, 50, 60, 70, 80, 100, 150];
+      minSlGrid = [15, 20, 25]; // Prevent overlap
+      maxSlGrid = [30, 40, 50, 60, 70, 80, 100, 150];
       minBodyGrid = [4, 5, 6, 7.5, 10, 12, 15];
       trailingTriggersGrid = [0.5, 1.0, 1.5, 2.0]; 
     } else if (MINOR_PAIRS.includes(symbol)) {
@@ -234,6 +237,7 @@ if (isMainThread && process.argv[1] === currentFile) {
       maxSlGrid = [15, 20, 25, 30, 40, 50, 70, 100, 120];
       minBodyGrid = [4, 5, 8, 10, 12];
       trailingTriggersGrid = [0.5, 1.0, 1.5, 2.0]; 
+      forceCloseHoursGrid = [4, 8, 12, 16];
     } else if (symbol.includes("BTC")) {
       minSlGrid = [20, 25, 30, 40, 50]; // Pruned unfillable micro-SLs <20 pips ($20.00)
       maxSlGrid = [100, 150, 200, 300];
@@ -246,7 +250,7 @@ if (isMainThread && process.argv[1] === currentFile) {
       minSlGrid = [30, 40, 60, 80, 120, 150];
       maxSlGrid = [120, 140, 160, 200, 250, 350];
       minBodyGrid = [10, 15, 20, 30, 40, 60];
-      trailingTriggersGrid = [1.0, 2.0];
+      trailingTriggersGrid = [1.0, 2.0, 3.0];
     } else if (
       symbol.includes("US30") ||
       symbol.includes("NAS") ||
@@ -260,12 +264,16 @@ if (isMainThread && process.argv[1] === currentFile) {
       minSlGrid = [5, 7, 10, 15, 20, 30, 40]; // Pruned micro-SLs <5.0 pips
       maxSlGrid = [40, 80, 120, 150, 200];
       minBodyGrid = [5, 10, 15, 20, 25, 30];
-      trailingTriggersGrid = [1.0, 2.0];
+      trailingTriggersGrid = [1.0, 2.0, 3.0];
     } else if (symbol.includes("XAU") || symbol.includes("XTI")) {
       minSlGrid = [10, 12, 15, 20, 30, 40]; // 10 pips = $1.00 on Gold; exact dump match
       maxSlGrid = [40, 60, 80, 120, 150, 200];
       minBodyGrid = [15, 20, 24, 35, 50];
       trailingTriggersGrid = [1.0, 1.5, 2.0, 3.0];
+    }
+
+    if (symbol === "USDCHF" || symbol.includes("XAU")) {
+      orbMinutesGrid = [10, 15, 30, 45];
     }
 
     const sessions = ["asia", "london", "ny"];
@@ -315,7 +323,7 @@ if (isMainThread && process.argv[1] === currentFile) {
         { h: 8, m: 0 },
       ];
     }
-    if (symbol === "EURNZD" || symbol === "GBPNZD" || symbol === "EURAUD" || symbol === "GBPAUD" || symbol === "AUDUSD") {
+    if (symbol === "EURNZD" || symbol === "GBPNZD" || symbol === "EURAUD" || symbol === "GBPAUD" || symbol === "AUDUSD" || symbol === "NZDUSD") {
       startTimesMap.asia = [
         ...startTimesMap.asia,
         { h: 22, m: 0 },
@@ -468,11 +476,11 @@ if (isMainThread && process.argv[1] === currentFile) {
         minBodyGrid,           // 2
         trailingTriggersGrid,  // 3
         TRAILING_STEPS,        // 4
-        FORCE_CLOSE_HOURS,     // 5
+        forceCloseHoursGrid,     // 5
         PULLBACK_PERCENTAGES,  // 6
         EXIT_MODES,            // 7: categorical
         startTimes,            // 8: categorical
-        ORB_MINUTES_GRID,      // 9: discrete
+        orbMinutesGrid,      // 9: discrete
         ACTION_MINUTES_GRID,   // 10: discrete
       ];
 
@@ -579,7 +587,7 @@ if (isMainThread && process.argv[1] === currentFile) {
             0,                                                        // body  = smallest (capture more breakouts)
             Math.floor(trailingTriggersGrid.length / 2),              // trailTrig = mid (~1.0-1.5R real trigger, NOT 999)
             TRAILING_STEPS.length - 1,                                // trailStep = 999 (BE-only — confirmed by dumps)
-            FORCE_CLOSE_HOURS.length - 1,                             // fc = 24h (hold all day)
+            forceCloseHoursGrid.length - 1,                             // fc = 24h (hold all day)
             0,                                                        // pullback = 0%
             0,                                                        // exitMode = TRAILING
             0,                                                        // startTime = first slot in session
@@ -595,7 +603,7 @@ if (isMainThread && process.argv[1] === currentFile) {
             Math.floor(minBodyGrid.length / 2),                       // body = mid value
             1,                                                        // trailTrig = idx 1 (1.0R explicit trigger)
             TRAILING_STEPS.length - 1,                                // trailStep = 999 (BE-only)
-            FORCE_CLOSE_HOURS.length - 1,                             // fc = 24h
+            forceCloseHoursGrid.length - 1,                             // fc = 24h
             0,                                                        // pullback = 0%
             0,                                                        // exitMode = TRAILING
             0,                                                        // startTime = first
@@ -611,7 +619,7 @@ if (isMainThread && process.argv[1] === currentFile) {
             minBodyGrid.length - 1,                                   // body = largest (strictest filter)
             1,                                                        // trailTrig = 1.0R
             TRAILING_STEPS.length - 1,                                // trailStep = 999
-            FORCE_CLOSE_HOURS.length - 1,                             // fc = 24h
+            forceCloseHoursGrid.length - 1,                             // fc = 24h
             0,                                                        // pullback = 0%
             0,                                                        // exitMode = TRAILING
             0,                                                        // startTime = first
@@ -633,9 +641,9 @@ if (isMainThread && process.argv[1] === currentFile) {
           const chrom = decodeMageSetup(
             alpha.setup, session,
             minSlGrid, maxSlGrid, minBodyGrid,
-            trailingTriggersGrid, TRAILING_STEPS, FORCE_CLOSE_HOURS,
+            trailingTriggersGrid, TRAILING_STEPS, forceCloseHoursGrid,
             PULLBACK_PERCENTAGES, EXIT_MODES, startTimes,
-            ORB_MINUTES_GRID, ACTION_MINUTES_GRID
+            orbMinutesGrid, ACTION_MINUTES_GRID
           );
           if (chrom) {
             championChromosomes.push(chrom);

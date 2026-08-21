@@ -117,9 +117,9 @@ export class PortfolioMockBrokerAccount {
     const cid = opts?.clientId as string | undefined;
     if (cid) {
       const upperCid = cid.toUpperCase();
-      if (upperCid.startsWith("S_") || upperCid.startsWith("SAGE_") || upperCid.includes("_SAGE_")) return "sage";
-      if (upperCid.startsWith("SEER_") || upperCid.includes("_SEER_")) return "seer";
-      if (upperCid.startsWith("M_") || upperCid.startsWith("MAGE_") || upperCid.includes("_MAGE_")) return "mage";
+      if (upperCid.startsWith("S_") || upperCid.startsWith("SAGE_") || upperCid.includes("_SAGE_") || upperCid.includes("_S_")) return "sage";
+      if (upperCid.startsWith("SRC_") || upperCid.startsWith("SEER_") || upperCid.includes("_SEER_") || upperCid.includes("_SRC_")) return "seer";
+      if (upperCid.startsWith("M_") || upperCid.startsWith("MAGE_") || upperCid.includes("_MAGE_") || upperCid.includes("_M_")) return "mage";
     }
     return "mage";
   }
@@ -129,10 +129,10 @@ export class PortfolioMockBrokerAccount {
     if (orchestratorState.sageStates[clientId]) return clientId;
     
     const parts = clientId.split('_');
-    if (parts.length >= 2) {
-      const hash = parts[1];
+    for (const part of parts) {
+      if (part === "P0" || part === "Psimulator" || (part.startsWith("P") && part.length <= 4) || part === "S" || part === "M" || part === "SRC") continue;
       for (const key of Object.keys(orchestratorState.sageStates)) {
-        if (getShortHash(key) === hash || key.includes(hash)) {
+        if (getShortHash(key) === part || key.includes(part)) {
           return key;
         }
       }

@@ -2276,7 +2276,7 @@ export class LiveOrchestrator {
       PairConfigManager.getMageConfigs(state.config.pair)?.length > 0 &&
       PairConfigManager.isOrbEnabled(state.config.pair)
     ) {
-      runMageBot(this, state.config.pair, state, c).catch((e) =>
+      await runMageBot(this, state.config.pair, state, c).catch((e) =>
         logger.error(`[DiscretionaryTrader] Mage ORB error on ${state.config.pair}:`,
           e,),
       );

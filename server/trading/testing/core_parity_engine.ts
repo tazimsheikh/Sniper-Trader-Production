@@ -3,6 +3,7 @@ import { runSageMathBacktest } from "../backtester/SageMathBacktester.js";
 import { runMathBacktest as runSeerMathBacktest } from "../backtester/SeerMathBacktester.js";
 import { runShadowBacktest } from "../backtester/OrchestratorShadowBacktester.js";
 import { PairConfigManager } from "../config/PairConfig.js";
+import { getFixedEstDate } from "../backtester/math_core/MathCoreUtils.js";
 
 async function main() {
     const bot = process.argv[2] || "MAGE";
@@ -48,10 +49,10 @@ async function main() {
     const targetStartMs = new Date(startDate).getTime();
     const targetEndMs = new Date(endDate + 'T23:59:59Z').getTime();
 
-    // Filter T1 to only include trades in the requested date range
+    // Filter T1 to only include trades in the requested date range (EST Calendar Date)
     t1Taken = t1Taken.filter((t: any) => {
-        const tMs = t.openTime || t.timestamp || t.entryTimeMs || new Date(t.date).getTime();
-        return tMs >= targetStartMs && tMs <= targetEndMs;
+        const dStr = t.date || getFixedEstDate(new Date(t.openTime || t.timestamp || t.entryTimeMs)).toISOString().split("T")[0];
+        return dStr >= startDate && dStr <= endDate;
     });
     // Sort T1 chronologically by timestamp/entry time
     t1Taken.sort((a: any, b: any) => (a.entryTimeMs || a.timestamp || new Date(a.date).getTime()) - (b.entryTimeMs || b.timestamp || new Date(b.date).getTime()));
@@ -68,10 +69,18 @@ async function main() {
     const tier2Full = await runShadowBacktest(pair, startDate, endDate, t2Config);
     const t2Raw = tier2Full.tradeLog || [];
     
-    // Filter T2 for the requested bot AND the requested date range
+    // Filter T2 for the requested bot AND the requested date range (EST Calendar Date)
     const t2Taken = t2Raw.filter((t: any) => {
-        if (t.openTime < targetStartMs || t.openTime > targetEndMs) return false;
-        return t.botId?.toUpperCase() === bot || t.clientId?.toUpperCase().startsWith(`${bot}_`);
+        const dStr = getFixedEstDate(new Date(t.openTime)).toISOString().split("T")[0];
+        if (dStr < startDate || dStr > endDate) return false;
+        const cid = t.clientId?.toUpperCase() || "";
+        const isBot = t.botId?.toUpperCase() === bot || 
+                      cid.startsWith(`${bot}_`) || 
+                      cid.includes(`_${bot}_`) ||
+                      (bot === "SAGE" && (cid.startsWith("S_") || cid.includes("_S_") || cid.includes("_SAGE_"))) ||
+                      (bot === "MAGE" && (cid.startsWith("M_") || cid.includes("_M_") || cid.includes("_MAGE_"))) ||
+                      (bot === "SEER" && (cid.startsWith("SRC_") || cid.includes("_SRC_") || cid.startsWith("SEER_") || cid.includes("_SEER_")));
+        return isBot;
     });
 
     const t2R = t2Taken.reduce((a, b) => a + (b.rMultiple || 0), 0);

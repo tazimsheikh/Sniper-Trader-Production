@@ -122,9 +122,20 @@ export default function GlobalSettings({ onClose, onLogout }: GlobalSettingsProp
       });
       const data = await res.json();
       if (data.success && data.newStartBalance) {
-        setInstitutionalStartBalance(data.newStartBalance);
         const nowEst = new Date().toLocaleString("en-US", { timeZone: "America/New_York" });
-        setInstitutionalDailyDate(new Date(nowEst).toISOString().split('T')[0]);
+        const newDate = new Date(nowEst).toISOString().split('T')[0];
+        setInstitutionalStartBalance(data.newStartBalance);
+        setInstitutionalDailyDate(newDate);
+        setProfiles(prev => prev.map(p => {
+          if (p.id === selectedProfileId) {
+            return {
+              ...p,
+              institutional_daily_start_balance: data.newStartBalance,
+              institutional_daily_date: newDate,
+            };
+          }
+          return p;
+        }));
       }
     } catch(e) {}
   };
@@ -649,7 +660,7 @@ export default function GlobalSettings({ onClose, onLogout }: GlobalSettingsProp
                                 return (
                                   <div className="flex items-baseline gap-2">
                                     <span className={`font-display font-bold text-base ${isPositive ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                      {isPositive ? '+' : ''}{pct.toFixed(2)}%
+                                      {isPositive ? '+' : ''}${diff.toFixed(2)} ({isPositive ? '+' : ''}{pct.toFixed(2)}%)
                                     </span>
                                     <span className="text-slate-500 font-mono text-[10px]">
                                       (Base: ${startBal.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})})
