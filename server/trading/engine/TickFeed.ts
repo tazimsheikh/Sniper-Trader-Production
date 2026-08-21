@@ -28,6 +28,7 @@ import {
   getSharedStreamingConnection,
   getCachedStreamingConnectionSync,
   getSharedAccount,
+  getSharedConnection,
   BROKER_SYMBOL_MAP,
 } from "../broker/metaApiHandler.js";
 import { LiveOrchestrator, getFixedEstDate } from "./LiveOrchestrator.js";
@@ -178,22 +179,32 @@ export class TickFeed {
       }
     }
 
-    const SYMBOL_FALLBACKS: Record<string, string[]> = {
-      GER40: ["GER40.Daily", "GER40.daily", "DE40", "DAX40", "GER30", "DE30", "GER40.cash", "GER40.ecn", "DE40.cash", "DAX", "GDAXI", ".DE40", ".GER40", "GER40.m"],
-      UK100: ["UK100.Daily", "UK100.daily", "FTSE100", "UK100.cash", "UK100.ecn"],
-      US30: ["US30.Daily", "US30.daily", "DJ30", "DOWJONES", "US30.cash", "US30.ecn", "US30.m", ".US30"],
-      NAS100: ["NAS100.Daily", "NAS100.daily", "US100", "USTEC", "NDX100", "NAS100.cash", "NAS100.ecn", "NAS100.m", ".NAS100"],
-      SPX500: ["SPX500.Daily", "SPX500.daily", "US500", "SP500", "SPX500.cash", "SPX500.ecn", "SPX500.m", ".SPX500"],
-      JPN225: ["JPN225.Daily", "JPN225.daily", "JP225", "NIKKEI225", "JPN225.cash", "JPN225.ecn", ".JPN225"],
-      XAUUSD: ["XAUUSD.Daily", "XAUUSD.daily", "GOLD", "XAUUSD.m", "XAUUSD.a", "XAUUSD.ecn", "XAUUSD.cash", "GOLD.m"],
-      GBPJPY: ["GBPJPY.Daily", "GBPJPY.daily", "GBPJPY.m", "GBPJPY.a", "GBPJPY.ecn"],
-      AUDUSD: ["AUDUSD.Daily", "AUDUSD.daily", "AUDUSD.m", "AUDUSD.a", "AUDUSD.ecn"],
-      USDJPY: ["USDJPY.Daily", "USDJPY.daily", "USDJPY.m", "USDJPY.a", "USDJPY.ecn"],
-      BTCUSD: ["BTCUSD.Daily", "BTCUSD.daily", "BTCUSD.m", "BTCUSD.a", "BTCUSD.ecn"],
-      ETHUSD: ["ETHUSD.Daily", "ETHUSD.daily", "ETHUSD.m", "ETHUSD.a", "ETHUSD.ecn"],
-      EURUSD: ["EURUSD.Daily", "EURUSD.daily", "EURUSD.m", "EURUSD.a", "EURUSD.ecn"],
-      GBPUSD: ["GBPUSD.Daily", "GBPUSD.daily", "GBPUSD.m", "GBPUSD.a", "GBPUSD.ecn"],
+    const SUFFIX_CANDIDATES = ['', '.m', '.a', '.ecn', '.pro', '.raw', '.p', 'c', 'x', '_m', '.cash', '.Daily', '.std', '.s', '.stp', '+', '#', '_'];
+    const INDEX_ALIASES: Record<string, string[]> = {
+      GER40: ["GER40", "DAX40", "DE40", "GER30", "DE30", "GDAXI", "DAX", "DAX30", ".DE40", ".GER40"],
+      US30: ["US30", "DJ30", "WS30", "DOW30", "DOWJONES", ".US30"],
+      NAS100: ["NAS100", "US100", "USTEC", "NDX", "NDX100", "NQ100", ".NAS100"],
+      SPX500: ["SPX500", "US500", "SP500", "SPX", ".SPX500"],
+      JPN225: ["JPN225", "JP225", "NIKKEI225", ".JPN225"],
+      UK100: ["UK100", "FTSE100", ".UK100"],
+      XAUUSD: ["XAUUSD", "GOLD"],
+      XTIUSD: ["XTIUSD", "USOIL", "WTI", "OIL"],
+      BTCUSD: ["BTCUSD", "BITCOIN"],
+      ETHUSD: ["ETHUSD", "ETHEREUM"],
     };
+
+    function getFallbackCandidates(baseSym: string): string[] {
+      const clean = PairConfigManager.getBaseSymbol(baseSym);
+      const aliases = INDEX_ALIASES[clean] || INDEX_ALIASES[baseSym] || [clean];
+      const results: string[] = [];
+      for (const alias of aliases) {
+        for (const suff of SUFFIX_CANDIDATES) {
+          const cand = `${alias}${suff}`;
+          if (!results.includes(cand)) results.push(cand);
+        }
+      }
+      return results;
+    }
 
     let mapUpdated = false;
     for (const [base, brokerSym] of this.baseToBrokerMap.entries()) {
@@ -208,7 +219,7 @@ export class TickFeed {
 
       if (!subscribed) {
         const cleanBase = PairConfigManager.getBaseSymbol(base);
-        const fallbacks = SYMBOL_FALLBACKS[cleanBase] || SYMBOL_FALLBACKS[base] || [];
+        const fallbacks = getFallbackCandidates(base);
         for (const candidate of fallbacks) {
           if (candidate === brokerSym) continue;
           try {
@@ -225,19 +236,31 @@ export class TickFeed {
           }
         }
 
-        // If static fallbacks fail, perform dynamic live symbol discovery via MetaAPI getSymbols()
+        // If static fallbacks fail, perform dynamic live symbol discovery via RPC getSymbols()
         if (!subscribed) {
           try {
             logger.info(`[TickFeed] Querying broker getSymbols() for dynamic pattern discovery on ${base} (clean: ${cleanBase})...`);
-            const sharedAcc = await getSharedAccount(this.token, this.accountId);
-            const symbolsRaw = await sharedAcc.getSymbols();
-            const symbols = symbolsRaw.map((s: any) => typeof s === 'string' ? s : s.symbol);
+            let symbolsRaw: any[] = [];
+            if (typeof (conn as any).getSymbols === 'function') {
+              symbolsRaw = await (conn as any).getSymbols();
+            } else {
+              const rpcConn = await getSharedConnection(this.token, this.accountId, true);
+              if (rpcConn && typeof rpcConn.getSymbols === 'function') {
+                symbolsRaw = await rpcConn.getSymbols();
+              }
+            }
+            const symbols = (symbolsRaw || []).map((s: any) => typeof s === 'string' ? s : s.symbol);
             const patternMap: Record<string, RegExp> = {
               GER40: /^(GER|DAX|DE|GDAXI)[34]?0?/i,
               US30: /^(US|DJ|WS|DOW)[34]?0?/i,
               NAS100: /^(NAS|US100|USTEC|NDX|NQ)/i,
               SPX500: /^(US500|SP500|SPX|S&P)/i,
               JPN225: /^(JPN|JP|NIKKEI)225/i,
+              UK100: /^(UK|FTSE)100/i,
+              XAUUSD: /^(XAUUSD|GOLD)/i,
+              XTIUSD: /^(XTIUSD|USOIL|WTI|OIL)/i,
+              BTCUSD: /^(BTCUSD|BITCOIN)/i,
+              ETHUSD: /^(ETHUSD|ETHEREUM)/i,
             };
             const pat = patternMap[cleanBase] || patternMap[base] || 
               (cleanBase.length === 6 ? new RegExp(`^${cleanBase}[^a-zA-Z0-9]?.*$`, 'i') : null);
@@ -265,7 +288,7 @@ export class TickFeed {
         }
 
         if (!subscribed) {
-          logger.error(`[TickFeed] ❌ All candidate subscriptions failed for ${base} (attempted ${brokerSym}, ${fallbacks.join(', ')})`);
+          logger.error(`[TickFeed] ❌ All candidate subscriptions failed for ${base} (attempted ${brokerSym}, ${fallbacks.slice(0, 10).join(', ')}...)`);
         }
       }
     }
@@ -339,7 +362,13 @@ export class TickFeed {
           orch.handlePositionUpdate(position);
         }
       },
-      onPositionRemoved() {},
+      onPositionRemoved(_instanceIndex: string, positionId: string) {
+        if (!feed.running) return;
+        const orch = LiveOrchestrator.getInstance(feed.profileId);
+        if (orch && typeof orch.onBrokerPositionClosed === 'function') {
+          orch.onBrokerPositionClosed(positionId);
+        }
+      },
       onHistoryOrderAdded() {},
       onOrderAdded() {},
       onOrderUpdated() {},

@@ -121,11 +121,10 @@ export function preComputeTriggers(
         continue;
       }
 
-      const candleDate = new Date(c.timestamp);
-      const utcDay = candleDate.getUTCDay();
+      const estDay = getFixedEstDate(new Date(c.timestamp)).getUTCDay();
       if (mCfg) {
         if (mCfg.toxicHours && mCfg.toxicHours.includes(c.estHour)) continue;
-        if (mCfg.toxicDays && isToxicDay(utcDay, mCfg.toxicDays)) continue;
+        if (mCfg.toxicDays && isToxicDay(estDay, mCfg.toxicDays)) continue;
       }
 
       // Action candle: closed M5 candle c
@@ -303,7 +302,10 @@ export function evaluateExits(
     const pbPct = config.orbPullbackPct ?? 0.0;
     const limitBuyPrice = roundPrice(t.orHigh - t.boxSize * pbPct, pair);
     const limitSellPrice = roundPrice(t.orLow + t.boxSize * pbPct, pair);
-    let entryPrice = direction === "BUY" ? limitBuyPrice : limitSellPrice;
+    const currentM5Close = m5Candles[t.m5Index].close;
+    let entryPrice = (pbPct > 0)
+      ? (direction === "BUY" ? limitBuyPrice : limitSellPrice)
+      : roundPrice(direction === "BUY" ? currentM5Close + spreadPts : currentM5Close, pair);
     const slBuffer = 0;
 
     // Configurable Stop Loss Geometry
@@ -374,8 +376,7 @@ export function evaluateExits(
     let entryTimeMs = 0;
 
     // isInstantFill logic matching MageEngine (fallback to market)
-    const proximityThreshold = Math.max(1.5 * pipSize, (optCfg?.spread || 1) * 2.5 * pipSize, 0.10 * Math.abs(entryPrice - slPrice));
-    const currentM5Close = m5Candles[t.m5Index].close;
+    const proximityThreshold = Math.max(2.5 * pipSize, (optCfg?.spread || 1) * 2.5 * pipSize, 0.10 * Math.abs(entryPrice - slPrice));
     const m5CurrentPrice = direction === "BUY" ? currentM5Close + spreadPts : currentM5Close;
     const distFromEntry = direction === "BUY" ? (m5CurrentPrice - entryPrice) : (entryPrice - m5CurrentPrice);
     const isWithinProximity = Math.abs(distFromEntry) <= proximityThreshold || (direction === "BUY" ? m5CurrentPrice <= entryPrice : m5CurrentPrice >= entryPrice);
@@ -516,9 +517,20 @@ export function evaluateExits(
         // ─── STEP 2: UPDATE TRAILING STOP FOR FUTURE BARS ────────────────────
         // Only reached if trade is still alive. The SL update here only affects
         // bars AFTER this one.
-        const currentR = direction === "BUY"
+        const intendedEntry = (pbPct > 0)
+          ? (direction === "BUY" ? limitBuyPrice : limitSellPrice)
+          : entryPrice;
+        const intendedRisk = Math.abs(intendedEntry - slPrice);
+
+        const actualR = direction === "BUY"
           ? (m1.high[j] - entryPrice) / initialRisk
           : (entryPrice - (m1.low[j] + spreadPts)) / initialRisk;
+
+        const theoreticalR = direction === "BUY"
+          ? (m1.high[j] - intendedEntry) / (intendedRisk > 0 ? intendedRisk : initialRisk)
+          : (intendedEntry - (m1.low[j] + spreadPts)) / (intendedRisk > 0 ? intendedRisk : initialRisk);
+
+        const currentR = Math.max(actualR, theoreticalR);
 
         const isAdtel = !!(config.adtelEnabled || config.useAdtelTrailing || config.exitMode?.startsWith("ADTEL"));
 

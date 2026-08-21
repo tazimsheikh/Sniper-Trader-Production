@@ -254,6 +254,15 @@ class GlobalTradeGate {
     return { approved: true };
   }
 
+  private onLeadTradeListeners: Array<(leadTrade: SessionLeadTrade) => void> = [];
+
+  /**
+   * Registers a callback listener for reactive in-memory lead trade broadcasts.
+   */
+  onLeadTrade(listener: (leadTrade: SessionLeadTrade) => void) {
+    this.onLeadTradeListeners.push(listener);
+  }
+
   /**
    * Locks the canonical session direction and registers the lead trade for cross-account catch-up.
    */
@@ -268,6 +277,15 @@ class GlobalTradeGate {
       logger.info(
         `[GlobalTradeGate] 🔒 Locked canonical session direction: ${cleanBot} ${cleanPair} ${leadTrade.direction} for ${leadTrade.session || 'default'} on ${leadTrade.dateStr} (Lead Profile: #${leadTrade.leadProfileId})`,
       );
+
+      // ⚡ Sub-Millisecond Reactive Broadcast to all peer orchestrators
+      for (const listener of this.onLeadTradeListeners) {
+        try {
+          listener(leadTrade);
+        } catch (e: any) {
+          logger.error(`[GlobalTradeGate] Error in lead trade listener: ${e.message}`);
+        }
+      }
     }
   }
 

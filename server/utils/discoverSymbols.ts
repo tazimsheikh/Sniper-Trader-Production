@@ -50,11 +50,11 @@ export async function discoverBrokerSymbols(profileId: number, token: string, ac
     }
     console.log(`[AutoDiscover] Commencing suffix-probing discovery for profile ${profileId}...`);
     
-    let SUFFIXES = ['.m', '.a', '.ecn', '.p', 'c', 'x', '_m', '.pro', '.raw', '.cash', '.Daily', '.daily', ''];
+    let SUFFIXES = ['', '.m', '.a', '.ecn', '.pro', '.raw', '.p', 'c', 'x', '_m', '.cash'];
     const INDEX_ALIASES: Record<string, string[]> = {
-      "GER40": ["GER40", "DAX40", "DE40", "GER30", "DE30", "GDAXI", "DAX30", "DAX", ".DE40", ".GER40"],
-      "US30": ["US30", "DJ30", "WS30", "DOW30", ".US30"],
-      "NAS100": ["NAS100", "US100", "USTEC", "NDX", "NQ100", ".NAS100"],
+      "GER40": ["GER40", "DAX40", "DE40", "GER30", "DE30", "GDAXI", "DAX", "DAX30", ".DE40", ".GER40"],
+      "US30": ["US30", "DJ30", "WS30", "DOW30", "DOWJONES", ".US30"],
+      "NAS100": ["NAS100", "US100", "USTEC", "NDX", "NDX100", "NQ100", ".NAS100"],
       "SPX500": ["SPX500", "US500", "SP500", "SPX", ".SPX500"],
       "JPN225": ["JPN225", "JP225", "NIKKEI225", ".JPN225"],
       "XAUUSD": ["XAUUSD", "GOLD"],
@@ -89,7 +89,6 @@ export async function discoverBrokerSymbols(profileId: number, token: string, ac
             
             if (spec && spec.tradeMode !== 'DISABLED' && spec.tradeMode !== 'CALCULATE') {
               newMap[base] = candidate;
-              newMap[`${base}.Daily`] = candidate;
               console.log(`[AutoDiscover] ✅ Mapped ${base} -> ${candidate} (tradeMode: ${spec.tradeMode})`);
               found = true;
               

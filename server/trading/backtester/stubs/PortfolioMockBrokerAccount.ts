@@ -5,12 +5,14 @@
 // ============================================================
 import { isNewsForceClose } from '../../market/historicalNews.js';
 import { getShortHash } from './crypto.stub.js';
+import { OPTIMIZER_CONFIG } from '../../config/OptimizerPairConfig.js';
 
 export interface SimPosition {
   id: string;
   symbol: string;
   type: 'POSITION_TYPE_BUY' | 'POSITION_TYPE_SELL';
   openPrice: number;
+  intendedEntryPrice?: number;
   sl: number;
   originalSl: number;
   tp: number;
@@ -87,6 +89,18 @@ export class PortfolioMockBrokerAccount {
     this.spreads.set(symbol, spread);
     this.pipSizes.set(symbol, pipSize);
     this.spreadPtsMap.set(symbol, spread * pipSize);
+  }
+
+  private getAdverseSlippagePts(symbol: string): number {
+    const points = (global as any).__SIM_SLIPPAGE_POINTS__ || 0;
+    if (points <= 0) return 0;
+    const cleanSym = symbol.split('.')[0];
+    const opt = OPTIMIZER_CONFIG[cleanSym];
+    if (opt && opt.tickSize) {
+      return points * opt.tickSize;
+    }
+    const pipSize = this.pipSizes.get(symbol) || 0.0001;
+    return (points / 10) * pipSize;
   }
 
   /** Called before each M1 tick is fed to the orchestrator */
@@ -194,10 +208,11 @@ export class PortfolioMockBrokerAccount {
   async createMarketBuyOrder(symbol: string, lots: number, sl: number, tp: number, opts?: any) {
     const id = `SIM_${this.orderId++}`;
     const spreadPts = this.spreadPtsMap.get(symbol) || 0;
+    const slp = this.getAdverseSlippagePts(symbol);
     const c = this.currentCandles.get(symbol);
-    let price = (c?.open || 0) + spreadPts;
+    let price = (c?.open || 0) + spreadPts + slp;
     if (opts?.limitPrice !== undefined) {
-      price = Math.min(price, opts.limitPrice);
+      price = Math.min(price, opts.limitPrice + slp);
     }
     if (price > 100 && symbol.includes('EUR')) console.log(`[ANOMALY TRACE] createMarketBuyOrder: ${symbol} price=${price}`);
     const botId = this.deduceBotId(opts);
@@ -206,7 +221,7 @@ export class PortfolioMockBrokerAccount {
     // NATIVE PARITY CHECK: If it hits SL/TP in the exact candle it was placed
     if (c) {
       if (c.low <= sl) {
-        const exitPrice = Math.min(c.open, sl);
+        const exitPrice = Math.min(c.open, sl) - slp;
         
         let riskDist = Math.abs(price - sl);
         const pipSize = this.pipSizes.get(symbol) || 1;
@@ -226,9 +241,10 @@ export class PortfolioMockBrokerAccount {
         const pipSize = this.pipSizes.get(symbol) || 1;
         if (riskDist < pipSize * 0.1) riskDist = pipSize * 0.1;
 
-        const rMultiple = (tp - price) / riskDist;
+        const exitPrice = tp - slp;
+        const rMultiple = (exitPrice - price) / riskDist;
         this.tradeLog.push({
-          symbol: symbol, direction: 'BUY', entryPrice: price, exitPrice: tp,
+          symbol: symbol, direction: 'BUY', entryPrice: price, exitPrice,
           slPrice: sl, originalSl: sl, tpPrice: tp, outcome: 'TP', rMultiple,
           openTime: c.timestamp, closeTime: c.timestamp, botId, clientId: opts?.clientId,
           magic: opts?.magic, orHigh: opts?.orHigh, orLow: opts?.orLow, limitPlacedAt: opts?.placedAt,
@@ -238,7 +254,8 @@ export class PortfolioMockBrokerAccount {
       }
     }
 
-    this.positions.set(id, { id, symbol, type: 'POSITION_TYPE_BUY', openPrice: price, sl, originalSl: sl, tp, volume: lots, time: this.simulatedTime.toISOString(), botId, clientId: opts?.clientId, magic: opts?.magic, orHigh: opts?.orHigh, orLow: opts?.orLow, trailLog: (global as any).__SIM_ENABLE_TRACE__ ? [] : undefined });
+    const intendedEntry = opts?.limitPrice !== undefined ? opts.limitPrice : ((c?.open || 0) + spreadPts);
+    this.positions.set(id, { id, symbol, type: 'POSITION_TYPE_BUY', openPrice: price, intendedEntryPrice: intendedEntry, sl, originalSl: sl, tp, volume: lots, time: this.simulatedTime.toISOString(), botId, clientId: opts?.clientId, magic: opts?.magic, orHigh: opts?.orHigh, orLow: opts?.orLow, trailLog: (global as any).__SIM_ENABLE_TRACE__ ? [] : undefined });
     const orchState = (global as any).__SIM_ORCH_STATE__ || (opts?.orchState);
     if (orchState) {
       if (!orchState.activeTrades) orchState.activeTrades = [];
@@ -252,6 +269,7 @@ export class PortfolioMockBrokerAccount {
         symbol,
         direction: 'BUY',
         entryPrice: price,
+        intendedEntryPrice: intendedEntry,
         slPrice: sl,
         originalSl: sl,
         tpPrice: tp,
@@ -268,16 +286,17 @@ export class PortfolioMockBrokerAccount {
     const id = `SIM_${this.orderId++}`;
     const c = this.currentCandles.get(symbol);
     const spreadPts = this.spreadPtsMap.get(symbol) || 0;
-    let price = c?.open || 0;
+    const slp = this.getAdverseSlippagePts(symbol);
+    let price = (c?.open || 0) - slp;
     if (opts?.limitPrice !== undefined) {
-      price = Math.max(price, opts.limitPrice);
+      price = Math.max(price, opts.limitPrice - slp);
     }
     const botId = this.deduceBotId(opts);
 
     // NATIVE PARITY CHECK: If it hits SL/TP in the exact candle it was placed
     if (c) {
       if (c.high + spreadPts >= sl) {
-        const exitPrice = Math.max(c.open + spreadPts, sl);
+        const exitPrice = Math.max(c.open + spreadPts, sl) + slp;
         
         let riskDist = Math.abs(price - sl);
         const pipSize = this.pipSizes.get(symbol) || 1;
@@ -297,9 +316,10 @@ export class PortfolioMockBrokerAccount {
         const pipSize = this.pipSizes.get(symbol) || 1;
         if (riskDist < pipSize * 0.1) riskDist = pipSize * 0.1;
 
-        const rMultiple = (price - tp) / riskDist;
+        const exitPrice = tp + slp;
+        const rMultiple = (price - exitPrice) / riskDist;
         this.tradeLog.push({
-          symbol: symbol, direction: 'SELL', entryPrice: price, exitPrice: tp,
+          symbol: symbol, direction: 'SELL', entryPrice: price, exitPrice,
           slPrice: sl, originalSl: sl, tpPrice: tp, outcome: 'TP', rMultiple,
           openTime: c.timestamp, closeTime: c.timestamp, botId, clientId: opts?.clientId,
           magic: opts?.magic, orHigh: opts?.orHigh, orLow: opts?.orLow, limitPlacedAt: opts?.placedAt,
@@ -309,7 +329,8 @@ export class PortfolioMockBrokerAccount {
       }
     }
 
-    this.positions.set(id, { id, symbol, type: 'POSITION_TYPE_SELL', openPrice: price, sl, originalSl: sl, tp, volume: lots, time: this.simulatedTime.toISOString(), botId, clientId: opts?.clientId, magic: opts?.magic, orHigh: opts?.orHigh, orLow: opts?.orLow, trailLog: (global as any).__SIM_ENABLE_TRACE__ ? [] : undefined });
+    const intendedEntry = opts?.limitPrice !== undefined ? opts.limitPrice : (c?.open || 0);
+    this.positions.set(id, { id, symbol, type: 'POSITION_TYPE_SELL', openPrice: price, intendedEntryPrice: intendedEntry, sl, originalSl: sl, tp, volume: lots, time: this.simulatedTime.toISOString(), botId, clientId: opts?.clientId, magic: opts?.magic, orHigh: opts?.orHigh, orLow: opts?.orLow, trailLog: (global as any).__SIM_ENABLE_TRACE__ ? [] : undefined });
     const orchState = (global as any).__SIM_ORCH_STATE__ || (opts?.orchState);
     if (orchState) {
       if (!orchState.activeTrades) orchState.activeTrades = [];
@@ -323,6 +344,7 @@ export class PortfolioMockBrokerAccount {
           symbol,
           direction: 'SELL',
           entryPrice: price,
+          intendedEntryPrice: intendedEntry,
           slPrice: sl,
           originalSl: sl,
           tpPrice: tp,
@@ -405,7 +427,8 @@ export class PortfolioMockBrokerAccount {
         const trade = orchestratorState.activeTrades?.find((t: any) => t.metaOrderId === orderId);
         if (trade) {
           const isBuy = trade.direction === 'BUY';
-          const exitPrice = isBuy ? c.open : c.open + spreadPts;
+          const slp = this.getAdverseSlippagePts(symbol);
+          const exitPrice = isBuy ? c.open - slp : c.open + spreadPts + slp;
           const rMultiple = isBuy 
             ? (exitPrice - trade.entryPrice) / (this.pipSizes.get(symbol) || 1) / trade.riskPips 
             : (trade.entryPrice - exitPrice) / (this.pipSizes.get(symbol) || 1) / trade.riskPips;
@@ -480,17 +503,19 @@ export class PortfolioMockBrokerAccount {
 
       if (buyFilled || sellFilled) {
         const direction = buyFilled ? 'BUY' : 'SELL';
+        const slp = this.getAdverseSlippagePts(order.symbol);
+        const filledPrice = buyFilled ? order.limitPrice + slp : order.limitPrice - slp;
         const gappedPastSl = buyFilled
-          ? order.limitPrice <= order.sl
-          : order.limitPrice >= order.sl;
+          ? filledPrice <= order.sl
+          : filledPrice >= order.sl;
 
         if (gappedPastSl) {
           this.pendingOrders.delete(orderId);
           this.tradeLog.push({
             symbol: symbol,
             direction,
-            entryPrice: order.limitPrice,
-            exitPrice: order.limitPrice,
+            entryPrice: filledPrice,
+            exitPrice: filledPrice,
             slPrice: order.sl,
             originalSl: order.sl,
             tpPrice: order.tp,
@@ -513,7 +538,7 @@ export class PortfolioMockBrokerAccount {
           id: orderId,
           symbol: order.symbol,
           type: type,
-          openPrice: order.limitPrice,
+          openPrice: filledPrice,
           sl: order.sl,
           originalSl: order.sl,
           tp: order.tp,
@@ -533,8 +558,7 @@ export class PortfolioMockBrokerAccount {
         if (orchestratorState) {
           orchestratorState.limitOrderId = null;
           orchestratorState.limitPlacedAt = null;
-          const intendedLimit = originalLimitPrice || order.limitPrice;
-          let riskPips = Math.abs(intendedLimit - order.sl) / (this.pipSizes.get(symbol) || 1);
+          let riskPips = Math.abs(filledPrice - order.sl) / (this.pipSizes.get(symbol) || 1);
           if (riskPips < 0.1) riskPips = 0.1;
           
           const sageSig = this.resolveSageKey(orchestratorState, order.clientId);
@@ -546,13 +570,13 @@ export class PortfolioMockBrokerAccount {
             clientId: sageSig || null,
             botId: order.botId || this.deduceBotId(order),
             direction: direction,
-            entryPrice: order.limitPrice,
+            entryPrice: filledPrice,
             slPrice: order.sl,
             originalSl: order.sl,
             tpPrice: order.tp,
             riskPips,
-            highestPrice: order.limitPrice,
-            lowestPrice: order.limitPrice,
+            highestPrice: filledPrice,
+            lowestPrice: filledPrice,
             isTrailing: false,
             volume: order.volume,
             hasTakenPartial: false,
@@ -561,7 +585,7 @@ export class PortfolioMockBrokerAccount {
           
           const trade = orchestratorState.activeTrades.find((t: any) => t.metaOrderId === orderId) || orchestratorState.activeTrades[orchestratorState.activeTrades.length - 1];
           if (isBuy && c.low <= pos.sl) {
-            const exitPrice = Math.min(c.open, pos.sl);
+            const exitPrice = Math.min(c.open, pos.sl) - slp;
             const rMultiple = (exitPrice - trade.entryPrice) / (this.pipSizes.get(symbol) || 1) / trade.riskPips;
             this.tradeLog.push({
               symbol: symbol, direction: 'BUY', entryPrice: trade.entryPrice,
@@ -574,7 +598,7 @@ export class PortfolioMockBrokerAccount {
             orchestratorState.activeTrades = orchestratorState.activeTrades.filter((t: any) => t.metaOrderId !== trade.metaOrderId);
             if (orchestratorState.activeTrade?.metaOrderId === trade.metaOrderId) delete orchestratorState.activeTrade;
           } else if (!isBuy && c.high + spreadPts >= pos.sl) {
-            const exitPrice = Math.max(c.open + spreadPts, pos.sl);
+            const exitPrice = Math.max(c.open + spreadPts, pos.sl) + slp;
             const rMultiple = (trade.entryPrice - exitPrice) / (this.pipSizes.get(symbol) || 1) / trade.riskPips;
             this.tradeLog.push({
               symbol: symbol, direction: 'SELL', entryPrice: trade.entryPrice,
@@ -587,10 +611,11 @@ export class PortfolioMockBrokerAccount {
             orchestratorState.activeTrades = orchestratorState.activeTrades.filter((t: any) => t.metaOrderId !== trade.metaOrderId);
             if (orchestratorState.activeTrade?.metaOrderId === trade.metaOrderId) delete orchestratorState.activeTrade;
           } else if (isBuy && c.high >= pos.tp) {
-            const rMultiple = (pos.tp - trade.entryPrice) / (this.pipSizes.get(symbol) || 1) / trade.riskPips;
+            const exitPrice = pos.tp - slp;
+            const rMultiple = (exitPrice - trade.entryPrice) / (this.pipSizes.get(symbol) || 1) / trade.riskPips;
             this.tradeLog.push({
               symbol: symbol, direction: 'BUY', entryPrice: trade.entryPrice,
-              exitPrice: pos.tp, slPrice: pos.sl, originalSl: pos.originalSl || pos.sl, tpPrice: pos.tp, outcome: 'TP',
+              exitPrice: exitPrice, slPrice: pos.sl, originalSl: pos.originalSl || pos.sl, tpPrice: pos.tp, outcome: 'TP',
               rMultiple, openTime: trade.openTime, closeTime: c.timestamp,
               botId: trade.botId, clientId: trade.clientId, magic: pos.magic,
               orHigh: pos.orHigh, orLow: pos.orLow, limitPlacedAt: order.placedAt, trailLog: pos.trailLog
@@ -599,10 +624,11 @@ export class PortfolioMockBrokerAccount {
             orchestratorState.activeTrades = orchestratorState.activeTrades.filter((t: any) => t.metaOrderId !== trade.metaOrderId);
             if (orchestratorState.activeTrade?.metaOrderId === trade.metaOrderId) delete orchestratorState.activeTrade;
           } else if (!isBuy && c.low + spreadPts <= pos.tp) {
-            const rMultiple = (trade.entryPrice - pos.tp) / (this.pipSizes.get(symbol) || 1) / trade.riskPips;
+            const exitPrice = pos.tp + slp;
+            const rMultiple = (trade.entryPrice - exitPrice) / (this.pipSizes.get(symbol) || 1) / trade.riskPips;
             this.tradeLog.push({
               symbol: symbol, direction: 'SELL', entryPrice: trade.entryPrice,
-              exitPrice: pos.tp, slPrice: pos.sl, originalSl: pos.originalSl || pos.sl, tpPrice: pos.tp, outcome: 'TP',
+              exitPrice: exitPrice, slPrice: pos.sl, originalSl: pos.originalSl || pos.sl, tpPrice: pos.tp, outcome: 'TP',
               rMultiple, openTime: trade.openTime, closeTime: c.timestamp,
               botId: trade.botId, clientId: trade.clientId, magic: pos.magic,
               orHigh: pos.orHigh, orLow: pos.orLow, limitPlacedAt: order.placedAt, trailLog: pos.trailLog
@@ -626,6 +652,7 @@ export class PortfolioMockBrokerAccount {
       const isBuy = pos.type === 'POSITION_TYPE_BUY';
       const spreadPts = this.spreadPtsMap.get(pos.symbol) || 0;
       const pipSize = this.pipSizes.get(pos.symbol) || 1;
+      const slp = this.getAdverseSlippagePts(pos.symbol);
 
       let hitSL = false;
       let hitTP = false;
@@ -633,16 +660,16 @@ export class PortfolioMockBrokerAccount {
 
       if (isBuy && Number(c.low.toFixed(5)) <= Number(pos.sl.toFixed(5))) {
         hitSL = true;
-        exitPrice = Math.min(c.open, pos.sl);
+        exitPrice = Math.min(c.open, pos.sl) - slp;
       } else if (!isBuy && Number((c.high + spreadPts).toFixed(5)) >= Number(pos.sl.toFixed(5))) {
         hitSL = true;
-        exitPrice = Math.max(c.open + spreadPts, pos.sl);
+        exitPrice = Math.max(c.open + spreadPts, pos.sl) + slp;
       } else if (isBuy && pos.tp && Number(c.high.toFixed(5)) >= Number(pos.tp.toFixed(5))) {
         hitTP = true;
-        exitPrice = pos.tp;
+        exitPrice = pos.tp - slp;
       } else if (!isBuy && pos.tp && Number((c.low + spreadPts).toFixed(5)) <= Number(pos.tp.toFixed(5))) {
         hitTP = true;
-        exitPrice = pos.tp;
+        exitPrice = pos.tp + slp;
       }
 
       if (hitSL || hitTP) {
@@ -723,7 +750,8 @@ export class PortfolioMockBrokerAccount {
     
     const isBuy = pos.type === 'POSITION_TYPE_BUY';
     const spreadPts = this.spreadPtsMap.get(pos.symbol) || 0;
-    const exitPrice = isBuy ? c.open : c.open + spreadPts;
+    const slp = this.getAdverseSlippagePts(pos.symbol);
+    const exitPrice = isBuy ? c.open - slp : c.open + spreadPts + slp;
     const pipSize = this.pipSizes.get(pos.symbol) || 1;
     
     // NATIVE PARITY FIX: Clamp risk distance to prevent infinite R-multiples
@@ -766,7 +794,6 @@ export class PortfolioMockBrokerAccount {
       }
       if (pos && (pos as any).clientId && orchState.sageStates?.[(pos as any).clientId]) {
         orchState.sageStates[(pos as any).clientId].limitOrderId = null;
-        orchState.sageStates[(pos as any).clientId].fired = false;
         orchState.sageStates[(pos as any).clientId].fired_fill_check = false;
       }
     }
@@ -783,6 +810,48 @@ export class PortfolioMockBrokerAccount {
 
   async getHistoricalCandles(symbol: string, tf: string, startTime?: any, count?: number) {
     return [];
+  }
+
+  forceCloseAll(timestamp: number) {
+    const orchestratorState = (global as any).__SIM_ORCH_STATE__;
+    for (const [orderId, pos] of Array.from(this.positions.entries())) {
+      const c = this.currentCandles.get(pos.symbol);
+      if (!c) continue;
+      
+      const trade = orchestratorState?.activeTrades?.find((t: any) => t.metaOrderId === orderId);
+      const isBuy = pos.type === 'POSITION_TYPE_BUY';
+      const spreadPts = this.spreadPtsMap.get(pos.symbol) || 0;
+      const slp = this.getAdverseSlippagePts(pos.symbol);
+      const pipSize = this.pipSizes.get(pos.symbol) || 1;
+      
+      const exitPrice = isBuy ? c.close - slp : c.close + spreadPts + slp;
+      const entryPrice = trade ? trade.entryPrice : pos.openPrice;
+      const riskDist = trade ? (trade.riskPips * pipSize) : Math.max(Math.abs(pos.openPrice - pos.originalSl), pipSize * 0.1);
+      
+      const rMultiple = isBuy ? (exitPrice - entryPrice) / riskDist : (entryPrice - exitPrice) / riskDist;
+      
+      this.tradeLog.push({
+        symbol: pos.symbol,
+        direction: isBuy ? 'BUY' : 'SELL',
+        entryPrice: entryPrice,
+        exitPrice: exitPrice,
+        slPrice: pos.sl,
+        originalSl: pos.originalSl || pos.sl,
+        tpPrice: pos.tp,
+        outcome: 'EOD_CLOSE',
+        rMultiple,
+        openTime: trade ? trade.openTime : new Date(pos.time).getTime(),
+        closeTime: timestamp,
+        botId: pos.botId,
+        clientId: pos.clientId,
+        magic: pos.magic,
+        orHigh: pos.orHigh,
+        orLow: pos.orLow,
+        limitPlacedAt: pos.limitPlacedAt,
+        trailLog: pos.trailLog
+      });
+      this.positions.delete(orderId);
+    }
   }
 }
 

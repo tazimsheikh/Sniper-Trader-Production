@@ -142,13 +142,13 @@ export async function monitorOpenTrades(currentSession: string) {
             "SELECT meta_order_id, initial_risk_pips, manages_own_trailing, bot_id FROM bot_trade_states WHERE profile_id = ? AND status = ?",
           )
           .all(profile.id, "OPEN")) as any[];
-        const botOrderIds = new Set(openDbTrades.map((t) => t.meta_order_id));
+        const botOrderIds = new Set(openDbTrades.map((t) => String(t.meta_order_id)));
         const dbTradeMap = new Map(
-          openDbTrades.map((t) => [t.meta_order_id, t]),
+          openDbTrades.map((t) => [String(t.meta_order_id), t]),
         );
         const positions = allPositions.filter(
           (p: any) =>
-            botOrderIds.has(p.id) ||
+            botOrderIds.has(String(p.id)) ||
             p.clientId === "AI_SNIPER_TP1" ||
             p.clientId === "AI_SNIPER_TP2" ||
             p.clientId?.startsWith("AI_SNIPER"),
@@ -221,183 +221,10 @@ export async function monitorOpenTrades(currentSession: string) {
             })();
           }
 
-          // ── 1. Institutional Trailing Stop Engine (1.5R Activation, 1.0R Trail) ───────────
-          const dbTrade = dbTradeMap.get(pos.id);
-
-          // 🛡️ DYNAMIC TRAILING OWNERSHIP CHECK:
-          // If manages_own_trailing is 1 (Mage, Sage, Seer, Black Swan, etc.), tradeManager MUST NOT apply trailing stops.
-          // Structural trailing is handled internally in LiveOrchestrator.
-          if (dbTrade?.manages_own_trailing === 1) {
-            // Do nothing. Structural trailing is handled in LiveOrchestrator.
-          } else {
-            let initialRiskPips = dbTrade?.initial_risk_pips || 20; // Fallback to 20 pips if missing
-            if (initialRiskPips <= 0) initialRiskPips = 20;
-
-            const profitR = floatingPips / initialRiskPips;
-
-            if (profitR >= 1.5) {
-              // ── PARTIAL PROFIT TRIGGER (50% Volume at 1.5R) ──
-              if (dbTrade && dbTrade.t1_hit !== 1) {
-                // Set DB flag FIRST to prevent duplicate partials on rapid ticks or broker timeouts
-                await db
-                  .prepare(
-                    "UPDATE bot_trade_states SET t1_hit = 1 WHERE meta_order_id = ?",
-                  )
-                  .run(pos.id);
-                dbTrade.t1_hit = 1; // Update local state
-
-                if (pos.volume >= 0.02) {
-                  const halfVolume = Math.floor((pos.volume / 2) * 100) / 100;
-                  if (halfVolume >= 0.01) {
-                    try {
-                      const partialResult =
-                        (await connection.closePositionPartially(
-                          pos.id,
-                          halfVolume,
-                          {},
-                        )) as any;
-                      console.log(
-                        `[TradeManager] 💰 ${pos.symbol} hit 1.5R! Took partial profit of ${halfVolume} lots.`,
-                      );
-                      if (
-                        partialResult?.positionId &&
-                        partialResult.positionId !== pos.id
-                      ) {
-                        console.log(
-                          `[TradeManager] 🔄 Position split detected. Updating DB meta_order_id from ${pos.id} to ${partialResult.positionId}`,
-                        );
-                        await db
-                          .prepare(
-                            "UPDATE bot_trade_states SET meta_order_id = ? WHERE meta_order_id = ?",
-                          )
-                          .run(partialResult.positionId, pos.id);
-                        pos.id = partialResult.positionId; // Update local reference for trailing
-                      }
-                    } catch (e: any) {
-                      console.error(
-                        `[TradeManager] ❌ Failed to take partial profit for ${pos.symbol}:`,
-                        e.message,
-                      );
-                    }
-                  }
-                } else {
-                  console.log(
-                    `[TradeManager] 🛡️ ${pos.symbol} hit 1.5R! Volume ${pos.volume} is too small to split. Leaving as single trade.`,
-                  );
-                }
-
-                // Move SL to Break-Even + 2 pips, adjusted for swap fee and commissions
-                const totalFees = (pos.swap || 0) + (pos.commission || 0);
-                let feeOffsetPips = 0;
-                if (totalFees < 0) {
-                  const pipValue =
-                    spec.pipSize * (pos.volume * spec.pipValuePerLot);
-                  feeOffsetPips = Math.abs(totalFees) / pipValue;
-                }
-                const adjustedBeOffset = (2.0 + feeOffsetPips) * spec.pipSize;
-                const bePrice =
-                  pos.type === "POSITION_TYPE_BUY"
-                    ? pos.openPrice + adjustedBeOffset
-                    : pos.openPrice - adjustedBeOffset;
-
-                let moveSl = false;
-                if (
-                  pos.type === "POSITION_TYPE_BUY" &&
-                  (!pos.stopLoss || pos.stopLoss < bePrice)
-                )
-                  moveSl = true;
-                if (
-                  pos.type === "POSITION_TYPE_SELL" &&
-                  (!pos.stopLoss || pos.stopLoss > bePrice)
-                )
-                  moveSl = true;
-
-                if (moveSl) {
-                  const brokerDigits = getSymbolSpec(pos.symbol).digits || 5;
-                  const bePriceFinal = parseFloat(
-                    bePrice.toFixed(brokerDigits),
-                  );
-                  pos.stopLoss = bePriceFinal; // Optimistic update
-                  (async () => {
-                    try {
-                      await withRetry(() =>
-                        connection.modifyPosition(
-                          pos.id,
-                          bePriceFinal,
-                          pos.takeProfit,
-                        ),
-                      );
-                      console.log(
-                        `[TradeManager] 🛡️ ${pos.symbol} hit 1.5R! SL moved to BE+2 (${bePriceFinal}).`,
-                      );
-                    } catch (e: any) {
-                      console.error(
-                        `[TradeManager] ❌ Failed to move SL to BE+2 for ${pos.symbol}:`,
-                        e.message,
-                      );
-                    }
-                  })();
-                }
-              }
-
-              // ── MATHEMATICAL TRAILING STOP (After 1.5R) ──
-              const trailDistance = initialRiskPips * 1.0 * spec.pipSize;
-              const newSlPrice =
-                pos.type === "POSITION_TYPE_BUY"
-                  ? pos.currentPrice - trailDistance
-                  : pos.currentPrice + trailDistance;
-
-              let shouldMoveSl = false;
-              const minTrailStep = 2 * spec.pipSize; // Only update broker if SL improves by at least 2 pips to prevent spam
-              if (!pos.stopLoss) {
-                shouldMoveSl = true;
-              } else if (
-                pos.type === "POSITION_TYPE_BUY" &&
-                newSlPrice >= pos.stopLoss + minTrailStep
-              ) {
-                shouldMoveSl = true;
-              } else if (
-                pos.type === "POSITION_TYPE_SELL" &&
-                newSlPrice <= pos.stopLoss - minTrailStep
-              ) {
-                shouldMoveSl = true;
-              }
-
-              if (shouldMoveSl && dbTrade?.t1_hit === 1) {
-                // Only trail AFTER BE+2 has been locked
-                console.log(
-                  `[TradeManager] ${pos.symbol} +${floatingPips.toFixed(1)} pips. Trailing SL to lock profit.`,
-                );
-                const brokerDigits = getSymbolSpec(pos.symbol).digits || 5;
-                const newSlPriceFinal = parseFloat(
-                  newSlPrice.toFixed(brokerDigits),
-                );
-                pos.stopLoss = newSlPriceFinal; // Optimistic update
-                state.brokeEven = true;
-                (async () => {
-                  try {
-                    await withRetry(() =>
-                      connection.modifyPosition(
-                        pos.id,
-                        newSlPriceFinal,
-                        pos.takeProfit,
-                      ),
-                    );
-                    await db
-                      .prepare(
-                        "UPDATE bot_trade_states SET sl_price = ? WHERE meta_order_id = ?",
-                      )
-                      .run(newSlPriceFinal, pos.id);
-                  } catch (e: any) {
-                    console.error(
-                      `[TradeManager] ❌ Failed to trail SL for ${pos.symbol}:`,
-                      e.message,
-                    );
-                  }
-                })();
-              }
-            }
-          }
+          // ── 1. Trailing Stop Engine & Partials Disabled in TradeManager ───────────
+          // Canonical Rule (AGENTS.md): All trailing stops, break-even, and trade lifecycle 
+          // management are exclusively handled inside LiveOrchestrator.ts on every M1 tick.
+          // TradeManager must NEVER execute partial closes or modify SL/TP.
 
           const now = new Date();
 
@@ -420,6 +247,7 @@ export async function monitorOpenTrades(currentSession: string) {
           }
 
           // ── 3.5. Timeout Sweeper (forceCloseHours safety check) ─────────────────────────
+          const dbTrade = dbTradeMap.get(String(pos.id));
           if (dbTrade && dbTrade.open_time) {
             const openMs = Number(dbTrade.open_time);
             if (openMs > 0) {
@@ -468,7 +296,7 @@ export async function monitorOpenTrades(currentSession: string) {
             if (!stuck.client_id) continue;
 
             const matchedPos = allPositions.find(
-              (p: any) => p.clientId === stuck.client_id,
+              (p: any) => p.clientId === stuck.client_id || (stuck.meta_order_id && String(p.id) === String(stuck.meta_order_id)),
             );
             if (matchedPos) {
               console.log(
@@ -481,6 +309,26 @@ export async function monitorOpenTrades(currentSession: string) {
                 .run(matchedPos.id, stuck.id);
               currentPosIds.add(matchedPos.id);
             } else {
+              // Check active pending limit orders on broker before declaring failed
+              let matchedOrderOnBroker = false;
+              try {
+                const pendingOrders = await connection.getOrders();
+                const matchedPending = (pendingOrders || []).find(
+                  (o: any) => o.clientId === stuck.client_id || (stuck.meta_order_id && String(o.id) === String(stuck.meta_order_id)),
+                );
+                if (matchedPending) {
+                  matchedOrderOnBroker = true;
+                  console.log(
+                    `[TradeManager] ⏳ Trade ${stuck.client_id} is an active pending limit order (${matchedPending.id}) on broker. Retaining.`,
+                  );
+                  if (!stuck.meta_order_id) {
+                    await db.prepare("UPDATE bot_trade_states SET meta_order_id = ? WHERE id = ?").run(matchedPending.id, stuck.id);
+                  }
+                }
+              } catch (_) {}
+
+              if (matchedOrderOnBroker) continue;
+
               // Check history orders just in case it closed already
               try {
                 const fallbackTime = stuck.created_at ? (Number.isFinite(Number(stuck.created_at)) ? Number(stuck.created_at) : new Date(stuck.created_at).getTime()) : Date.now();
@@ -493,7 +341,7 @@ export async function monitorOpenTrades(currentSession: string) {
                   ? rawHistoryOrders
                   : (rawHistoryOrders as any)?.historyOrders || (rawHistoryOrders as any)?.items || [];
                 const matchedOrder = historyOrders.find(
-                  (o: any) => o.clientId === stuck.client_id,
+                  (o: any) => o.clientId === stuck.client_id || (stuck.meta_order_id && String(o.id) === String(stuck.meta_order_id)),
                 );
                 if (matchedOrder) {
                   console.log(
@@ -539,7 +387,7 @@ export async function monitorOpenTrades(currentSession: string) {
             const matchedPos = allPositions.find(
               (p: any) =>
                 p.clientId === pending.client_id ||
-                p.id === pending.meta_order_id,
+                String(p.id) === String(pending.meta_order_id),
             );
             if (matchedPos) {
               console.log(
@@ -552,6 +400,28 @@ export async function monitorOpenTrades(currentSession: string) {
                 .run(matchedPos.id, pending.id);
               currentPosIds.add(matchedPos.id);
             } else {
+              // Check active pending limit orders on broker before declaring failed
+              let matchedOrderOnBroker = false;
+              try {
+                const pendingOrders = await connection.getOrders();
+                const matchedPending = (pendingOrders || []).find(
+                  (o: any) =>
+                    o.clientId === pending.client_id ||
+                    (pending.meta_order_id && String(o.id) === String(pending.meta_order_id)),
+                );
+                if (matchedPending) {
+                  matchedOrderOnBroker = true;
+                  console.log(
+                    `[TradeManager] ⏳ PENDING_VERIFICATION trade ${pending.client_id} is an active pending limit order (${matchedPending.id}) on broker. Retaining.`,
+                  );
+                  if (!pending.meta_order_id) {
+                    await db.prepare("UPDATE bot_trade_states SET meta_order_id = ? WHERE id = ?").run(matchedPending.id, pending.id);
+                  }
+                }
+              } catch (_) {}
+
+              if (matchedOrderOnBroker) continue;
+
               // Check history orders just in case it closed already
               try {
                 const fallbackTime = pending.created_at ? (Number.isFinite(Number(pending.created_at)) ? Number(pending.created_at) : new Date(pending.created_at).getTime()) : Date.now();
@@ -614,7 +484,7 @@ export async function monitorOpenTrades(currentSession: string) {
           .all(profile.id)) as any[];
 
         for (const dbTrade of openReconcileTrades) {
-          const id = dbTrade.meta_order_id;
+          const id = String(dbTrade.meta_order_id);
           if (!currentPosIds.has(id)) {
             // Position closed! Was it a loss? Query the deal history
             try {

@@ -7,8 +7,8 @@ import { logger } from "../../utils/logger.js";
 // ─────────────────────────────────────────────────────────────────────────────
 // Universal Multi-Pair Live Shadow Trade Loader
 // ─────────────────────────────────────────────────────────────────────────────
-async function loadUnifiedPortfolioShadowTrades(startDate: string, endDate: string): Promise<any[]> {
-  process.stdout.write(`\n🔮 [PORTFOLIO SHADOW] Feeding ALL 11 Pairs Chronologically into Real LiveOrchestrator (${startDate} → ${endDate})...\n`);
+async function loadUnifiedPortfolioShadowTrades(startDate: string, endDate: string, slippagePoints = 20): Promise<any[]> {
+  process.stdout.write(`\n🔮 [PORTFOLIO SHADOW] Feeding ALL 11 Pairs Chronologically into Real LiveOrchestrator (${startDate} → ${endDate}) with ${slippagePoints} Points Adverse Slippage...\n`);
 
   // Silence internal engine log spam during multi-million tick feed
   const origLoggerInfo = logger.info;
@@ -21,7 +21,7 @@ async function loadUnifiedPortfolioShadowTrades(startDate: string, endDate: stri
 
   let rawTrades: any[] = [];
   try {
-    rawTrades = await runPortfolioShadowBacktest(startDate, endDate);
+    rawTrades = await runPortfolioShadowBacktest(startDate, endDate, slippagePoints);
   } finally {
     logger.info = origLoggerInfo;
     logger.verbose = origLoggerVerbose;
@@ -397,6 +397,7 @@ async function runInstitutionalGridModule(trades: any[]) {
       dailyCap: (dailyCapPct * 100).toFixed(1) + "%",
       trailingLimit: (peakToDrawPct * 100).toFixed(1) + "%",
       finalBalance: "$" + bal.toFixed(2),
+      rawFinalBal: bal,
       netReturn: (netRetPct >= 0 ? "+" : "") + netRetPct.toFixed(1) + "%",
       maxDailyDd: (maxDailyLossSeen * 100).toFixed(2) + "%",
       maxPeakDd: (maxPeakDdPct * 100).toFixed(2) + "%",
@@ -414,12 +415,15 @@ async function runInstitutionalGridModule(trades: any[]) {
   console.log("\n▶ [Preset: Account C (Aggressive / High Risk) — 10.0% Daily Cap / 40.0% Trailing Max DD]");
   console.table(testRisks.map(r => evaluateInstitutionalScenario(r, 0.10, 0.40)));
 
+  console.log("\n▶ [Preset: Account D (Unconstrained Optimal Growth) — 100.0% Daily Cap / 100.0% Trailing Max DD]");
+  console.table([0.03, 0.05, 0.075, 0.10, 0.125, 0.15, 0.20, 0.25, 0.30, 0.40, 0.50, 0.60, 0.75, 1.00].map(r => evaluateInstitutionalScenario(r, 1.00, 1.00)));
+
   console.log("\n====================================================================================================");
-  console.log(" 🎯 MAX RISK SCANNER: HIGHEST ASSIGNABLE RISK WITHOUT BREACHING TRAILING DD");
+  console.log(" 🎯 MAX / OPTIMAL RISK SCANNER: HIGHEST SAFE & OPTIMAL RISK MULTIPLIER");
   console.log("====================================================================================================");
 
   const fineRisks: number[] = [];
-  for (let r = 0.01; r <= 0.605; r += 0.005) {
+  for (let r = 0.005; r <= 1.005; r += 0.005) {
     fineRisks.push(parseFloat(r.toFixed(3)));
   }
 
@@ -427,19 +431,29 @@ async function runInstitutionalGridModule(trades: any[]) {
     { name: "Account A (Conservative)", dailyCap: 0.025, peakToDraw: 0.060 },
     { name: "Account B (Balanced / Moderate)", dailyCap: 0.030, peakToDraw: 0.095 },
     { name: "Account C (Aggressive / High Risk)", dailyCap: 0.100, peakToDraw: 0.400 },
+    { name: "Account D (Optimal Growth / 100% Unconstrained)", dailyCap: 1.000, peakToDraw: 1.000 },
   ];
 
   const maxRiskResults: any[] = [];
 
   for (const acc of accountConfigs) {
-    let highestSafeRisk = 0;
+    let optimalOrMaxRisk = 0;
     let bestResult: any = null;
 
     for (const r of fineRisks) {
       const res = evaluateInstitutionalScenario(r, acc.dailyCap, acc.peakToDraw);
       if (res.status === "🟢 SAFE") {
-        highestSafeRisk = r;
-        bestResult = res;
+        if (acc.peakToDraw >= 0.99) {
+          // For Account D (100% Cap / 100% DD), find the optimal Kelly growth peak (max final balance)
+          if (!bestResult || res.rawFinalBal > bestResult.rawFinalBal) {
+            optimalOrMaxRisk = r;
+            bestResult = res;
+          }
+        } else {
+          // For prop firm accounts, find highest risk without breaching DD ceiling
+          optimalOrMaxRisk = r;
+          bestResult = res;
+        }
       }
     }
 
@@ -448,7 +462,7 @@ async function runInstitutionalGridModule(trades: any[]) {
         account: acc.name,
         dailyCap: (acc.dailyCap * 100).toFixed(1) + "%",
         trailingMaxDDLimit: (acc.peakToDraw * 100).toFixed(1) + "%",
-        maxSafeRisk: (highestSafeRisk * 100).toFixed(1) + "%",
+        optimalOrMaxSafeRisk: (optimalOrMaxRisk * 100).toFixed(1) + "%",
         finalBalance: bestResult.finalBalance,
         netReturn: bestResult.netReturn,
         actualPeakDD: bestResult.maxPeakDd,
@@ -477,9 +491,9 @@ async function main() {
   console.log(` 🕹️  Command Mode: "${modeArg}" | Multi-Pair Date Range: ${startDate} → ${endDate}`);
   console.log(`========================================================================`);
 
-  const trades = await loadUnifiedPortfolioShadowTrades(startDate, endDate);
+  const trades = await loadUnifiedPortfolioShadowTrades(startDate, endDate, 4);
 
-  console.log(`\n📦 Loaded ${trades.length} Unified Multi-Pair Shadow Trades (${startDate} → ${endDate})\n`);
+  console.log(`\n📦 Loaded ${trades.length} Unified Multi-Pair Shadow Trades with Realistic Slippage (-4 Points / 0.4 Pips) (${startDate} → ${endDate})\n`);
 
   if (modeArg === "modes" || modeArg === "--modes") {
     await runRiskModesModule(trades);

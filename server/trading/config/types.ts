@@ -67,6 +67,8 @@ export interface ActiveTrade {
   botId: string;
   direction: TradeDirection;
   entryPrice: number;
+  intendedEntryPrice?: number;
+  entrySlippage?: number;
   slPrice: number;
   originalSl?: number;
   tpPrice: number;
@@ -331,6 +333,8 @@ export interface TradeRecord {
   setupQuality: number | string;
   reasoning: string;
   entry: number;
+  intendedEntryPrice?: number;
+  entrySlippage?: number;
   stopLoss: number;
   takeProfit: number;
   riskPips: number;

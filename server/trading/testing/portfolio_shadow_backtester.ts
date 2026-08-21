@@ -52,9 +52,10 @@ async function loadPatchedOrchestrator(): Promise<any> {
   return mod.LiveOrchestrator;
 }
 
-export async function runPortfolioShadowBacktest(startDate: string, endDate: string) {
-  console.log(`\n🔮 [PORTFOLIO SHADOW] Starting Chronological Backtester (${startDate} to ${endDate})`);
+export async function runPortfolioShadowBacktest(startDate: string, endDate: string, slippagePoints = 20) {
+  console.log(`\n🔮 [PORTFOLIO SHADOW] Starting Chronological Backtester (${startDate} to ${endDate}) with ${slippagePoints} Points Adverse Slippage`);
 
+  (global as any).__SIM_SLIPPAGE_POINTS__ = slippagePoints;
   await registerStubs();
   const LiveOrchestrator = await loadPatchedOrchestrator();
 

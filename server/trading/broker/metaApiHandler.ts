@@ -713,11 +713,31 @@ export async function getSharedConnection(
     accountCache.set(key, account);
     if (account.state !== "DEPLOYED") {
       await account.deploy();
-      await account.waitConnected();
+      try {
+        const waitConn = account.waitConnected();
+        waitConn.catch(() => {});
+        await Promise.race([
+          waitConn,
+          new Promise((_, r) => setTimeout(() => r(new Error("waitConnected timeout (15s)")), 15000)),
+        ]);
+      } catch (e: any) {
+        console.warn(`[MetaAPI] waitConnected warning for ${accountId}: ${e.message}`);
+      }
     }
     const connection = account.getRPCConnection();
     await connection.connect();
-    await connection.waitSynchronized();
+    try {
+      const waitPromise = connection.waitSynchronized();
+      waitPromise.catch(() => {});
+      await Promise.race([
+        waitPromise,
+        new Promise((_, r) =>
+          setTimeout(() => r(new Error("RPC waitSynchronized timeout (15s)")), 15000),
+        ),
+      ]);
+    } catch (syncErr: any) {
+      console.warn(`[MetaAPI] ⚠️ RPC waitSynchronized for ${accountId} timed out: ${syncErr.message}. Connection cached, continuing in background.`);
+    }
     connectionCache.set(key, connection);
     return connection;
   }
@@ -870,11 +890,31 @@ export async function getSharedStreamingConnection(
     const account = await api.metatraderAccountApi.getAccount(accountId);
     if (account.state !== "DEPLOYED") {
       await account.deploy();
-      await account.waitConnected();
+      try {
+        const waitConn = account.waitConnected();
+        waitConn.catch(() => {});
+        await Promise.race([
+          waitConn,
+          new Promise((_, r) => setTimeout(() => r(new Error("waitConnected timeout (15s)")), 15000)),
+        ]);
+      } catch (e: any) {
+        console.warn(`[MetaAPI] waitConnected warning for streaming ${accountId}: ${e.message}`);
+      }
     }
     const connection = account.getStreamingConnection();
     await connection.connect();
-    await connection.waitSynchronized();
+    try {
+      const waitPromise = connection.waitSynchronized();
+      waitPromise.catch(() => {});
+      await Promise.race([
+        waitPromise,
+        new Promise((_, r) =>
+          setTimeout(() => r(new Error("Streaming waitSynchronized timeout (15s)")), 15000),
+        ),
+      ]);
+    } catch (syncErr: any) {
+      console.warn(`[MetaAPI] ⚠️ Streaming waitSynchronized for ${accountId} timed out: ${syncErr.message}. Connection cached, continuing in background.`);
+    }
 
     // Subscribe to all symbols for streaming market data
     for (const s of ALL_BROKER_SYMBOLS) {

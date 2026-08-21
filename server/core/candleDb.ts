@@ -33,9 +33,8 @@ try {
   candleDb.pragma("synchronous = NORMAL");
   candleDb.pragma("cache_size = -64000"); // 64MB page cache
 
-  // Create the table if it doesn't exist (Drop first to clear unpartitioned corrupt data)
+  // Create the table if it doesn't exist
   candleDb.exec(`
-    DROP TABLE IF EXISTS m5_candles_cache;
     CREATE TABLE IF NOT EXISTS m5_candles_cache (
       profile_id INTEGER NOT NULL,
       symbol    TEXT NOT NULL,

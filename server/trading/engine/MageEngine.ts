@@ -152,34 +152,59 @@ export async function _runMageBotForConfig(orch: any, symbol: string, state: any
           orch.profileId
         );
         logger.info(
-          `[DiscretionaryTrader] ðŸ§¹ MAGE cancelled stale limit order ${os.limitOrderId} on ${symbol} (new ORB session: ${dateStr}).`,
+          `[DiscretionaryTrader] 🧹 MAGE cancelled stale limit order ${os.limitOrderId} on ${symbol} (new ORB session: ${dateStr}).`,
         );
       } catch (_e) {
         /* ignore cancel errors on day rollover */
       }
     }
-    os.orHigh = -Infinity;
-    os.orLow = Infinity;
-    os.orBuilt = false;
-    os.breakoutDir = null;
-    os.limitPrice = 0;
-    os.slPrice = 0;
-    os.tpPrice = 0;
-    os.limitOrderId = null;
-    os.limitPlacedAt = 0;
-    os.visionApproved = false;
-    os.fired = false;
-    os.mageTradeTakenToday = false;
-
-    // NEW MID-SESSION HYDRATION SAFETY CHECK
-    // If we just woke up IN THE MIDDLE of the ORB window, we've already missed the crucial opening minutes!
-    // Building an ORB now would result in a "small recent ORB", causing catastrophic false breakouts.
+    
+    // MID-SESSION HYDRATION CHECK
+    // If waking up mid-ORB, reconstruct true ORB from historical m5Buffer candles
     if (isStartMinsReset && currentMins > startMins + 5) {
-      logger.error(`[MageEngine] 🚨 FATAL MID-SESSION REBOOT: Woke up during the ORB window for ${symbol} but missed the opening ${currentMins - startMins} minutes. Locking bot for remainder of session to prevent catastrophic false entries from a partial ORB.`);
-      os.orBuilt = true; 
-      os.fired = true;
-      os.mageTradeTakenToday = true;
-      return;
+      const openingCandles = (state.m5Buffer || []).filter((bc: any) => {
+        if (bc.dateStr !== dateStr) return false;
+        const cm = bc.estHour * 60 + bc.estMinute;
+        return cm >= startMins && cm <= currentMins;
+      });
+
+      const hasStartCandle = openingCandles.some((bc: any) => {
+        const cm = bc.estHour * 60 + bc.estMinute;
+        return cm >= startMins && cm <= startMins + 5;
+      });
+
+      if (hasStartCandle && openingCandles.length > 0) {
+        let maxH = -Infinity;
+        let minL = Infinity;
+        for (const oc of openingCandles) {
+          if (oc.high > maxH) maxH = oc.high;
+          if (oc.low < minL) minL = oc.low;
+        }
+        os.orHigh = Math.max(maxH, c.high);
+        os.orLow = Math.min(minL, c.low);
+        os.orBuilt = false;
+        os.wasBuildingORB = true;
+        logger.info(`[MageEngine] 🔄 Mid-session reboot gracefully reconstructed ORB for ${symbol} using ${openingCandles.length} cached candles (High: ${os.orHigh}, Low: ${os.orLow}).`);
+      } else {
+        logger.error(`[MageEngine] 🚨 FATAL MID-SESSION REBOOT: Woke up during the ORB window for ${symbol} but missed opening ${currentMins - startMins} mins with no cached data. Locking bot for remainder of session.`);
+        os.orBuilt = true; 
+        os.fired = true;
+        os.mageTradeTakenToday = true;
+        return;
+      }
+    } else {
+      os.orHigh = -Infinity;
+      os.orLow = Infinity;
+      os.orBuilt = false;
+      os.breakoutDir = null;
+      os.limitPrice = 0;
+      os.slPrice = 0;
+      os.tpPrice = 0;
+      os.limitOrderId = null;
+      os.limitPlacedAt = 0;
+      os.visionApproved = false;
+      os.fired = false;
+      os.mageTradeTakenToday = false;
     }
   }
   
@@ -216,7 +241,7 @@ export async function _runMageBotForConfig(orch: any, symbol: string, state: any
                 undefined,
                 orch.profileId
               );
-              logger.info(`[DiscretionaryTrader] ðŸ›‘ MAGE cancelled limit order (${cancelReason})`);
+              logger.info(`[DiscretionaryTrader] 🛑 MAGE cancelled limit order (${cancelReason})`);
           } catch(_e) {}
           os.limitOrderId = null;
           os.limitPlacedAt = 0;
@@ -398,7 +423,7 @@ export async function _runMageBotForConfig(orch: any, symbol: string, state: any
   if (isRolloverCircuitBreaker(estHour, estMin)) return;
   if (config.toxicHours && config.toxicHours.includes(estHour)) return;
   const candleDate = new Date(c.timestamp);
-  const dow = getFixedEstDate(candleDate).getDay();
+  const dow = getFixedEstDate(candleDate).getUTCDay();
   if (config.toxicDays && isToxicDay(dow, config.toxicDays)) return;
   const orRangePips = (os.orHigh - os.orLow) / pipSize;
   const normalizedSymbol = symbol
@@ -526,7 +551,7 @@ export async function _runMageBotForConfig(orch: any, symbol: string, state: any
         const bodySize = parseFloat((Math.abs(actionCandle.close - actionCandle.open) / pipSize).toFixed(1));
         if (bodySize < _mCfg.minBodyPips) {
           logger.info(
-            `[DiscretionaryTrader] â›” Mage aborted on ${symbol} at ${new Date(actionCandle.timestamp).toISOString()}: Breakout action body (${bodySize.toFixed(1)} pips) < minBodyPips (${_mCfg.minBodyPips}).`,
+            `[DiscretionaryTrader] ⛔ Mage aborted on ${symbol} at ${new Date(actionCandle.timestamp).toISOString()}: Breakout action body (${bodySize.toFixed(1)} pips) < minBodyPips (${_mCfg.minBodyPips}).`,
           );
           orch.addEyeFeedEvent({
             type: "REJECT",
@@ -586,11 +611,12 @@ export async function _runMageBotForConfig(orch: any, symbol: string, state: any
         logger.info(`[MageEngine] ⛔ Aborted on ${symbol}: OR range + 10 (${(orRangePips + 10).toFixed(1)}) > maxSlDist (${_mCfg.maxSlDist}).`);
         return;
       }
-      const pullbackPct = _mCfg.orbPullbackPct!;
+      const pullbackPct = _mCfg.orbPullbackPct ?? 0;
+      const breakoutPrice = direction === "BUY" ? c.close + spreadPts : c.close;
       const entryPriceRaw =
-        direction === "BUY"
-          ? rOrHigh - boxSize * pullbackPct
-          : rOrLow + boxSize * pullbackPct;
+        pullbackPct > 0
+          ? (direction === "BUY" ? rOrHigh - boxSize * pullbackPct : rOrLow + boxSize * pullbackPct)
+          : breakoutPrice;
       const entryPrice = roundPrice(entryPriceRaw, PairConfigManager.getBaseSymbol(symbol));
       os.limitPrice = entryPrice;
       const slBuffer = 0;
@@ -681,20 +707,18 @@ async function placeMageLimitOrder(orch: any, symbol: string, state: any, c: any
     return;
   }
   if (state.botConfigs.get(botId)?.enabled === false) {
-    logger.info(`[DiscretionaryTrader] â›” Trade blocked â€” Pair ${symbol} is disabled for bot ${botId}`);
+    logger.info(`[DiscretionaryTrader] ⛔ Trade blocked — Pair ${symbol} is disabled for bot ${botId}`);
     return;
   }
   const newsCheck = isNewsBlackout(symbol, new Date(c.timestamp));
   if (newsCheck.blocked) {
-    logger.info(`[DiscretionaryTrader] â›” Trade blocked â€” News Blackout Window active for ${symbol}: ${newsCheck.reason}`);
+    logger.info(`[DiscretionaryTrader] ⛔ Trade blocked — News Blackout Window active for ${symbol}: ${newsCheck.reason}`);
     return;
   }
   try {
-    const profile = await db
-      .prepare(
-        "SELECT t.risk_multiplier, COALESCE(t.metaapi_token, u.metaapi_token) as metaapi_token, t.metaapi_account_id, t.dwcb_enabled, t.dwcb_peak_balance, t.base_risk_balance, t.broker_symbol_map, t.institutional_enabled, t.institutional_daily_start_balance, t.institutional_daily_date, t.institutional_peak_balance FROM trading_profiles t LEFT JOIN users u ON t.user_id = u.id WHERE t.id = ?",
-      )
-      .get(orch.profileId);
+    const profile = typeof orch.getProfileData === 'function' 
+      ? await orch.getProfileData()
+      : await db.prepare("SELECT t.risk_multiplier, COALESCE(t.metaapi_token, u.metaapi_token) as metaapi_token, t.metaapi_account_id, t.dwcb_enabled, t.dwcb_peak_balance, t.base_risk_balance, t.broker_symbol_map, t.institutional_enabled, t.institutional_daily_start_balance, t.institutional_daily_date, t.institutional_peak_balance FROM trading_profiles t LEFT JOIN users u ON t.user_id = u.id WHERE t.id = ?").get(orch.profileId);
     if (!profile) return;
     let token = profile.metaapi_token || orch.token;
     let accId = profile.metaapi_account_id || orch.accountId;
@@ -842,7 +866,7 @@ async function placeMageLimitOrder(orch: any, symbol: string, state: any, c: any
     const riskAmount = balance * riskFraction * dwcbMultiplier * institutionalMultiplier;
     const slDistPips = Math.abs(os.limitPrice - os.slPrice) / pipSize;
     if (slDistPips <= 0) {
-      logger.error(`[DiscretionaryTrader] âŒ Mage: SL distance is ${slDistPips} pips on ${symbol}. Aborting to prevent infinite lot size.`);
+      logger.error(`[DiscretionaryTrader] ❌ Mage: SL distance is ${slDistPips} pips on ${symbol}. Aborting to prevent infinite lot size.`);
       return;
     }
     const rawVolume = riskAmount / (slDistPips * liveSpec.pipValuePerLot);
@@ -1042,6 +1066,8 @@ async function placeMageLimitOrder(orch: any, symbol: string, state: any, c: any
             botId: botId.toUpperCase(),
             direction: os.breakoutDir,
             entryPrice: openPrice,
+            intendedEntryPrice: pEntry,
+            entrySlippage: isBuy ? (openPrice - pEntry) : (pEntry - openPrice),
             slPrice: pSl,
             originalSl: pSl,
             tpPrice: pTp,
@@ -1168,7 +1194,7 @@ export async function checkMageLimitFill(orch: any, sessionPair: string, state: 
             const upgradeRes = await db.prepare(`
               UPDATE bot_trade_states 
               SET status = 'OPEN', meta_order_id = ?, entry_price = ?, sl_price = ?, tp_price = ?, lots = ? 
-              WHERE (client_id = ? OR client_id LIKE ? OR meta_order_id = ?) AND status = 'PLACING' RETURNING id
+              WHERE (client_id = ? OR client_id LIKE ? OR meta_order_id = ?) AND status IN ('PLACING', 'FAILED', 'PENDING_VERIFICATION') RETURNING id
             `).all(pos.id, pos.openPrice, os.slPrice, os.tpPrice, pos.volume, pos.clientId || sig, `M_${getShortHash(sig)}%`, os.limitOrderId);
             
             if (upgradeRes && upgradeRes.length > 0) {
@@ -1372,7 +1398,7 @@ export async function evaluateMageTrailingOnTick(
       } catch (e: any) {
         const errMsg = e?.message || e?.toString() || "";
         if (errMsg.includes("Position not found") || errMsg.includes("Order not found")) {
-          console.log(`[MageEngine] â„¹ï¸  Position ${trade.metaOrderId} (${baseSymbol}) already closed on broker. Marking as CLOSED in DB.`);
+          console.log(`[MageEngine] ℹ️ Position ${trade.metaOrderId} (${baseSymbol}) already closed on broker. Marking as CLOSED in DB.`);
           await db
             .prepare("UPDATE bot_trade_states SET status = 'CLOSED' WHERE id = ?")
             .run(trade.dbId);
@@ -1392,12 +1418,24 @@ export async function evaluateMageTrailingOnTick(
     const brokerDigits = getSymbolSpec(baseSymbol.split("_")[0]).digits || 5;
     const spread = OPTIMIZER_CONFIG[baseSymbol.replace(".Daily", "")]?.spread; 
     const spreadPts = spread !== undefined ? spread * pipSize : 0;
-    const highestReached = isBuy ? c.high : c.low + spreadPts;
+    const peakHigh = Math.max(trade.highestPrice || trade.entryPrice, c.high);
+    const peakLow = Math.min(trade.lowestPrice || trade.entryPrice, c.low);
+    trade.highestPrice = peakHigh;
+    trade.lowestPrice = peakLow;
+    const highestReached = isBuy ? peakHigh : peakLow + spreadPts;
     const actualRisk = Math.abs(trade.entryPrice - originalSl);
+    const intendedEntry = trade.intendedEntryPrice !== undefined ? trade.intendedEntryPrice : trade.entryPrice;
+    const intendedRisk = Math.abs(intendedEntry - originalSl);
 
-    const currentR = isBuy
-      ? (highestReached - trade.entryPrice) / actualRisk
-      : (trade.entryPrice - highestReached) / actualRisk;
+    const actualR = isBuy
+      ? (highestReached - trade.entryPrice) / (actualRisk > 0 ? actualRisk : pipSize)
+      : (trade.entryPrice - highestReached) / (actualRisk > 0 ? actualRisk : pipSize);
+
+    const theoreticalR = isBuy
+      ? (highestReached - intendedEntry) / (intendedRisk > 0 ? intendedRisk : actualRisk)
+      : (intendedEntry - highestReached) / (intendedRisk > 0 ? intendedRisk : actualRisk);
+
+    const currentR = Math.max(actualR, theoreticalR);
 
     const tTrig = config.trailingSlTrigger;
 
@@ -1525,6 +1563,9 @@ export async function evaluateMageTrailingOnTick(
 
       const roundedSl = roundPrice(mageNewSl, baseSymbol);
       trade.slPrice = roundedSl;
+      if (state.activeTrade && String(state.activeTrade.metaOrderId) === String(trade.metaOrderId)) {
+        state.activeTrade.slPrice = roundedSl;
+      }
       (trade as any).lastSentSlPrice = roundedSl;
       try {
         if (!trade.isVirtualSlMode) {
@@ -1533,7 +1574,7 @@ export async function evaluateMageTrailingOnTick(
             await conn.modifyPosition(trade.metaOrderId, roundedSl, trade.tpPrice || null);
           }, `TrailMAGE:${sessionPair}`, undefined, undefined, orch.profileId);
         }
-        logger.info(`[DiscretionaryTrader] ðŸ›¡ï¸  MAGE Continuous 0.5R Trail: ${sessionPair} SL updated to ${roundedSl}`);
+        logger.info(`[DiscretionaryTrader] 🛡️ MAGE Continuous 0.5R Trail: ${sessionPair} SL updated to ${roundedSl}`);
         orch.addEyeFeedEvent({
           type: "TRAILING_SL",
           bot_id: trade.botId || targetBotId,
@@ -1542,7 +1583,7 @@ export async function evaluateMageTrailingOnTick(
             decision: "TRAIL",
             setupType: "ORB Breakout",
             sl: roundedSl,
-            reasoning: `ðŸ›¡ï¸  MAGE Continuous Trail SL updated to ${roundedSl}`
+            reasoning: `🛡️ MAGE Continuous Trail SL updated to ${roundedSl}`
           }
         });
 
@@ -1559,7 +1600,24 @@ export async function evaluateMageTrailingOnTick(
         trade.lowestPrice = newLowest;
         updateStmt.run(roundedSl, newHighest, newLowest, trade.dbId);
       } catch (err: any) {
-        logger.error(`[DiscretionaryTrader] âš ï¸  Failed to update MAGE 0.5R Trail for ${sessionPair}:`, err.message);
+        const errMsg = err?.message || err?.toString() || "";
+        if (errMsg.includes("Position not found") || errMsg.includes("Order not found") || errMsg.includes("Invalid position") || errMsg.includes("not found")) {
+          logger.info(`[MageEngine] ℹ️ Position ${trade.metaOrderId} (${baseSymbol}) already closed on broker. Clearing from active state.`);
+          if (typeof orch.onBrokerPositionClosed === "function") {
+            orch.onBrokerPositionClosed(trade.metaOrderId);
+          }
+          if (state.activeTrade?.metaOrderId === trade.metaOrderId) {
+            delete state.activeTrade;
+          }
+          if (state.activeTrades) {
+            state.activeTrades = state.activeTrades.filter((t: any) => String(t.metaOrderId) !== String(trade.metaOrderId));
+          }
+          try {
+            db.prepare("UPDATE bot_trade_states SET status = 'CLOSED' WHERE id = ?").run(trade.dbId);
+          } catch (_) {}
+        } else {
+          logger.error(`[DiscretionaryTrader] ⚠️ Failed to update MAGE 0.5R Trail for ${sessionPair}:`, err.message);
+        }
       }
     }
   }
@@ -1585,7 +1643,7 @@ export async function cancelMagePendingOnNews(orch: any, sessionPair: string, st
           undefined,
           orch.profileId
         );
-        logger.info(`[DiscretionaryTrader] ðŸ§¹ MAGE cancelled pending limit order ${orderId} on ${baseSymbol} due to News Blackout: ${newsCheck.reason}.`);
+        logger.info(`[DiscretionaryTrader] 🧹 MAGE cancelled pending limit order ${orderId} on ${baseSymbol} due to News Blackout: ${newsCheck.reason}.`);
       } catch (e) {
         logger.error(`[DiscretionaryTrader] Failed to cancel MAGE limit order on news:`, e);
       }

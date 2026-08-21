@@ -270,12 +270,14 @@ export async function runShadowBacktest(pair: string, startDate?: string, endDat
           }
         }
       }
-      // Also sync from state.activeTrade (Mage/Seer path) as a fallback.
-      const at = state.activeTrade;
-      if (at?.slPrice !== undefined && at.metaOrderId) {
-        const pos = mockAccount.positions.get(at.metaOrderId);
-        if (pos && pos.sl !== at.slPrice) {
-          pos.sl = at.slPrice;
+      // Also sync from state.activeTrade (Mage/Seer path) as a fallback ONLY if no activeTrades
+      if (trades.length === 0) {
+        const at = state.activeTrade;
+        if (at?.slPrice !== undefined && at.metaOrderId) {
+          const pos = mockAccount.positions.get(at.metaOrderId);
+          if (pos && pos.sl !== at.slPrice) {
+            pos.sl = at.slPrice;
+          }
         }
       }
     }

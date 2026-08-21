@@ -94,7 +94,7 @@ export const MAGE_PAIR_CONFIG: Record<string, PairConfig[]> = {
       "trailingSlTrigger": 3,
       "trailingSlStep": 1,
       "forceCloseHours": 8,
-      "riskPct": 0.02715632284496215
+      "riskPct": 0.027698972307025307
     }
   ],
   'CHFJPY': [
@@ -103,7 +103,7 @@ export const MAGE_PAIR_CONFIG: Record<string, PairConfig[]> = {
     "pipSize": 0.01,
     "spread": 1.6,
       "toxicHours": [10],
-      "toxicDays": [1, 5],
+      "toxicDays": [5],
       "session": "london",
       "orbEnabled": true,
       "orbStartHour": 3,
@@ -118,7 +118,7 @@ export const MAGE_PAIR_CONFIG: Record<string, PairConfig[]> = {
       "trailingSlTrigger": 3,
       "trailingSlStep": 1,
       "forceCloseHours": 24,
-      "riskPct": 0.06281034343598449
+      "riskPct": 0.06406544705484067
     }
   ],
   'GBPJPY': [
@@ -126,7 +126,7 @@ export const MAGE_PAIR_CONFIG: Record<string, PairConfig[]> = {
     "tickSize": 0.001,
     "pipSize": 0.01,
     "spread": 1.6,
-      "toxicHours": [5],
+      "toxicHours": [5, 6],
       "session": "london",
       "orbEnabled": true,
       "orbStartHour": 4,
@@ -141,7 +141,7 @@ export const MAGE_PAIR_CONFIG: Record<string, PairConfig[]> = {
       "trailingSlTrigger": 1,
       "trailingSlStep": 1,
       "forceCloseHours": 24,
-      "riskPct": 0.03406310658369951
+      "riskPct": 0.034743770404400603
     }
   ],
   'US30': [
@@ -149,6 +149,8 @@ export const MAGE_PAIR_CONFIG: Record<string, PairConfig[]> = {
     "tickSize": 0.1,
     "pipSize": 1,
     "spread": 1.5,
+      "toxicHours": [5, 6],
+      "toxicDays": [2],
       "session": "london",
       "orbEnabled": true,
       "orbStartHour": 3,
@@ -163,7 +165,7 @@ export const MAGE_PAIR_CONFIG: Record<string, PairConfig[]> = {
       "trailingSlTrigger": 3,
       "trailingSlStep": 1.5,
       "forceCloseHours": 16,
-      "riskPct": 0.027978935170186004
+      "riskPct": 0.02853802242974913
     }
   ],
   'GER40': [
@@ -172,7 +174,6 @@ export const MAGE_PAIR_CONFIG: Record<string, PairConfig[]> = {
     "pipSize": 1,
     "spread": 1,
       "toxicHours": [6],
-      "toxicDays": [3],
       "session": "london",
       "orbEnabled": true,
       "orbStartHour": 5,
@@ -187,7 +188,7 @@ export const MAGE_PAIR_CONFIG: Record<string, PairConfig[]> = {
       "trailingSlTrigger": 3,
       "trailingSlStep": 1.5,
       "forceCloseHours": 24,
-      "riskPct": 0.026382552394847786
+      "riskPct": 0.02690974003901637
     }
   ],
   'NAS100': [
@@ -209,7 +210,7 @@ export const MAGE_PAIR_CONFIG: Record<string, PairConfig[]> = {
       "trailingSlTrigger": 3,
       "trailingSlStep": 2,
       "forceCloseHours": 16,
-      "riskPct": 0.03618935482489345
+      "riskPct": 0.03691250626333587
     }
   ],
   'GBPNZD': [
@@ -217,6 +218,7 @@ export const MAGE_PAIR_CONFIG: Record<string, PairConfig[]> = {
     "tickSize": 0.00001,
     "pipSize": 0.0001,
     "spread": 2.5,
+      "toxicDays": [4],
       "session": "NY_Forex",
       "orbEnabled": true,
       "orbStartHour": 8,
@@ -231,7 +233,7 @@ export const MAGE_PAIR_CONFIG: Record<string, PairConfig[]> = {
       "trailingSlTrigger": 2,
       "trailingSlStep": 2,
       "forceCloseHours": 16,
-      "riskPct": 0.05934430547054656
+      "riskPct": 0.06053014921028829
     }
   ],
   'EURJPY': [
@@ -239,6 +241,7 @@ export const MAGE_PAIR_CONFIG: Record<string, PairConfig[]> = {
     "tickSize": 0.001,
     "pipSize": 0.01,
     "spread": 1,
+      "toxicDays": [3],
       "session": "NY_Forex",
       "orbEnabled": true,
       "orbStartHour": 9,
@@ -253,7 +256,7 @@ export const MAGE_PAIR_CONFIG: Record<string, PairConfig[]> = {
       "trailingSlTrigger": 3,
       "trailingSlStep": 1,
       "forceCloseHours": 24,
-      "riskPct": 0.026399160665959494
+      "riskPct": 0.02692668018382969
     }
   ]
 };
@@ -288,7 +291,7 @@ export const SAGE_PAIR_CONFIG: Record<string, PairConfig[]> = {
       "useHtfSarFilter": false,
       "requireCloseLocationHalf": false,
       "minWbr": 1.5,
-      "riskPct": 0.08034890468592058
+      "riskPct": 0.08195447146880581
     }
   ],
   'USDCHF': [
@@ -318,7 +321,7 @@ export const SAGE_PAIR_CONFIG: Record<string, PairConfig[]> = {
       "useHtfSarFilter": true,
       "requireCloseLocationHalf": false,
       "minWbr": 1.5,
-      "riskPct": 0.05909563417750383
+      "riskPct": 0.06027650885924126
     }
   ],
   'NAS100': [
@@ -347,7 +350,7 @@ export const SAGE_PAIR_CONFIG: Record<string, PairConfig[]> = {
       "useHtfSarFilter": false,
       "requireCloseLocationHalf": false,
       "minWbr": 1.5,
-      "riskPct": 0.03749400467306154
+      "riskPct": 0.03824322619257978
     }
   ]
 };
@@ -372,4 +375,4 @@ export const SEER_PAIR_CONFIG: Record<string, PairConfig[]> = {
       "maxH1EmaSlope": 20
     }
   ]
-};
+};;

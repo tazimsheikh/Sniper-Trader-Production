@@ -93,12 +93,14 @@ function processConfigs(configs: Record<string, any[]>, botName: string) {
       
       const orbDuration = cfg.orbMinutes || 0;
       const startMins = cfg.orbStartHour * 60 + cfg.orbStartMin;
-      const endMins = (startMins + orbDuration) % 1440;
+      // Add exact live engine execution offset: +6 mins for Mage (M5 candle close + M1 buffer), +1 min for Sage
+      const delayMins = botName === "Mage" ? 6 : 1;
+      const endMins = (startMins + orbDuration + delayMins) % 1440;
       
       const nyEndHour = Math.floor(endMins / 60);
       const nyEndMin = endMins % 60;
       
-      // Stamp time at end of ORB creation when scans & trades begin
+      // Stamp time at exact moment when live engine registers and begins active scan/execution
       const istTradeStartStr = formatISTTime(nyEndHour, nyEndMin);
       const istMins = getMinutesFromMidnightIST(nyEndHour, nyEndMin);
       

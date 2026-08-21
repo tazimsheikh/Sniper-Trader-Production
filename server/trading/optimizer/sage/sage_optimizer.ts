@@ -104,7 +104,7 @@ function decodeSageSetup(
     ];
   } catch { return null; }
 }
-// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 const dumpDir = path.join(
   process.cwd(),
   "server",
@@ -151,12 +151,12 @@ if (isMainThread && process.argv[1] && (process.argv[1] === currentFile || path.
     console.log(
       `\n================================================================`,
     );
-    console.log(`Ã°Å¸Â§Â  Sage Reversal Walk-Forward GA Optimizer Ã°Å¸â€Â¥`);
+    console.log(`🧠 Sage Reversal Walk-Forward GA Optimizer 🔥`);
     console.log(
       `================================================================`,
     );
     const maxWorkersPrint = process.env.CONCURRENCY ? parseInt(process.env.CONCURRENCY, 10) : 8;
-    console.log(`Ã¢Å¡Â¡ Spawning Worker Pool with Max Concurrency: ${maxWorkersPrint}`);
+    console.log(`⚡ Spawning Worker Pool with Max Concurrency: ${maxWorkersPrint}`);
 
     let activeWorkers = 0;
     let index = 0;
@@ -165,7 +165,7 @@ if (isMainThread && process.argv[1] && (process.argv[1] === currentFile || path.
       function spawnNext() {
         if (index >= PAIRS_TO_RUN.length && activeWorkers === 0) {
           console.log(
-            `\nÃ°Å¸Å½â€° Sage GA Optimization Complete! All state JSON files generated.`,
+            `\n🎉 Sage GA Optimization Complete! All state JSON files generated.`,
           );
           resolve();
           return;

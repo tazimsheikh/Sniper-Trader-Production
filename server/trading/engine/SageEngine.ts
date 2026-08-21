@@ -344,7 +344,7 @@ export async function _runSageBotForConfig(orch: any, sessionPair: string, state
     }
     const actionEstDate = getFixedEstDate(new Date(lastM5.timestamp));
     const actionEstHour = actionEstDate.getUTCHours();
-    const actionDow = actionEstDate.getDay();
+    const actionDow = actionEstDate.getUTCDay();
     if (config.toxicHours && config.toxicHours.includes(actionEstHour)) return;
     if (config.toxicDays && isToxicDay(actionDow, config.toxicDays)) return;
 
@@ -630,11 +630,9 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
   if (newsCheck.blocked) return;
 
   try {
-    const profile = await db
-      .prepare(
-        "SELECT t.risk_multiplier, COALESCE(t.metaapi_token, u.metaapi_token) as metaapi_token, t.metaapi_account_id, t.dwcb_enabled, t.dwcb_peak_balance, t.base_risk_balance, t.broker_symbol_map, t.institutional_enabled, t.institutional_daily_start_balance, t.institutional_daily_date, t.institutional_peak_balance FROM trading_profiles t LEFT JOIN users u ON t.user_id = u.id WHERE t.id = ?",
-      )
-      .get(orch.profileId);
+    const profile = typeof orch.getProfileData === 'function' 
+      ? await orch.getProfileData()
+      : await db.prepare("SELECT t.risk_multiplier, COALESCE(t.metaapi_token, u.metaapi_token) as metaapi_token, t.metaapi_account_id, t.dwcb_enabled, t.dwcb_peak_balance, t.base_risk_balance, t.broker_symbol_map, t.institutional_enabled, t.institutional_daily_start_balance, t.institutional_daily_date, t.institutional_peak_balance FROM trading_profiles t LEFT JOIN users u ON t.user_id = u.id WHERE t.id = ?").get(orch.profileId);
     if (!profile) {
       logger.info("[PLACE_LIMIT] no profile");
       return;
@@ -1023,6 +1021,8 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
           botId: botId.toUpperCase(),
           direction: ss.direction,
           entryPrice: openPrice,
+          intendedEntryPrice: pEntry,
+          entrySlippage: ss.direction === "BUY" ? (openPrice - pEntry) : (pEntry - openPrice),
           slPrice: pSl,
           originalSl: pSl,
           tpPrice: pTp,
@@ -1224,15 +1224,28 @@ export async function evaluateSageTrailingOnTick(
     const riskPips = trade.riskPips;
     const optCfg = OPTIMIZER_CONFIG[baseSymbol.replace(".Daily", "")];
     const spreadPts = (optCfg?.spread || 0) * pipSize2;
-    const highestReached = isBuy ? tick.high : tick.low + spreadPts;
+    const peakHigh = Math.max(trade.highestPrice || trade.entryPrice, tick.high);
+    const peakLow = Math.min(trade.lowestPrice || trade.entryPrice, tick.low);
+    trade.highestPrice = peakHigh;
+    trade.lowestPrice = peakLow;
+    const highestReached = isBuy ? peakHigh : peakLow + spreadPts;
     
     const tTrig = config.trailingSlTrigger!;
     const tStep = config.trailingSlStep!;
     const exitMode = config.exitMode;
 
-    const currentR = isBuy
-      ? (highestReached - trade.entryPrice) / actualRisk
-      : (trade.entryPrice - highestReached) / actualRisk;
+    const intendedEntry = trade.intendedEntryPrice !== undefined ? trade.intendedEntryPrice : trade.entryPrice;
+    const intendedRisk = Math.abs(intendedEntry - originalSl);
+
+    const actualR = isBuy
+      ? (highestReached - trade.entryPrice) / (actualRisk > 0 ? actualRisk : pipSize2)
+      : (trade.entryPrice - highestReached) / (actualRisk > 0 ? actualRisk : pipSize2);
+
+    const theoreticalR = isBuy
+      ? (highestReached - intendedEntry) / (intendedRisk > 0 ? intendedRisk : actualRisk)
+      : (intendedEntry - highestReached) / (intendedRisk > 0 ? intendedRisk : actualRisk);
+
+    const currentR = Math.max(actualR, theoreticalR);
 
     const clog = (global as any).__ORIGINAL_LOG__ || console.log;
     const botLabel = trade.botId === "discretionary_trader" ? "MANUAL" : "SAGE";
@@ -1319,8 +1332,25 @@ export async function evaluateSageTrailingOnTick(
                 reasoning: `🛡️ SAGE Trailing SL moved to ${roundedSl.toFixed(brokerDigits)}`
               }
             });
-          } catch (e) {
-            logger.error(`[DiscretionaryTrader] SAGE Trailing SL execution failed: ${e.message}`,);
+          } catch (e: any) {
+            const errMsg = e?.message || e?.toString() || "";
+            if (errMsg.includes("Position not found") || errMsg.includes("Order not found") || errMsg.includes("Invalid position") || errMsg.includes("not found")) {
+              logger.info(`[SageEngine] ℹ️ Position ${trade.metaOrderId} (${baseSymbol}) already closed on broker. Clearing from active state.`);
+              if (typeof orch.onBrokerPositionClosed === "function") {
+                orch.onBrokerPositionClosed(trade.metaOrderId);
+              }
+              if (state.activeTrade?.metaOrderId === trade.metaOrderId) {
+                delete state.activeTrade;
+              }
+              if (state.activeTrades) {
+                state.activeTrades = state.activeTrades.filter((t: any) => String(t.metaOrderId) !== String(trade.metaOrderId));
+              }
+              try {
+                db.prepare("UPDATE bot_trade_states SET status = 'CLOSED' WHERE id = ?").run(trade.dbId);
+              } catch (_) {}
+            } else {
+              logger.error(`[DiscretionaryTrader] SAGE Trailing SL execution failed: ${e.message}`,);
+            }
           }
         }
       }
@@ -1375,7 +1405,7 @@ export async function checkSageLimitFill(orch, sessionPair, state, c, targetBotI
             const upgradeRes = await db.prepare(`
               UPDATE bot_trade_states 
               SET status = 'OPEN', meta_order_id = ?, entry_price = ?, sl_price = ?, tp_price = ?, lots = ? 
-              WHERE (client_id = ? OR client_id LIKE ? OR meta_order_id = ?) AND status = 'PLACING' RETURNING id
+              WHERE (client_id = ? OR client_id LIKE ? OR meta_order_id = ?) AND status IN ('PLACING', 'FAILED', 'PENDING_VERIFICATION') RETURNING id
             `).all(pos.id, pos.openPrice, ss.slPrice, ss.tpPrice, pos.volume, pos.clientId || sig, `S_${getShortHash(sig)}%`, ss.limitOrderId);
             
             if (upgradeRes && upgradeRes.length > 0) {
@@ -1426,6 +1456,8 @@ export async function checkSageLimitFill(orch, sessionPair, state, c, targetBotI
             botId: targetBotId.toUpperCase(),
             direction: ss.direction,
             entryPrice: pos.openPrice,
+            intendedEntryPrice: ss.limitPrice || pos.openPrice,
+            entrySlippage: ss.direction === "BUY" ? (pos.openPrice - (ss.limitPrice || pos.openPrice)) : ((ss.limitPrice || pos.openPrice) - pos.openPrice),
             slPrice: ss.slPrice,
             originalSl: ss.slPrice,
             tpPrice: ss.tpPrice || 0,

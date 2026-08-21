@@ -89,16 +89,13 @@ export async function enqueueMetaApiRequest<T>(
           15000,
         );
 
-        // --- HUMANIZATION JITTER FOR TRADE EXECUTIONS (per profile) ---
-        const isExecution =
+        // --- HUMANIZATION JITTER (Routine Trailing Only) ---
+        // Critical market entries, limit orders, and emergency closes execute with 0ms delay for zero slippage
+        const isRoutineTrailing =
           callerTag &&
-          (callerTag.toLowerCase().includes("limit") ||
-            callerTag.toLowerCase().includes("market") ||
-            callerTag.toLowerCase().includes("close") ||
-            callerTag.toLowerCase().includes("trail") ||
-            callerTag.toLowerCase().includes("entry"));
+          callerTag.toLowerCase().includes("trail");
 
-        if (isExecution && !(global as any).isSimulator) {
+        if (isRoutineTrailing && !(global as any).isSimulator) {
           const pState = getProfileState(profileId);
           const now = Date.now();
 
@@ -107,8 +104,8 @@ export async function enqueueMetaApiRequest<T>(
             console.warn(`[MetaApiQueue] 🛡️ Watchdog [Profile:${profileId}]: Idle > 10 min. (clearAllSharedConnections disabled to protect other profiles).`);
           }
 
-          const minDelay = 1500;
-          const randomJitter = Math.floor(Math.random() * 1000);
+          const minDelay = 1000;
+          const randomJitter = Math.floor(Math.random() * 500);
           const targetTime = pState.lastExecutionJitterTime + minDelay + randomJitter;
 
           if (now < targetTime) {

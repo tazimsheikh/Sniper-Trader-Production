@@ -3,6 +3,7 @@ import * as path from "path";
 import { PairConfigManager, SAGE_PAIR_CONFIG, MAGE_PAIR_CONFIG } from "../../config/PairConfig.js";
 import { runSageMathBacktest } from "../../backtester/SageMathBacktester.js";
 import { runMathBacktest as runMageMathBacktest } from "../../backtester/MageMathBacktester.js";
+import { getFixedEstDate } from "../../engine/LiveOrchestrator.js";
 
 function safeWriteFileSync(filePath: string, content: string) {
   try {
@@ -77,15 +78,10 @@ async function runDynamicToxicFilterInjection() {
         const r = record.pips ? (record.pips / (record.riskPips || 1)) : 0;
         const d = new Date(record.timestamp);
 
-        // EST hour calculation
-        const estStr = d.toLocaleString("en-US", { timeZone: "America/New_York", hour12: false });
-        const timePart = estStr.split(", ")[1];
-        let hour = parseInt(timePart.split(":")[0], 10);
-        if (hour === 24) hour = 0;
-        
-        const estDate = new Date(estStr);
-        const calMonth = estDate.getMonth() + 1; // 1-12
-        const dow = estDate.getDay();
+        const estDate = getFixedEstDate(d);
+        const hour = estDate.getUTCHours();
+        const calMonth = estDate.getUTCMonth() + 1; // 1-12
+        const dow = estDate.getUTCDay();
 
         hourlyMonthStats[hour][calMonth].trades++;
         hourlyMonthStats[hour][calMonth].totalR += r;
@@ -105,14 +101,10 @@ async function runDynamicToxicFilterInjection() {
         const r = record.pips ? (record.pips / (record.riskPips || 1)) : 0;
         const d = new Date(record.timestamp);
 
-        const estStr = d.toLocaleString("en-US", { timeZone: "America/New_York", hour12: false });
-        const timePart = estStr.split(", ")[1];
-        let hour = parseInt(timePart.split(":")[0], 10);
-        if (hour === 24) hour = 0;
-
-        const estDate = new Date(estStr);
-        const calMonth = estDate.getMonth() + 1;
-        const dow = estDate.getDay();
+        const estDate = getFixedEstDate(d);
+        const hour = estDate.getUTCHours();
+        const calMonth = estDate.getUTCMonth() + 1;
+        const dow = estDate.getUTCDay();
 
         hourlyMonthStats[hour][calMonth].trades++;
         hourlyMonthStats[hour][calMonth].totalR += r;

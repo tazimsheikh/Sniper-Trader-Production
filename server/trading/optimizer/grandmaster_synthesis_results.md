@@ -4,7 +4,7 @@ This report outlines the institutional-grade components.
 **Quantitative Constraints:** Min Trades ≥ 3 | Max DD ≤ 70R | Continuous Soft Confidence & HRP
 
 ## 📊 Portfolio-Level CPCV Performance Gates
-- **Normal Portfolio CPCV**: PASSED (15/15 paths passed, Min Sharpe: 5.13, Max DD: 0.31R)
+- **Normal Portfolio CPCV**: PASSED (15/15 paths passed, Min Sharpe: 5.13, Max DD: 0.32R)
 
 ## Rank #1: NZDUSD (Sage)
 - **Hedge Score**: 1.6000

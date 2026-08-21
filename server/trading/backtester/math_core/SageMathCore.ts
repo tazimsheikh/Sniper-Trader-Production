@@ -228,8 +228,8 @@ export function preComputeTriggers(
         // Pre-baked metadata — eliminates getActionCandle() call in evaluateExits hot path
         actionCandleTimestamp: actionCandle.timestamp,
         actionCandleEstHour: actionCandle.estHour,
-        actionCandleUtcDay: new Date(actionCandle.timestamp).getUTCDay(),
-        actionCandleMonth: new Date(actionCandle.timestamp).getUTCMonth() + 1,
+        actionCandleUtcDay: getFixedEstDate(new Date(actionCandle.timestamp)).getUTCDay(),
+        actionCandleMonth: getFixedEstDate(new Date(actionCandle.timestamp)).getUTCMonth() + 1,
       });
     }
   }
@@ -303,7 +303,7 @@ export function evaluateExits(
     // Use pre-baked metadata from trigger — avoids O(N) getActionCandle() call per evaluation
     const estHour = t.actionCandleEstHour ?? 0;
     const actionCandleTs = t.actionCandleTimestamp ?? 0;
-    const utcDay = t.actionCandleUtcDay ?? new Date(actionCandleTs).getUTCDay();
+    const utcDay = t.actionCandleUtcDay ?? getFixedEstDate(new Date(actionCandleTs)).getUTCDay();
 
     if (config.toxicHours && config.toxicHours.includes(estHour)) continue;
     if (config.toxicDays && isToxicDay(utcDay, config.toxicDays)) continue;
@@ -608,7 +608,11 @@ export function evaluateExits(
             break;
           }
 
-          const currentR = (m1.high[j] - actualEntryPrice) / actualRisk;
+          const intendedEntry = limitBuyPrice;
+          const intendedRisk = Math.abs(intendedEntry - actualSlPrice);
+          const actualR = (m1.high[j] - actualEntryPrice) / actualRisk;
+          const theoreticalR = (m1.high[j] - intendedEntry) / (intendedRisk > 0 ? intendedRisk : actualRisk);
+          const currentR = Math.max(actualR, theoreticalR);
           const isAdtel = !!(config.useAdtelTrailing || config.exitMode === "ADTEL");
           const isTrailingEnabled = config.exitMode === "TRAILING" || config.exitMode === "MIDPOINT" || config.exitMode === "ADTEL" || isAdtel || (config.trailingSlTrigger !== undefined && config.trailingSlTrigger > 0);
 
@@ -679,8 +683,11 @@ export function evaluateExits(
             break;
           }
 
-          const currentR =
-            (actualEntryPrice - (m1.low[j] + spreadPts)) / actualRisk;
+          const intendedEntry = limitSellPrice;
+          const intendedRisk = Math.abs(intendedEntry - actualSlPrice);
+          const actualR = (actualEntryPrice - (m1.low[j] + spreadPts)) / actualRisk;
+          const theoreticalR = (intendedEntry - (m1.low[j] + spreadPts)) / (intendedRisk > 0 ? intendedRisk : actualRisk);
+          const currentR = Math.max(actualR, theoreticalR);
           const isAdtel = !!(config.useAdtelTrailing || config.exitMode === "ADTEL");
           const isTrailingEnabled = config.exitMode === "TRAILING" || config.exitMode === "MIDPOINT" || config.exitMode === "ADTEL" || isAdtel || (config.trailingSlTrigger !== undefined && config.trailingSlTrigger > 0);
 

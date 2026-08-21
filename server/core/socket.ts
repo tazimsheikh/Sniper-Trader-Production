@@ -644,10 +644,24 @@ export async function resumePersistedBots(): Promise<void> {
 
     const { registerProfileName } = await import("../utils/logger.js");
 
-    // Fetch all profiles that have persisted active bots
+    // Fetch all profiles that have persisted active bots, including all
+    // institutional filter state so it can be restored immediately on resume.
     const profiles = await db2
       .prepare(
-        `SELECT tp.id, tp.profile_name, tp.active_bots, u.metaapi_token, tp.metaapi_account_id
+        `SELECT tp.id, tp.profile_name, tp.active_bots,
+                u.metaapi_token, tp.metaapi_account_id,
+                tp.risk_multiplier, tp.base_risk_balance, tp.broker_symbol_map,
+                tp.dwcb_enabled, tp.dwcb_peak_balance,
+                tp.mage_dwcb_enabled, tp.mage_dwcb_peak_balance,
+                tp.sage_dwcb_enabled, tp.sage_dwcb_peak_balance,
+                tp.mage_sage_dwcb_enabled, tp.mage_sage_dwcb_peak_balance,
+                tp.seer_dwcb_enabled, tp.seer_dwcb_peak_balance,
+                tp.institutional_enabled,
+                tp.institutional_daily_cap,
+                tp.institutional_peak_to_draw,
+                tp.institutional_daily_start_balance,
+                tp.institutional_daily_date,
+                tp.institutional_peak_balance
          FROM trading_profiles tp
          JOIN users u ON u.id = tp.user_id
          WHERE tp.active_bots IS NOT NULL AND tp.active_bots != '[]'`
@@ -685,6 +699,47 @@ export async function resumePersistedBots(): Promise<void> {
             profile.metaapi_account_id,
           );
 
+          // ─── INSTITUTIONAL STATE RESTORATION ───────────────────────────────
+          // Seed the orchestrator's cachedProfile with the full DB institutional
+          // state so engines don't cold-start without daily cap / peak balance
+          // context. Without this, the first trade after a restart would reset
+          // the daily start balance to the current equity (losing the day's P&L
+          // reference), or silently bypass the peak-to-draw guard.
+          orch.cachedProfile = {
+            risk_multiplier: profile.risk_multiplier,
+            base_risk_balance: profile.base_risk_balance,
+            broker_symbol_map: profile.broker_symbol_map,
+            dwcb_enabled: profile.dwcb_enabled,
+            dwcb_peak_balance: profile.dwcb_peak_balance,
+            mage_dwcb_enabled: profile.mage_dwcb_enabled,
+            mage_dwcb_peak_balance: profile.mage_dwcb_peak_balance,
+            sage_dwcb_enabled: profile.sage_dwcb_enabled,
+            sage_dwcb_peak_balance: profile.sage_dwcb_peak_balance,
+            mage_sage_dwcb_enabled: profile.mage_sage_dwcb_enabled,
+            mage_sage_dwcb_peak_balance: profile.mage_sage_dwcb_peak_balance,
+            seer_dwcb_enabled: profile.seer_dwcb_enabled,
+            seer_dwcb_peak_balance: profile.seer_dwcb_peak_balance,
+            institutional_enabled: profile.institutional_enabled,
+            institutional_daily_cap: profile.institutional_daily_cap,
+            institutional_peak_to_draw: profile.institutional_peak_to_draw,
+            institutional_daily_start_balance: profile.institutional_daily_start_balance,
+            institutional_daily_date: profile.institutional_daily_date,
+            institutional_peak_balance: profile.institutional_peak_balance,
+            // token / account fields needed by engine helpers
+            metaapi_token: profile.metaapi_token,
+            metaapi_account_id: profile.metaapi_account_id,
+          };
+
+          console.log(
+            `[AutoResume] 🏦 Institutional state restored for profile ${profile.id}:` +
+            ` enabled=${profile.institutional_enabled}` +
+            ` dailyCap=${profile.institutional_daily_cap}%` +
+            ` peakToDraw=${profile.institutional_peak_to_draw}%` +
+            ` dailyStart=$${profile.institutional_daily_start_balance}` +
+            ` dailyDate=${profile.institutional_daily_date}` +
+            ` instPeak=$${profile.institutional_peak_balance}`
+          );
+
           // Re-enable each persisted bot
           for (const botId of activeBots) {
             orch.toggleBot(botId, true);
@@ -699,6 +754,13 @@ export async function resumePersistedBots(): Promise<void> {
             feed.stop();
           });
 
+          // ─── FLIP automation_active = 1 ────────────────────────────────────
+          // Reflects the true running state in the DB/UI. This was previously
+          // stale-false after restarts because the resume path never wrote it.
+          await db2
+            .prepare("UPDATE trading_profiles SET automation_active = 1 WHERE id = ?")
+            .run(profile.id);
+
           console.log(`[AutoResume] ✅ Profile ${profile.id} bots [${activeBots.join(", ")}] resumed successfully.`);
         } catch (err: any) {
           console.error(`[AutoResume] ❌ Failed to resume profile ${profile.id}:`, err.message);
@@ -709,6 +771,7 @@ export async function resumePersistedBots(): Promise<void> {
     console.error("[AutoResume] Fatal error during bot resumption:", err.message);
   }
 }
+
 
 export function getIO(): SocketIOServer | null {
   if (!io) {

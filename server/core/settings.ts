@@ -771,7 +771,10 @@ settingsRouter.post("/bot-risk", requireAuth, async (req: any, res: any) => {
       const { LiveOrchestrator } =
         await import("../trading/index.js");
       const orch = LiveOrchestrator.getInstance(Number(profileId));
-      if (orch) orch.setBotRisk(botId, Number(riskPct));
+      if (orch) {
+        orch.setBotRisk(botId, Number(riskPct));
+        orch.refreshProfileCache().catch(() => {});
+      }
     } catch (e) {
       /* orchestrator may not be loaded */
     }

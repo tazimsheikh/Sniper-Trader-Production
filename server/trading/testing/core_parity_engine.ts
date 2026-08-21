@@ -69,7 +69,6 @@ async function main() {
     const t2Raw = tier2Full.tradeLog || [];
     
     // Filter T2 for the requested bot AND the requested date range
-    console.log("DEBUG T2RAW:", t2Raw.map((t:any) => ({ date: new Date(t.openTime).toISOString(), botId: t.botId, clientId: t.clientId })));
     const t2Taken = t2Raw.filter((t: any) => {
         if (t.openTime < targetStartMs || t.openTime > targetEndMs) return false;
         return t.botId?.toUpperCase() === bot || t.clientId?.toUpperCase().startsWith(`${bot}_`);

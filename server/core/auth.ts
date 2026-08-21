@@ -362,7 +362,7 @@ authRouter.get('/profiles', requireAuth, async (req: AuthRequest, res) => {
   try {
     const userId = req.user.id;
     const profiles = await deduplicateRequest(`get_profiles_${userId}`, 2000, async () => {
-      return await db.prepare('SELECT id, profile_name, metaapi_account_id, risk_multiplier, bot_risks, automation_active, ai_sniper_active, diary_reset_time, locked_pairs, created_at, base_risk_balance, dwcb_enabled, dwcb_peak_balance, institutional_enabled, institutional_daily_cap, institutional_peak_to_draw, institutional_daily_start_balance FROM trading_profiles WHERE user_id = ? ORDER BY created_at ASC').all(userId);
+      return await db.prepare('SELECT id, profile_name, metaapi_account_id, risk_multiplier, bot_risks, automation_active, ai_sniper_active, diary_reset_time, locked_pairs, created_at, base_risk_balance, dwcb_enabled, dwcb_peak_balance, institutional_enabled, institutional_daily_cap, institutional_peak_to_draw, institutional_daily_start_balance, institutional_daily_date, institutional_peak_balance FROM trading_profiles WHERE user_id = ? ORDER BY created_at ASC').all(userId);
     });
     profiles.forEach((p: any) => {
       if (p.id && p.profile_name) registerProfileName(Number(p.id), p.profile_name);
