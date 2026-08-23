@@ -181,12 +181,9 @@ async function fetchHistoricalData() {
 
     const now = new Date();
     const diffHours = (now.getTime() - lastDate.getTime()) / (1000 * 60 * 60);
-    const isWeekend = now.getUTCDay() === 0 || now.getUTCDay() === 6; // 0=Sunday, 6=Saturday
     
     let shouldSkip = false;
-    if (diffHours < 20) {
-      shouldSkip = true;
-    } else if (isWeekend && diffHours < 72) {
+    if (diffHours < 12) {
       shouldSkip = true;
     }
 

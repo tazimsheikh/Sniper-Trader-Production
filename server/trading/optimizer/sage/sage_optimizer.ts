@@ -29,6 +29,37 @@ function roundPrice(val: number, pair: string): number {
   return Number(val.toFixed(getDigitsForPair(pair)));
 }
 
+export function parseSageConfig(setupStr: string): { session: string; config: PairConfig } | null {
+  if (setupStr.includes("Trig999") || setupStr.includes("Step999")) return null;
+  const m = setupStr.match(/^(\w+)_([\d.]+)%_MinSL([\d.]+)_MaxSL([\d.]+)_Sweep([\d.]+)_MaxSwp([\d.]+)_ReqCls(true|false)_Exit(\w+)_Trig([\d.]+)_Step([\d.]+)_FC(\d+)_StartH(\d+)_StartM(\d+)_OrbMins(\d+)_ActMins(\d+)(?:_MaxBody([\d.]+))?$/);
+  if (!m) return null;
+  const [, sSession, sPen, sMinSL, sMaxSL, sSweep, sMaxSwp, sReqCls, sExit, sTrig, sStep, sFC, sH, sM, sOrb, sAct, sMaxBody] = m;
+  const stepVal = parseFloat(sStep);
+  if (stepVal < 1.0) return null;
+
+  return {
+    session: sSession,
+    config: {
+      sageEnabled: true,
+      entryPenetrationPct: parseFloat(sPen),
+      minSlDist: parseFloat(sMinSL),
+      maxSlDist: parseFloat(sMaxSL),
+      sweepPips: parseFloat(sSweep),
+      maxSweepMultiplier: parseFloat(sMaxSwp),
+      requireCloseInside: sReqCls === 'true',
+      exitMode: sExit as any,
+      trailingSlTrigger: parseFloat(sTrig),
+      trailingSlStep: stepVal,
+      forceCloseHours: parseInt(sFC),
+      orbStartHour: parseInt(sH),
+      orbStartMin: parseInt(sM),
+      orbMinutes: parseInt(sOrb),
+      actionMinutes: parseInt(sAct),
+      maxBodyPips: sMaxBody ? parseFloat(sMaxBody) : 999,
+    } as PairConfig
+  };
+}
+
 // Define default grid parameters
 const BASE_MIN_SL_VALS = [10, 15, 20, 30, 40, 60];
 const BASE_MAX_SL_VALS = [35, 40, 50, 80, 100, 150, 200, 250, 300];
@@ -385,10 +416,7 @@ if (isMainThread && process.argv[1] && (process.argv[1] === currentFile || path.
       maxBodyGrid = [5, 10, undefined];
     }
 
-    let sessions = ["asia", "london", isIndex ? "NY_Indices" : "NY_Forex"];
-    if (["CHFJPY", "CADJPY", "AUDJPY", "EURJPY", "GBPJPY", "USDJPY"].includes(symbol)) {
-      sessions = ["asia", "london"]; // JPY pairs sweep best in Tokyo/London. NY is dead liquidity.
-    }
+    const sessions = ["asia", "london", isIndex ? "NY_Indices" : "NY_Forex"];
     const startTimesMap: Record<string, {h: number, m: number}[]> = {
       asia: [
         { h: 18, m: 0 },
@@ -999,7 +1027,7 @@ if (isMainThread && process.argv[1] && (process.argv[1] === currentFile || path.
         "utf8",
       );
 
-      // Evolutionary Assimilation: Merge Top 50 Alphas into DNA Vault
+      // Evolutionary Assimilation: Smart Lossless Merge into DNA Vault
       const dnaFile = path.join(dnaDir, `sage_dna_${symbol}.json`);
       let existingDna: any[] = [];
       if (fs.existsSync(dnaFile)) {
@@ -1008,10 +1036,82 @@ if (isMainThread && process.argv[1] && (process.argv[1] === currentFile || path.
         } catch { /* ignore */ }
       }
       
-      const combinedDna = [...existingDna, ...validAlphas.slice(0, 50)];
+      const dnaMap = new Map<string, any>();
+      for (const item of existingDna) {
+        if (item?.setup) dnaMap.set(item.setup, item);
+      }
+      for (const item of validAlphas.slice(0, 50)) {
+        if (!item?.setup) continue;
+        const existing = dnaMap.get(item.setup);
+        if (existing) {
+          const mergedDaily = { ...(existing.dailyNetR || {}), ...(item.dailyNetR || {}) };
+          const mergedTrades = Object.keys(mergedDaily).length;
+          const mergedNetR = Object.values(mergedDaily).reduce((sum: number, r: any) => sum + (Number(r) || 0), 0);
+          
+          const existingCalmar = (existing.isNetR ?? existing.totalNetR) / Math.max(0.1, existing.isMaxDd ?? 1);
+          const itemCalmar = (item.isNetR ?? item.totalNetR) / Math.max(0.1, item.isMaxDd ?? 1);
+          
+          existing.dailyNetR = mergedDaily;
+          existing.trades = Math.max(Number(existing.trades) || 0, Number(mergedTrades) || 0);
+          existing.totalNetR = Math.max(Number(existing.totalNetR) || 0, Number(mergedNetR) || 0);
+          if (itemCalmar > existingCalmar) {
+            existing.isNetR = item.isNetR;
+            existing.isMaxDd = item.isMaxDd;
+          }
+          dnaMap.set(item.setup, existing);
+        } else {
+          // Brand new alpha candidate: run on-the-fly 3-Year Macro Evaluation over full in-memory data
+          const parsed = parseSageConfig(item.setup);
+          if (parsed) {
+            const { session, config } = parsed;
+            const spreadPts = configTemplate.spread * configTemplate.pipSize;
+            const triggers = preComputeTriggers(
+              m5Candles,
+              m1Rows,
+              symbol,
+              spreadPts,
+              session,
+              isForex,
+              configTemplate.pipSize,
+              config.orbStartHour!,
+              config.orbStartMin!,
+              config.orbMinutes!,
+              config.sweepPips!,
+              config.actionMinutes!,
+              config.maxSweepMultiplier!,
+              config.requireCloseInside!
+            );
+            const macroRes = evaluateExits(m1Typed, m5Candles, triggers, symbol, config, session, isForex);
+            let peak = 0, runningR = 0, maxDD = 0;
+            for (const date of Object.keys(macroRes.dailyNetR)) {
+              const dayR = macroRes.dailyNetR[date];
+              runningR += dayR;
+              if (runningR > peak) peak = runningR;
+              const dd = peak - runningR;
+              if (dd > maxDD) maxDD = dd;
+            }
+
+            if (macroRes.totalNetR >= 15.0 && macroRes.trades >= 15 && maxDD <= 20.0) {
+              const macroCalmar = macroRes.totalNetR / Math.max(0.5, maxDD);
+              if (macroCalmar >= 1.5) {
+                dnaMap.set(item.setup, {
+                  setup: item.setup,
+                  dailyNetR: macroRes.dailyNetR,
+                  trades: macroRes.trades,
+                  totalNetR: macroRes.totalNetR,
+                  oosNetR: macroRes.totalNetR,
+                  isNetR: macroRes.totalNetR,
+                  isMaxDd: maxDD,
+                  oosEndDate: endDate.toISOString().split("T")[0],
+                  records: []
+                });
+              }
+            }
+          }
+        }
+      }
       
-      // Deduplicate by signature
-      const uniqueDna = Array.from(new Map(combinedDna.map(item => [item.setup, item])).values());
+      const uniqueDna = Array.from(dnaMap.values());
       // Sort DNA bank by IS Calmar — future IS runs seed from IS-robust champions, not OOS lucky winners
       uniqueDna.sort((a: any, b: any) => {
         const calmarA = (a.isNetR ?? a.totalNetR) / Math.max(0.1, a.isMaxDd ?? 1);
@@ -1022,7 +1122,7 @@ if (isMainThread && process.argv[1] && (process.argv[1] === currentFile || path.
       // Keep best 150 historical alphas forever
       fs.writeFileSync(dnaFile, JSON.stringify(uniqueDna.slice(0, 150), null, 2), "utf8");
 
-      const bestOosNetR = Math.max(...validAlphas.map(a => a.totalNetR));
+      const bestOosNetR = validAlphas.length > 0 ? Math.max(...validAlphas.map((a: any) => Number(a.totalNetR) || 0)) : 0;
       parentPort?.postMessage(
         `[4] Saved ${topAlphas.length} viable OOS-slice Alphas for ${symbol}. Best OOS NetR: ${bestOosNetR.toFixed(2)} R`,
       );

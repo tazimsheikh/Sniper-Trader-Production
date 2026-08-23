@@ -56,13 +56,8 @@ export async function runMathBacktest(
 
     const { tickSize, pipSize, spread } = optConfig;
     const spreadPts = spread * pipSize;
-  for (const key of backtestCache.keys()) {
-    if (!key.startsWith(pair)) {
-      backtestCache.delete(key);
-    }
-  }
 
-  const cacheKey = `${pair}_${optConfig.spread}_${startDate || ""}_${endDate || ""}`;
+    const cacheKey = `${pair}_${optConfig.spread}_${startDate || ""}_${endDate || ""}`;
   const isCrypto = pair.includes("BTC") || pair.includes("ETH");
   let m5Candles: any[];
   let m1Rows: any[];

@@ -269,23 +269,30 @@ The Grandmaster is the meta-optimizer — it selects the best portfolio of alpha
 
 ---
 
-### `/server/trading/testing/` — Parity Verification Suite
+### `/server/trading/testing/` — Parity Verification & Portfolio Simulation Suite
 
 | File | Role |
 |------|------|
-| `parity/core_parity_engine.ts` | The parity workhorse. Takes `<BOT> <PAIR> <START> <END>`, runs Tier 1 (MathBacktester) and Tier 2 (ShadowBacktester) sequentially, outputs a `PIPELINE VERIFICATION RESULTS` table. |
-| `parity/test_all_parity.ts` | Runs `core_parity_engine.ts` across all bots and top pairs. The pre-commit gate. |
-| `parity/quick_parity.ts` | Abbreviated parity check on recent 3 months of data only. For fast local validation. |
-| `parity/print_discrepancies.ts` | Detailed discrepancy reporter when parity fails. Prints trade-by-trade diffs. |
-| `parity/run_last_6mo.ts` | Parity check on the most recent 6 months of data. |
+| `test_single_pair_parity.ts` | Single-pair parity engine. Takes `<BOT> <PAIR> <START> <END>`, runs Tier 1 (MathBacktester) and Tier 2 (ShadowBacktester) sequentially, outputs a detailed trade comparison table. |
+| `test_all_pairs_parity.ts` | Comprehensive pre-commit test runner executing parity checks across all configured pairs and bots. |
+| `test_portfolio_parity_comparison.ts` | Multi-pair portfolio parity validator comparing aggregated Tier 1 math trades vs multi-pair Tier 2 portfolio shadow backtester trades. |
+| `test_live_vs_shadow_execution.ts` | Validates real Live MetaTrader broker execution against Shadow LiveOrchestrator replay. |
+| `portfolio_shadow_engine.ts` | Chronological multi-pair simulation engine using real `LiveOrchestrator`. |
+| `simulate_portfolio_risk_math.ts` | Multi-risk mode capital simulation ($100 starting balance, Fixed/Monthly/Continuous/DWCB) via Tier 1 Math engine. |
+| `simulate_portfolio_risk_shadow.ts` | Multi-risk mode capital simulation ($100 starting balance, Fixed/Monthly/Continuous/DWCB) via Tier 2 Live Orchestrator Shadow engine. |
 
 **Commands:**
 ```bash
 # Full suite parity check
-npx tsx server/trading/testing/parity/test_all_parity.ts
+npm run test:parity
+# or: npx tsx server/trading/testing/test_all_pairs_parity.ts
 
-# Targeted debug
-npx tsx server/trading/testing/parity/core_parity_engine.ts MAGE GBPJPY 2024-01-01 2025-01-01
+# Targeted single-pair parity check
+npx tsx server/trading/testing/test_single_pair_parity.ts MAGE GBPJPY 2026-04-01 2026-04-30
+
+# Multi-risk portfolio simulations
+npm run backtest:modes
+npm run backtest:modes:shadow
 ```
 
 ---
@@ -549,7 +556,7 @@ Every interface change in a production module must be mirrored in its correspond
 When working on one bot, **strictly focus only on that bot's files**. Do NOT touch, read, or modify logic from another bot unless explicitly instructed.
 
 ### 6. The Parity-First Development Rule
-Before merging any logic change: run `npx tsx server/trading/testing/parity/core_parity_engine.ts <BOT> <PAIR>`. If `PARITY BROKEN` — stop, present findings, wait for user approval.
+Before merging any logic change: run `npx tsx server/trading/testing/test_single_pair_parity.ts <BOT> <PAIR>`. If `PARITY BROKEN` — stop, present findings, wait for user approval.
 
 ---
 

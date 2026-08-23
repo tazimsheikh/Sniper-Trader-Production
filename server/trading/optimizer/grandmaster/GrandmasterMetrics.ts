@@ -1,57 +1,6 @@
-import { GrandmasterOptimizerState } from "../../config/types.js";
+import { GrandmasterOptimizerState, IndependentSynthesisComponent } from "../../config/types.js";
 import { DailyContextTracker } from "../../market/DailyContextTracker.js";
-
-export interface IndependentSynthesisComponent {
-  symbol: string;
-  botType: "Mage" | "Sage";
-  setup: string;
-  totalTrades: number;
-  totalTotalR: number;
-  maxDrawdown: number;
-  sharpeRatio: number;
-  sortinoRatio: number;
-  recoveryFactor: number;
-  hedgeScore: number;
-  periodReturns: number[];
-  dailyReturns: Record<string, number>;
-  dailyRArray?: Float64Array;
-  monteCarloDrawdown99?: number;
-  riskPct?: number;
-  winRate?: number;
-  recentMomentumR?: number;
-  recentTwoMonthR?: number;
-  recentThreeMonthR?: number;
-  threeYearNetR?: number;
-  threeYearWinRate?: number;
-  threeYearMaxDrawdown?: number;
-  threeYearTrades?: number;
-  threeYearProfitFactor?: number;
-  regimeConsistency?: number;
-  forceCloseHours?: number;
-  recentSixMonthTrades?: number;
-  recentSixMonthWinRate?: number;
-  seasonalMultiplier?: number;
-  wfMultiplier?: number;
-  stepMean?: number;
-  maxStepLoss?: number;
-  hasLosingMonth?: boolean;
-  hasLosingWeek?: boolean;
-  hasLosingDay?: boolean;
-  wfeScore?: number;
-  regimeRatio?: number;
-  covPenalty?: number;
-  recentOneYearR?: number;
-  deflatedSharpeRatio?: number;
-  dsrProb?: number;
-  profitFactor?: number;
-  avgWinR?: number;
-  omegaRatio?: number;
-  cvar95?: number;
-  sampleConfidence?: number;
-  correlationTax?: number; // Pre-computed max pairwise Pearson correlation penalty (0.2–1.0); applied in computeMasterRiskSizing
-  clusterId?: number;
-  allocatedRisk?: number;
-}
+export type { IndependentSynthesisComponent };
 
 const MIN_TRADES = 3;
 const MAX_DRAWDOWN = 70;
@@ -422,17 +371,30 @@ export function evaluateComponent(
   // Assume ~500 trials per pair optimization run
   const { dsr, dsrProb } = calculateDeflatedSharpeRatio(sharpeRatio, 500, nActive, activeSkew, activeKurt);
 
-  // ── Recency Momentum & Concentration Multiplier ───────────────────────────
-  // Penalize setups where profits are solely concentrated in a short-term recent spike (>50% of lifetime profit in 3 months)
+  // ── Recency Momentum & Quarterly Acceleration Multiplier ───────────────────
+  // Reward setups that are actively surging and thriving in the recent 60-90 days
+  // (June, July, August 2026) and penalize setups that have gone stale or negative recently.
   let recencyMultiplier = 1.0;
-  if (totalR > 0 && recentThreeMonthR > totalR * 0.5) {
-    recencyMultiplier = 0.3; // Heavy penalty for single-period concentration
+  if (recentThreeMonthR > 0) {
+    const recentVelocity = Math.min(2.5, 1.0 + (recentThreeMonthR / Math.max(4.0, Math.abs(totalR) * 0.3)));
+    recencyMultiplier = recentVelocity;
   } else if (recentThreeMonthR < 0) {
-    recencyMultiplier = Math.max(0.5, 1.0 + (recentThreeMonthR / (Math.abs(totalR) + 1)));
+    recencyMultiplier = Math.max(0.2, 1.0 + (recentThreeMonthR / (Math.abs(totalR) + 4.0)));
   }
 
-  // Bake DSR Probability & Recency Multiplier into hedgeScore.
-  // Setups that look good due to multiple testing selection bias receive a low DSR score.
+  // ── Trajectory Curvature & Ballooning Convexity (beta2) ───────────────────
+  let cum = 0;
+  const cumY: number[] = [];
+  for (let i = 0; i < n; i++) {
+    cum += arr[i];
+    cumY.push(cum);
+  }
+  const yStart = cumY[0] || 0;
+  const yMid = cumY[Math.floor(n / 2)] || 0;
+  const yEnd = cumY[n - 1] || 0;
+  const curvatureBeta2 = (yEnd - yMid) - (yMid - yStart); // Positive = accelerating/ballooning upward!
+  const recentQuarterR = recentThreeMonthR;
+
   const hedgeScore = sortinoRatio * recoveryFactor * regimeRatio * wfMultiplier * recencyMultiplier * (0.2 + 0.8 * dsrProb);
 
   return {
@@ -457,6 +419,8 @@ export function evaluateComponent(
     recentThreeMonthR,
     recentMomentumR,
     recentOneYearR,
+    recentQuarterR,
+    curvatureBeta2,
     regimeRatio,
     omegaRatio,
     cvar95,

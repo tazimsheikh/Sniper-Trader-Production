@@ -706,15 +706,15 @@ function extractExistingSeerConfig(fileContent: string): string {
     if (ch === '{') { depth++; started = true; }
     else if (ch === '}') { depth--; }
     if (started && depth === 0) {
-      // Advance past the closing '}' and optional trailing ';'
       let end = i + 1;
-      while (end < fileContent.length && fileContent[end] === ';') end++;
-      return fileContent.substring(seerIdx, end).trimEnd() + ";";
+      while (end < fileContent.length && (fileContent[end] === ';' || fileContent[end] === '\n' || fileContent[end] === '\r' || fileContent[end] === ' ')) end++;
+      const rawBlock = fileContent.substring(seerIdx, end).trimEnd();
+      return rawBlock.replace(/;+$/, "") + ";";
     }
     i++;
   }
   // Fallback: return from marker to end of file
-  return fileContent.substring(seerIdx).trimEnd();
+  return fileContent.substring(seerIdx).trimEnd().replace(/;+$/, "") + ";";
 }
 
 const existingSeerBlock = extractExistingSeerConfig(pairConfigContent);

@@ -548,6 +548,62 @@ export interface GrandmasterOptimizerState {
 }
 
 
+export interface IndependentSynthesisComponent {
+  symbol: string;
+  botType: "Mage" | "Sage";
+  setup: string;
+  totalTrades: number;
+  totalTotalR: number;
+  maxDrawdown: number;
+  sharpeRatio: number;
+  sortinoRatio: number;
+  recoveryFactor: number;
+  hedgeScore: number;
+  periodReturns: number[];
+  dailyReturns: Record<string, number>;
+  dailyRArray?: Float64Array;
+  monteCarloDrawdown99?: number;
+  riskPct?: number;
+  winRate?: number;
+  recentMomentumR?: number;
+  recentTwoMonthR?: number;
+  recentThreeMonthR?: number;
+  recentQuarterR?: number;
+  curvatureBeta2?: number; // Trajectory convexity: (y_end - y_mid) - (y_mid - y_start) > 0 for ballooning
+  threeYearNetR?: number;
+  threeYearWinRate?: number;
+  threeYearMaxDrawdown?: number;
+  threeYearTrades?: number;
+  threeYearProfitFactor?: number;
+  regimeConsistency?: number;
+  forceCloseHours?: number;
+  recentSixMonthTrades?: number;
+  recentSixMonthWinRate?: number;
+  seasonalMultiplier?: number;
+  wfMultiplier?: number;
+  stepMean?: number;
+  maxStepLoss?: number;
+  hasLosingMonth?: boolean;
+  hasLosingWeek?: boolean;
+  hasLosingDay?: boolean;
+  hasConsecutivePriorYearLoss?: boolean;
+  hasLosingMonthInLast6?: boolean;
+  wfeScore?: number;
+  regimeRatio?: number;
+  covPenalty?: number;
+  recentOneYearR?: number;
+  deflatedSharpeRatio?: number;
+  dsrProb?: number;
+  profitFactor?: number;
+  avgWinR?: number;
+  omegaRatio?: number;
+  cvar95?: number;
+  sampleConfidence?: number;
+  correlationTax?: number; // Pre-computed max pairwise Pearson correlation penalty (0.2–1.0); applied in computeMasterRiskSizing
+  clusterId?: number;
+  allocatedRisk?: number;
+}
+
 export interface GrandmasterSynthesisPairing {
   symbol: string;
   mageSetup: string;

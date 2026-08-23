@@ -134,18 +134,14 @@ export async function _runMageBotForConfig(orch: any, symbol: string, state: any
   const orDurationMins = config.orbMinutes!;
   const currentMins = estHour * 60 + estMin;
   const isBuildingORB = currentMins >= startMins && currentMins < startMins + orDurationMins;
+  const is1700Reset = os.lastEstHour !== undefined && ((os.lastEstHour < 17 && estHour >= 17) || (os.lastEstHour > estHour && estHour >= 17));
+  const isAsiaSession = config.session === "asia" || (config.orbStartHour !== undefined && config.orbStartHour >= 18);
+  const isMidnightExpiry = !isAsiaSession && os.lastEstHour !== undefined && os.lastEstHour > estHour && estHour < 17;
   const isStartMinsReset = isBuildingORB && !os.wasBuildingORB;
+
   os.wasBuildingORB = isBuildingORB;
 
-  let isDayChangeReset = false;
-  if (os.lastEstHour !== undefined) {
-      if ((os.lastEstHour < 17 && estHour >= 17) || (os.lastEstHour > estHour && estHour >= 17)) {
-          isDayChangeReset = true;
-      }
-  }
-  os.lastEstHour = estHour;
-
-  if (isDayChangeReset || isStartMinsReset) {
+  if (is1700Reset || isMidnightExpiry || isStartMinsReset) {
     // Cancel any dangling pending limit order from the previous ORB session
     if (os.limitOrderId) {
       try {
@@ -192,11 +188,20 @@ export async function _runMageBotForConfig(orch: any, symbol: string, state: any
         os.wasBuildingORB = true;
         logger.info(`[MageEngine] 🔄 Mid-session reboot gracefully reconstructed ORB for ${symbol} using ${openingCandles.length} cached candles (High: ${os.orHigh}, Low: ${os.orLow}).`);
       } else {
-        logger.error(`[MageEngine] 🚨 FATAL MID-SESSION REBOOT: Woke up during the ORB window for ${symbol} but missed opening ${currentMins - startMins} mins with no cached data. Locking bot for remainder of session.`);
-        os.orBuilt = true; 
-        os.fired = true;
-        os.mageTradeTakenToday = true;
-        return;
+        // HYDRATION TRAP REMOVED: Do not lock bot for the entire session! Just reset and wait for next day.
+        logger.error(`[MageEngine] 🚨 FATAL MID-SESSION REBOOT: Woke up during the ORB window for ${symbol} but missed opening ${currentMins - startMins} mins with no cached data. Waiting for next session.`);
+        os.orHigh = -Infinity;
+        os.orLow = Infinity;
+        os.orBuilt = false;
+        os.breakoutDir = null;
+        os.limitPrice = 0;
+        os.slPrice = 0;
+        os.tpPrice = 0;
+        os.limitOrderId = null;
+        os.limitPlacedAt = 0;
+        os.visionApproved = false;
+        os.fired = false;
+        os.mageTradeTakenToday = false;
       }
     } else {
       os.orHigh = -Infinity;
@@ -420,7 +425,8 @@ export async function _runMageBotForConfig(orch: any, symbol: string, state: any
   const thisConfigActive = (state.activeTrades ?? []).some((t: any) => {
     if (t.clientId === sig) return true;
     if (orch.sigMap && orch.sigMap[t.clientId] === sig) return true;
-    if (t.clientId?.includes(getShortHash(sig))) return true;
+    // Strict exact matching required to prevent multi-setup collision on the same pair
+    if (t.clientId && t.clientId.split("_").pop() === getShortHash(sig)) return true;
     return false;
   });
   if (thisConfigActive) return;
@@ -457,7 +463,7 @@ export async function _runMageBotForConfig(orch: any, symbol: string, state: any
   const endMins =
     _mCfg.orbEndHour !== void 0
       ? _mCfg.orbEndHour * 60 + (_mCfg.orbEndMin || 0)
-      : startMins + orDurationMins + (_mCfg.actionMinutes || 180);
+      : startMins + orDurationMins + (_mCfg.actionMinutes ?? 180);
 
   let isInsideActionWindow = false;
   if (endMins >= 1440) {
@@ -467,7 +473,7 @@ export async function _runMageBotForConfig(orch: any, symbol: string, state: any
   }
 
   if (!isInsideActionWindow) {
-    if (os.orBuilt) os.fired = true;
+    // FIX: Do NOT set os.fired = true. This prevents multi-session configurations from executing on subsequent windows.
     return;
   }
   if (os.tradeTakenOnOrbDay && os.tradeTakenOnOrbDay === os.currentOrbDateStr) {
@@ -522,40 +528,53 @@ export async function _runMageBotForConfig(orch: any, symbol: string, state: any
         `ORB [High/Low]: [${os.orHigh.toFixed(5)}/${os.orLow.toFixed(5)}]`);
     }
 
+    if ((global as any).isSimulator && symbol.includes("USDCHF")) {
+       console.log(`[DEBUG-MAGE] Evaluating USDCHF at ${new Date(actionCandle.timestamp).toISOString()} | orHigh: ${os.orHigh} | orLow: ${os.orLow} | cClose: ${actionCandle.close} | buyTrig: ${buyTriggered} | sellTrig: ${sellTriggered} | orBuilt: ${os.orBuilt} | fired: ${os.fired} | takenToday: ${os.mageTradeTakenToday}`);
+    }
+
     if (buyTriggered || sellTriggered) {
       if ((global as any).__SIM_WARMUP__) return;
       if (buyTriggered && sellTriggered) { 
         return; 
       }
-      if (buyTriggered && Math.max(actionCandle.open, actionCandle.close) < os.orHigh) return;
-      if (sellTriggered && Math.min(actionCandle.open, actionCandle.close) > os.orLow) return;
+      if (buyTriggered && Math.max(actionCandle.open, actionCandle.close) < os.orHigh) {
+          if ((global as any).isSimulator && symbol.includes("USDCHF")) console.log("Blocked: Max(open,close) < orHigh");
+          return;
+      }
+      if (sellTriggered && Math.min(actionCandle.open, actionCandle.close) > os.orLow) {
+          if ((global as any).isSimulator && symbol.includes("USDCHF")) console.log("Blocked: Min(open,close) > orLow");
+          return;
+      }
 
-      const minRatio = 0.35;
-      const maxRatio = 1.5;
+      const minRatio = _mCfg.minAtrRatio ?? 0.35;
+      const maxRatio = _mCfg.maxAtrRatio ?? 1.5;
       const orPips = (os.orHigh - os.orLow) / pipSize;
       if (!state.m5Buffer || state.m5Buffer.length < 14) {
         if (!(global as any).isSimulator) {
           logger.info(`[MageEngine][P${orch.profileId}] ATR-Relative OR filter skipped breakout for ${symbol}: Insufficient M5 history buffer (${state.m5Buffer?.length || 0}/14).`);
         }
+        if ((global as any).isSimulator && symbol.includes("USDCHF")) console.log("Blocked: ATR Buffer");
         return;
       }
-      // ATR-Relative OR filter: use 14-period Wilder ATR (closed candles only, atrArr[len-1])
-      const atrArr = buildAtrArray(state.m5Buffer, 14);
+      // ATR-Relative OR filter: use 14-period Wilder ATR from state
+      const atrArr = state.atrArr || [];
       // Use candle prior to action candle (atrArr[len-2]) for exact parity with MageMathCore (atrArr[i-1])
       const atrVal = atrArr.length >= 2 ? atrArr[atrArr.length - 2] : (atrArr.length >= 1 ? atrArr[atrArr.length - 1] : 0);
       if (atrVal > 0) {
         const atr14Pips = atrVal / pipSize;
-        const ratio = Math.round((orPips / atr14Pips) * 100) / 100;
+        const ratio = (orPips / atr14Pips);
         if (ratio < minRatio || ratio > maxRatio) {
           if (!(global as any).isSimulator) {
             logger.info(`[MageEngine][P${orch.profileId}] ATR-Relative OR filter blocked breakout for ${symbol}. OR/ATR ratio: ${ratio.toFixed(2)}`);
           }
+          if ((global as any).isSimulator && symbol.includes("USDCHF")) console.log(`Blocked: ATR Ratio ${ratio}`);
           return;
         }
       }
       if (_mCfg.minBodyPips !== void 0) {
         const bodySize = parseFloat((Math.abs(actionCandle.close - actionCandle.open) / pipSize).toFixed(1));
         if (bodySize < _mCfg.minBodyPips) {
+          if ((global as any).isSimulator && symbol.includes("USDCHF")) console.log(`Blocked: bodySize ${bodySize} < ${_mCfg.minBodyPips}`);
           logger.info(
             `[DiscretionaryTrader] ⛔ Mage aborted on ${symbol} at ${new Date(actionCandle.timestamp).toISOString()}: Breakout action body (${bodySize.toFixed(1)} pips) < minBodyPips (${_mCfg.minBodyPips}).`,
           );

@@ -91,7 +91,8 @@ export function admitAllWithCorrelationPenalty(
   globalDates: string[],
   maxPerSymbolAndSession = 1,
   bannedSessions?: Set<string>,
-  previouslySelected: IndependentSynthesisComponent[] = []
+  previouslySelected: IndependentSynthesisComponent[] = [],
+  maxTotalComponents = 20
 ): IndependentSynthesisComponent[] {
   const candidates = [...pool].sort((a, b) => b.hedgeScore - a.hedgeScore);
   const selected: IndependentSynthesisComponent[] = [];
@@ -99,6 +100,8 @@ export function admitAllWithCorrelationPenalty(
   const seenSetups = new Set<string>();
 
   for (const cand of candidates) {
+    if (selected.length >= maxTotalComponents) break;
+
     const parts = cand.setup.split("_");
     let session = parts[0];
     if (parts[0] === "NY") session = `NY_${parts[1]}`;
@@ -108,7 +111,6 @@ export function admitAllWithCorrelationPenalty(
 
     const key = `${cand.symbol}_${cand.botType}_${session}`;
     const currentCount = symbolSessionCounts[key] || 0;
-
     if (currentCount >= maxPerSymbolAndSession) continue;
 
     let maxPairwiseCorr = 0;
@@ -159,22 +161,28 @@ export function computeMasterRiskSizing(
   }
 
   const safetyScores = portfolio.map(p => {
-    const baseSafety = 1.0 / Math.max(0.1, p.monteCarloDrawdown99 || p.maxDrawdown || 0.1);
-    const regime = p.regimeRatio ?? 1.0;
+    const effectiveDd = Math.max(2.0, p.threeYearMaxDrawdown || p.monteCarloDrawdown99 || p.maxDrawdown || 2.0);
+    const baseSafety = 1.0 / Math.sqrt(effectiveDd);
+    const regime = Math.max(0.7, Math.min(1.3, p.regimeRatio ?? 1.0));
     const dsrFactor = p.dsrProb ?? 0.5;
     const corrTax = (p as any).correlationTax ?? 1.0;
     const tradesCount = p.threeYearTrades || p.totalTrades || 1;
-    const sampleSizeFactor = Math.min(1.0, Math.sqrt(tradesCount / 50));
-    return { p, score: baseSafety * regime * (0.3 + 0.7 * dsrFactor) * corrTax * sampleSizeFactor };
+    const sampleSizeFactor = Math.max(0.6, Math.min(1.0, Math.sqrt(tradesCount / 50)));
+    return { p, score: baseSafety * regime * (0.5 + 0.5 * dsrFactor) * corrTax * sampleSizeFactor };
   });
 
-  let maxScore = 0;
-  for (const item of safetyScores) {
-    if (item.score > maxScore) maxScore = item.score;
-  }
+  const totalScore = safetyScores.reduce((sum, item) => sum + item.score, 0);
 
   for (const item of safetyScores) {
-    item.p.riskPct = maxScore > 0 ? item.score / maxScore : 1.0;
+    const rawWeight = totalScore > 0 ? item.score / totalScore : 1.0 / portfolio.length;
+    item.p.riskPct = Math.max(0.02, Math.min(0.15, rawWeight));
+  }
+
+  const finalWeightSum = portfolio.reduce((sum, p) => sum + (p.riskPct || 0), 0);
+  for (const p of portfolio) {
+    if (finalWeightSum > 0) {
+      p.riskPct = (p.riskPct || 0) / finalWeightSum;
+    }
   }
 
   const masterDailyReturns = new Float64Array(globalDates.length);
@@ -190,12 +198,5 @@ export function computeMasterRiskSizing(
   const masterMcDrawdown99 = runMonteCarlo(masterReturnsArray, 10000);
   const globalRiskPct = masterMcDrawdown99 > targetMcDd ? targetMcDd / masterMcDrawdown99 : 1.0;
 
-  for (const p of portfolio) {
-    p.riskPct = (p.riskPct || 1.0) * globalRiskPct;
-    if (maxRiskPct > 0) {
-        p.riskPct = Math.min(p.riskPct, maxRiskPct);
-    }
-  }
-
-  return { masterMcDrawdown99: masterMcDrawdown99 * globalRiskPct, globalRiskPct };
+  return { masterMcDrawdown99, globalRiskPct };
 }

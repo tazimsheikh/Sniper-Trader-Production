@@ -23,16 +23,9 @@ const HOLY_GRAIL_OUT_FILE = path.join(OPTIMIZER_DIR, "grandmaster_holy_grail_por
 
 function safeWriteFileSync(filePath: string, content: string) {
   try {
-    const tmpPath = `${filePath}.tmp`;
-    fs.writeFileSync(tmpPath, content, "utf-8");
-    try {
-      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-    } catch (e) {}
-    fs.renameSync(tmpPath, filePath);
+    fs.writeFileSync(filePath, content, "utf-8");
   } catch (e: any) {
-    try {
-      fs.writeFileSync(filePath, content, { flag: "w" });
-    } catch (e2: any) {}
+    console.warn(`⚠️ Error writing file ${filePath}: ${e.message}`);
   }
 }
 
@@ -170,15 +163,15 @@ async function runSynthesis() {
   }
 
   let completedSymbols = 0;
-  const symbolResults = await asyncPool(4, allSymbols, async (symbol) => {
+  const symbolResults = await asyncPool(3, allSymbols, async (symbol) => {
     const mageDataRaw = loadStateData(allMageFiles, symbol);
     const sageDataRaw = loadStateData(allSageFiles, symbol);
 
     const mageDataStitched = stitchOOSSlices(mageDataRaw, "Mage");
     const sageDataStitched = stitchOOSSlices(sageDataRaw, "Sage");
 
-    const mageData = deduplicateConfigs(mageDataStitched, "Mage", 3);
-    const sageData = deduplicateConfigs(sageDataStitched, "Sage", 3);
+    const mageData = mageDataStitched;
+    const sageData = sageDataStitched;
 
     const { normalList, rawValidCount } = await preProcessData(
       symbol,
@@ -201,7 +194,7 @@ async function runSynthesis() {
     });
 
     completedSymbols++;
-    console.log(`  [${completedSymbols.toString().padStart(2, ' ')}/${allSymbols.length}] ${symbol.padEnd(12)}: ${hydratedList.length.toString().padStart(2, ' ')} elite candidates (from ${rawValidCount.toString().padStart(3, ' ')} audited)`);
+    console.log(`  ✨ [${completedSymbols.toString().padStart(2, ' ')}/${allSymbols.length}] ${symbol.padEnd(12)}: ${hydratedList.length.toString().padStart(2, ' ')} elite candidates admitted 🚀 (from ${rawValidCount.toString().padStart(3, ' ')} audited)`);
 
     return { hydratedList, rawValidCount };
   });
@@ -226,7 +219,7 @@ async function runSynthesis() {
   console.log(`\n⚙️ PHASE 2: DETERMINISTIC DE-CORRELATION CLUSTERING (Hierarchical Risk Parity)`);
   
   const normalBannedSessions = new Set<string>();
-  let selectedNormal = admitAllWithCorrelationPenalty(rawNormalPool, globalDates, 1, normalBannedSessions);
+  let selectedNormal = admitAllWithCorrelationPenalty(rawNormalPool, globalDates, 1, normalBannedSessions, [], 20);
 
   console.log(`Selected Holy Grail Portfolio: ${selectedNormal.length} configs`);
 
@@ -249,8 +242,81 @@ async function runSynthesis() {
   const normalSizing = computeMasterRiskSizing(selectedNormal, portfolioDates, 1.0, 0.10);
   console.log(`[SIZING] 🌌 Holy Grail Portfolio Master MC DD 99%: ${normalSizing.masterMcDrawdown99.toFixed(2)} R. Global Risk Factor: ${normalSizing.globalRiskPct.toFixed(3)}.`);
 
+  // ── Fix 2: Minimum Allocation Floor ─────────────────────────────────────────
+  // Configs carrying less than 1.5% final allocation are "parasites" — they
+  // contribute negligible returns while still adding correlation drag, complexity,
+  // and CPCV overhead. Drop them before validation so CPCV evaluates only
+  // configs that materially affect portfolio performance.
+  const MIN_ALLOC_PCT = 0.015;
+  const beforeCount = selectedNormal.length;
+  selectedNormal = selectedNormal.filter(c => {
+    if ((c.riskPct ?? 0) < MIN_ALLOC_PCT) {
+      console.log(`  [ALLOC GATE] ❌ Dropped ${c.symbol} (${c.botType}) — allocation ${((c.riskPct ?? 0) * 100).toFixed(2)}% below ${(MIN_ALLOC_PCT * 100).toFixed(1)}% floor`);
+      return false;
+    }
+    return true;
+  });
+  if (selectedNormal.length < beforeCount) {
+    console.log(`  [ALLOC GATE] Cleaned portfolio: ${beforeCount} → ${selectedNormal.length} configs`);
+  }
+
+
+  // ── PHASE 3: PORTFOLIO-LEVEL ZERO-LOSS RECENT MONTHS AUDIT & PRUNING ──────────
+  console.log(`\n⚙️ PHASE 3: PORTFOLIO-LEVEL MONTHLY PROFITABILITY AUDIT (Zero-Loss Constraint)`);
+  const recentTargetMonths = ["2026-03", "2026-04", "2026-05", "2026-06", "2026-07", "2026-08"];
+  
+  let pruneRounds = 0;
+  while (pruneRounds < 5 && selectedNormal.length > 5) {
+    const portfolioMonthlyWeightedR: Record<string, number> = {};
+    for (const c of selectedNormal) {
+      const weight = c.riskPct || (1 / selectedNormal.length);
+      for (const [dateStr, r] of Object.entries(c.dailyReturns || {})) {
+        const m = dateStr.substring(0, 7);
+        portfolioMonthlyWeightedR[m] = (portfolioMonthlyWeightedR[m] || 0) + ((r as number) * weight);
+      }
+    }
+
+    const losingMonths = recentTargetMonths.filter(m => (portfolioMonthlyWeightedR[m] !== undefined && portfolioMonthlyWeightedR[m] < -0.01));
+    if (losingMonths.length === 0) {
+      console.log(`  ✅ All recent target months (${recentTargetMonths.join(", ")}) are strictly non-negative!`);
+      break;
+    }
+
+    console.log(`  ⚠️ Detected monthly drag in: [${losingMonths.join(", ")}]. Identifying and pruning drag contributors...`);
+    
+    // Find the worst drag contributor across these losing months
+    let worstComp: IndependentSynthesisComponent | null = null;
+    let worstLoss = 0;
+
+    for (const c of selectedNormal) {
+      let compLossSum = 0;
+      for (const m of losingMonths) {
+        let mR = 0;
+        for (const [dateStr, r] of Object.entries(c.dailyReturns || {})) {
+          if (dateStr.substring(0, 7) === m) mR += (r as number);
+        }
+        if (mR < 0) compLossSum += mR;
+      }
+      if (compLossSum < worstLoss) {
+        worstLoss = compLossSum;
+        worstComp = c;
+      }
+    }
+
+    if (worstComp && worstLoss < -0.1) {
+      console.log(`  [PRUNING] ❌ Dropping ${worstComp.symbol} (${worstComp.botType}) — contributed ${worstLoss.toFixed(2)}R drag across [${losingMonths.join(", ")}]`);
+      selectedNormal = selectedNormal.filter(c => c !== worstComp);
+      pruneRounds++;
+      // Re-calculate sizing after pruning
+      computeMasterRiskSizing(selectedNormal, portfolioDates, 1.0, 0.10);
+    } else {
+      break;
+    }
+  }
+
   console.log(`\n⚙️ PHASE 4: PORTFOLIO CPCV VALIDATION`);
   const windows = generateRollingWindows(portfolioDates.length, 6, 560, 140, 5);
+
   
   const normalCpcv = runCPCV(selectedNormal, portfolioDates, "The Holy Grail", windows);
 

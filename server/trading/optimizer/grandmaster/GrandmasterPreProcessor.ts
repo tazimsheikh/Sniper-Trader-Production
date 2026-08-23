@@ -1,12 +1,193 @@
-import { GrandmasterOptimizerState } from "../../config/types.js";
+import { GrandmasterOptimizerState, M1TypedArrays, TriggerEvent } from "../../config/types.js";
 import { IndependentSynthesisComponent, evaluateComponent } from "./GrandmasterMetrics.js";
 import { rankPercentile } from "./utils/GrandmasterMath.js";
 import { OPTIMIZER_CONFIG } from "../../config/OptimizerPairConfig.js";
-import { runMathBacktest as runMageMathBacktest, clearMageBacktestCache } from "../../backtester/MageMathBacktester.js";
-import { runSageMathBacktest, clearSageBacktestCache } from "../../backtester/SageMathBacktester.js";
+import { preComputeTriggers as preComputeMageTriggers, evaluateExits as evaluateMageExits } from "../../backtester/math_core/MageMathCore.js";
+import { preComputeTriggers as preComputeSageTriggers, evaluateExits as evaluateSageExits } from "../../backtester/math_core/SageMathCore.js";
+import { aggregateCandles } from "../../market/CandleAggregator.js";
+import { loadCsv, getLatestDate } from "../../backtester/loadCsv.js";
+import { isNewsForceClose } from "../../market/historicalNews.js";
+import { isEODSession } from "../../market/MathFilters.js";
+import { getFixedEstDate } from "../../backtester/math_core/MathCoreUtils.js";
 import * as fs from "fs";
 import * as path from "path";
-import { getLatestDate } from "../../backtester/loadCsv.js";
+
+interface SymbolCandleCache {
+  m1Rows: any[];
+  m1Typed: M1TypedArrays;
+  m5Candles: any[];
+  isForex: boolean;
+  pipSize: number;
+  spreadPts: number;
+  startDate: string;
+  endDate: string;
+}
+
+const symbolCandleDataCache = new Map<string, SymbolCandleCache>();
+
+async function getOrLoadSymbolCandleData(symbol: string): Promise<SymbolCandleCache | null> {
+  const baseSymbol = symbol.split(".")[0].split("_")[0];
+  if (symbolCandleDataCache.has(symbol)) {
+    return symbolCandleDataCache.get(symbol)!;
+  }
+
+  const csvDir = path.join(process.cwd(), "data", "csv");
+  const csvFiles = fs.readdirSync(csvDir).filter((f) => f.startsWith(baseSymbol) && f.endsWith(".csv"));
+  if (csvFiles.length === 0) return null;
+
+  const latestDate = getLatestDate(path.join(csvDir, csvFiles[0]));
+  const endDate = latestDate.toISOString().substring(0, 10);
+  const sd = new Date(latestDate.getTime());
+  sd.setFullYear(sd.getFullYear() - 3);
+  const startDate = sd.toISOString().substring(0, 10);
+
+  const optConfig = OPTIMIZER_CONFIG[symbol] || OPTIMIZER_CONFIG[baseSymbol];
+  const spread = optConfig ? optConfig.spread : 2.0;
+  const pipSize = optConfig ? optConfig.pipSize : 0.0001;
+  const spreadPts = spread * pipSize;
+  const isForex = !symbol.includes("BTC") && !symbol.includes("ETH") && !["US30", "NAS100", "SPX500", "GER40", "UK100", "JPN225"].some(idx => symbol.includes(idx));
+
+  const startD = new Date(new Date(startDate).getTime() - 15 * 24 * 60 * 60 * 1000);
+  const endD = new Date(new Date(endDate).getTime() + 86400000 - 1);
+
+  let m1Rows: any[] = [];
+  for (const f of csvFiles) {
+    m1Rows = m1Rows.concat(await loadCsv(path.join(csvDir, f), spread, startD, endD));
+  }
+
+  if (m1Rows.length === 0) return null;
+
+  const m1Length = m1Rows.length;
+  const m1Typed: M1TypedArrays = {
+    open: new Float64Array(m1Length),
+    high: new Float64Array(m1Length),
+    low: new Float64Array(m1Length),
+    close: new Float64Array(m1Length),
+    timestamp: new Float64Array(m1Length),
+    estHour: new Int32Array(m1Length),
+    minute: new Int32Array(m1Length),
+    isSessionReset: new Uint8Array(m1Length),
+    isMidnightExpiry: new Uint8Array(m1Length),
+    isEOD_standard: new Uint8Array(m1Length),
+    isNewsForceClose: new Uint8Array(m1Length),
+    length: m1Length,
+  };
+
+  for (let i = 0; i < m1Length; i++) {
+    const r = m1Rows[i];
+    m1Typed.open[i] = r.open;
+    m1Typed.high[i] = r.high;
+    m1Typed.low[i] = r.low;
+    m1Typed.close[i] = r.close;
+    m1Typed.timestamp[i] = r.timestamp;
+    m1Typed.estHour[i] = r.estHour;
+    m1Typed.minute[i] = r.minute;
+    if (i > 0) {
+      const prevH = m1Rows[i - 1].estHour;
+      m1Typed.isSessionReset[i] = ((prevH < 15 && r.estHour >= 15) || (prevH > r.estHour && r.estHour >= 15) || (r.estHour === 15 && r.minute === 0)) ? 1 : 0;
+      m1Typed.isMidnightExpiry[i] = (prevH > r.estHour && r.estHour < 15) ? 1 : 0;
+    }
+    const estDate = getFixedEstDate(new Date(r.timestamp));
+    const dStr = estDate.toISOString().split("T")[0];
+    m1Typed.isEOD_standard[i] = isEODSession(r.estHour, r.minute) ? 1 : 0;
+    m1Typed.isNewsForceClose[i] = isNewsForceClose(dStr, r.estHour, r.minute) ? 1 : 0;
+  }
+
+  const m5Candles = aggregateCandles(m1Rows, 5);
+
+  const entry: SymbolCandleCache = {
+    m1Rows,
+    m1Typed,
+    m5Candles,
+    isForex,
+    pipSize,
+    spreadPts,
+    startDate,
+    endDate,
+  };
+
+  symbolCandleDataCache.set(symbol, entry);
+  return entry;
+}
+
+const mageTriggerCache = new Map<string, TriggerEvent[]>();
+function getMageTriggers(
+  data: SymbolCandleCache,
+  symbol: string,
+  session: string,
+  cfg: any
+): TriggerEvent[] {
+  const startH = cfg.orbStartHour ?? 0;
+  const startM = cfg.orbStartMin ?? 0;
+  const orbMins = cfg.orbMinutes ?? 15;
+  const actMins = cfg.actionMinutes ?? 5;
+  const key = `${symbol}_${session}_${startH}_${startM}_${orbMins}_${actMins}`;
+  if (!mageTriggerCache.has(key)) {
+    const triggers = preComputeMageTriggers(
+      data.m5Candles,
+      data.m1Rows,
+      symbol,
+      data.spreadPts,
+      session,
+      data.isForex,
+      data.pipSize,
+      startH,
+      startM,
+      orbMins,
+      actMins
+    );
+    mageTriggerCache.set(key, triggers);
+  }
+  return mageTriggerCache.get(key)!;
+}
+
+const sageTriggerCache = new Map<string, TriggerEvent[]>();
+function getSageTriggers(
+  data: SymbolCandleCache,
+  symbol: string,
+  session: string,
+  cfg: any
+): TriggerEvent[] {
+  const startH = cfg.orbStartHour ?? 0;
+  const startM = cfg.orbStartMin ?? 0;
+  const orbMins = cfg.orbMinutes ?? 15;
+  const actMins = cfg.actionMinutes ?? 5;
+  const sweepPips = cfg.sweepPips ?? 0;
+  const maxSweepMultiplier = cfg.maxSweepMultiplier ?? 3;
+  const requireCloseInside = !!cfg.requireCloseInside;
+  const htfAlignmentRequired = !!cfg.htfAlignmentRequired;
+  const maxH1EmaSlope = cfg.maxH1EmaSlope ?? 30;
+  const minWbr = cfg.minWbr ?? 1.5;
+  const requireCloseLocationHalf = !!cfg.requireCloseLocationHalf;
+  const useHtfSarFilter = !!cfg.useHtfSarFilter;
+
+  const key = `${symbol}_${session}_${startH}_${startM}_${orbMins}_${actMins}_${sweepPips}_${maxSweepMultiplier}_${requireCloseInside}_${htfAlignmentRequired}_${maxH1EmaSlope}_${minWbr}_${requireCloseLocationHalf}_${useHtfSarFilter}`;
+  if (!sageTriggerCache.has(key)) {
+    const triggers = preComputeSageTriggers(
+      data.m5Candles,
+      data.m1Rows,
+      symbol,
+      data.spreadPts,
+      session,
+      data.isForex,
+      data.pipSize,
+      startH,
+      startM,
+      orbMins,
+      sweepPips,
+      actMins,
+      maxSweepMultiplier,
+      requireCloseInside,
+      htfAlignmentRequired,
+      maxH1EmaSlope,
+      minWbr,
+      requireCloseLocationHalf,
+      useHtfSarFilter
+    );
+    sageTriggerCache.set(key, triggers);
+  }
+  return sageTriggerCache.get(key)!;
+}
 
 export function getMinAllowedSl(symbol: string): number {
   const baseSym = symbol.split('.')[0].toUpperCase();
@@ -176,17 +357,7 @@ export function deduplicateConfigs(
 }
 
 export function isSessionValidForAsset(symbol: string, setupStr: string): boolean {
-  const sym = symbol.toUpperCase();
-  const setupLower = setupStr.toLowerCase();
-  
-  // Energy (Crude Oil) requires NY session liquidity; ban London 2 AM dead zone
-  if (sym.includes("XTI")) {
-    if (!setupLower.startsWith("ny")) return false;
-  }
-  // European indices (GER40) require European/London session
-  if (sym.includes("GER40") || sym.includes("DE40")) {
-    if (!setupLower.startsWith("london")) return false;
-  }
+  // All asset session alignments unblocked
   return true;
 }
 
@@ -211,7 +382,14 @@ interface AuditCacheEntry {
   threeYearNetR: number;
   threeYearTrades: number;
   threeYearWinRate: number;
+  oneYearWinRate?: number;
   regimeConsistency: number;
+  threeYearMaxDrawdown?: number;
+  threeYearProfitFactor?: number;
+  hasConsecutivePriorYearLoss?: boolean;
+  hasLosingMonthInLast6?: boolean;
+  dailyReturns?: Record<string, number>;
+  monthlyNetR?: Record<string, number>;
 }
 
 const CACHE_DIR = path.join(process.cwd(), "server", "trading", "optimizer", "grandmaster", ".cache");
@@ -258,28 +436,60 @@ export function getEliteComponents(
       const threeYrR = c.threeYearNetR !== undefined ? c.threeYearNetR : c.totalTotalR;
       const threeYrTrades = c.threeYearTrades !== undefined ? c.threeYearTrades : c.totalTrades;
       const threeYrWR = c.threeYearWinRate !== undefined ? c.threeYearWinRate : (c.winRate || 0);
+      const expectancy = threeYrTrades > 0 ? threeYrR / threeYrTrades : 0;
+      const calmar = (c.threeYearMaxDrawdown || c.maxDrawdown || 0) > 0 ? threeYrR / (c.threeYearMaxDrawdown || c.maxDrawdown || 1) : threeYrR;
 
-      // Must be profitable over the 3-year macroeconomic cycle
-      if (threeYrR <= 0 || threeYrTrades < 20 || threeYrWR < 22.0) {
+      // Must meet Elite 3-Year Institutional Quality Standards
+      if (threeYrR < 18.0 || threeYrTrades < 20 || expectancy < 0.08 || calmar < 0.85) {
         return false;
       }
 
-      // Multi-Regime Half-Year Consistency Gate (Must be profitable in >= 50% of half-year regimes)
-      if (c.regimeConsistency !== undefined && c.regimeConsistency < 50.0) {
+      // Multi-Regime Half-Year Consistency Gate (Must be profitable in >= 40% of half-year regimes)
+      if (c.regimeConsistency !== undefined && c.regimeConsistency < 40.0) {
+        return false;
+      }
+
+      const effectiveOneYearWR = c.recentSixMonthWinRate !== undefined ? c.recentSixMonthWinRate : threeYrWR;
+      if (effectiveOneYearWR < 22.0) {
         return false;
       }
 
       return (
         c.botType === botType &&
-        c.totalTrades >= 3 && // Absolute floor for OOS slice
-        c.totalTotalR >= 1.0 &&
-        ((c.sharpeRatio || 0) >= 0.3 || c.totalTotalR >= 5.0) &&
-        (c.recentSixMonthTrades || 0) >= 1 &&         // MUST have traded in last 6 months
-        ((c.recentMomentumR || 0) >= 3.0 || (c.recentTwoMonthR || 0) >= 2.0)  // MUST be profitable recently
+        c.totalTrades >= 3 &&
+        c.totalTotalR >= 1.0
       );
     }
   );
   if (pool.length === 0) return [];
+
+  // ── Fix 3: Hard Monte Carlo Drawdown Cap ────────────────────────────────────
+  // Configs whose 99% MC tail-risk exceeds 10 R are structurally dangerous
+  // regardless of historical performance. They passed the 3-year audit gate
+  // but carry unacceptable tail risk in adverse sequential draw scenarios.
+  const MAX_MC_DD_ALLOWED = 10.0;
+  pool = pool.filter(c => {
+    const mcDd = c.monteCarloDrawdown99 ?? 0;
+    if (mcDd > MAX_MC_DD_ALLOWED) {
+      console.log(`  [QUALITY GATE] ❌ Rejected ${c.symbol} (${c.botType}) — MC DD ${mcDd.toFixed(2)}R exceeds ${MAX_MC_DD_ALLOWED}R cap`);
+      return false;
+    }
+    return true;
+  });
+
+  // ── Fix 1: Minimum Hedge Score Threshold ─────────────────────────────────────
+  // Reject bottom-decile configs. A hedge score below 0.15 means the config
+  // ranked in approximately the lowest 10% of all candidates by composite
+  // quality (Sharpe × Recovery × ProfitFactor percentile). These configs
+  // may survive hard gates but contribute noise rather than alpha.
+  const MIN_HEDGE_SCORE = 0.15;
+  pool = pool.filter(c => {
+    if (c.hedgeScore < MIN_HEDGE_SCORE) {
+      console.log(`  [QUALITY GATE] ❌ Rejected ${c.symbol} (${c.botType}) — HedgeScore ${c.hedgeScore.toFixed(4)} below floor ${MIN_HEDGE_SCORE}`);
+      return false;
+    }
+    return true;
+  });
 
   // Sort candidates by robust composite hedgeScore
   const sortedAll = [...pool].sort((a, b) => b.hedgeScore - a.hedgeScore);
@@ -310,66 +520,119 @@ export async function preProcessData(
   }
 
   let validComponents: IndependentSynthesisComponent[] = [];
+  const seenSetups = new Set<string>();
 
-  for (const mState of mageData) {
-    if (!mState) continue;
-    const result = evaluateComponent(mState as any, symbol, "Mage", globalDates, false);
-    if (result) validComponents.push(result);
-  }
-  for (const sState of sageData) {
-    if (!sState) continue;
-    const result = evaluateComponent(sState as any, symbol, "Sage", globalDates, false);
-    if (result) validComponents.push(result);
-  }
-
-  // ── 1. ZERO-COST PRE-FILTER GATE (Eliminate doomed setups in 0.0001ms before running backtest) ──
   const minAllowedSl = PAIR_MIN_SL_FLOOR[symbol] || PAIR_MIN_SL_FLOOR[symbol.replace('.Daily', '')] || 2.0;
-  
-  validComponents = validComponents.filter((p) => {
+
+  const processRawState = (state: any, botType: "Mage" | "Sage") => {
+    if (!state || !state.setup) return;
+    const setupStr = state.setup.trim();
+    const setupKey = `${symbol}_${botType}_${setupStr}`;
+    if (seenSetups.has(setupKey)) return;
+    seenSetups.add(setupKey);
+
     // A. Asset-session whitelist
-    if (!isSessionValidForAsset(p.symbol, p.setup)) return false;
-    
+    if (!isSessionValidForAsset(symbol, setupStr)) return;
+
     // B. Min SL Volatility floor
-    const minSlMatch = p.setup.match(/MinSL([\d\.]+)/i);
+    const minSlMatch = setupStr.match(/MinSL([\d\.]+)/i);
     const minSlVal = minSlMatch ? parseFloat(minSlMatch[1]) : 999;
-    if (minSlVal < minAllowedSl) return false;
+    if (minSlVal < minAllowedSl) return;
 
-    // C. Basic dump health (must have positive Net R and at least 3 trades in dump)
-    if (p.totalTotalR <= 0 || p.totalTrades < 3) return false;
+    // C. Basic dump health
+    if ((state.totalNetR || state.oosNetR || 0) <= 0) return;
 
-    return true;
-  });
+    const evaluated = evaluateComponent(state as any, symbol, botType, globalDates, false);
+    if (evaluated) {
+      validComponents.push(evaluated);
+    } else {
+      // Fallback: create shell so the 3-Year CSV Audit can evaluate the true full-history performance
+      validComponents.push({
+        symbol,
+        botType,
+        setup: setupStr,
+        totalTrades: state.trades || 0,
+        totalTotalR: state.totalNetR || state.oosNetR || 0,
+        maxDrawdown: state.maxDrawdown || 0,
+        sharpeRatio: state.sharpeRatio || 1.0,
+        sortinoRatio: state.sortinoRatio || 1.0,
+        recoveryFactor: state.recoveryFactor || 1.0,
+        hedgeScore: 1.0,
+        profitFactor: 1.5,
+        deflatedSharpeRatio: 1.0,
+        dsrProb: 0.5,
+        periodReturns: [],
+        dailyReturns: state.dailyNetR || {},
+        dailyRArray: new Float64Array(globalDates.length),
+        winRate: state.winRate || 30.0,
+        recentTwoMonthR: 0,
+        recentThreeMonthR: 0,
+        recentMomentumR: 0,
+        recentOneYearR: 0,
+        recentQuarterR: 0,
+        curvatureBeta2: 0,
+        regimeRatio: 1.0,
+        omegaRatio: 1.0,
+        cvar95: 0,
+        sampleConfidence: 1.0,
+        threeYearMaxDrawdown: 0,
+        threeYearTrades: 0,
+        threeYearProfitFactor: 1.5,
+        forceCloseHours: 0,
+        recentSixMonthTrades: 0,
+        recentSixMonthWinRate: 30.0,
+        seasonalMultiplier: 1.0,
+        wfMultiplier: 1.0,
+        stepMean: 0,
+        maxStepLoss: 0,
+        hasLosingMonth: false,
+        hasLosingWeek: false,
+        hasLosingDay: false,
+        avgWinR: 1.0
+      });
+    }
+  };
 
-  // ── 2. ACTIVE 3-YEAR CSV AUDIT HARD GATE (With Smart Memoization Cache) ──
+  for (const mState of mageData) processRawState(mState, "Mage");
+  for (const sState of sageData) processRawState(sState, "Sage");
+
+  // ── 2. ACTIVE 3-YEAR CSV AUDIT HARD GATE (With Smart Memoization Cache & High-Speed Trigger Math) ──
   if (!skipAudit && validComponents.length > 0) {
     const cache = loadAuditCache();
-    let endDate = "2026-08-03";
-    let startDate = "2023-08-03";
-    try {
-      const csvDir = path.join(process.cwd(), "data", "csv");
-      const csvFiles = fs.readdirSync(csvDir).filter((f) => f.startsWith(`${symbol.split("_")[0]}`) && f.endsWith(".csv"));
-      if (csvFiles.length > 0) {
-        const latestDate = getLatestDate(path.join(csvDir, csvFiles[0]));
-        endDate = latestDate.toISOString().substring(0, 10);
-        const sd = new Date(latestDate.getTime());
-        sd.setFullYear(sd.getFullYear() - 3);
-        startDate = sd.toISOString().substring(0, 10);
-      }
-    } catch (e) {}
+    const candleData = await getOrLoadSymbolCandleData(symbol);
+    const startDate = candleData ? candleData.startDate : "2023-08-03";
+    const endDate = candleData ? candleData.endDate : "2026-08-03";
 
     for (let i = validComponents.length - 1; i >= 0; i--) {
       const p = validComponents[i];
       const cacheKey = `${p.botType}_${p.symbol}_${p.setup}_${startDate}_${endDate}`;
       let auditResult: AuditCacheEntry | null = cache[cacheKey] || null;
 
-      if (!auditResult) {
+      if (!auditResult && candleData) {
         try {
           const cfg = parseSetupToConfig(p.setup, p.symbol, p.botType === "Sage");
+          const session = cfg.session || "london";
           const res = p.botType === "Sage"
-            ? await runSageMathBacktest(p.symbol, startDate, endDate, false, {}, [cfg])
-            : await runMageMathBacktest(p.symbol, startDate, endDate, false, undefined, undefined, null, [cfg]);
+            ? evaluateSageExits(
+                candleData.m1Typed,
+                candleData.m5Candles,
+                getSageTriggers(candleData, p.symbol, session, cfg),
+                p.symbol,
+                cfg,
+                session,
+                candleData.isForex
+              )
+            : evaluateMageExits(
+                candleData.m1Typed,
+                candleData.m5Candles,
+                getMageTriggers(candleData, p.symbol, session, cfg),
+                p.symbol,
+                cfg,
+                session,
+                candleData.isForex
+              );
           
-          const records: any[] = res.records || (Array.isArray(res) ? res : []);
+          const records: any[] = (res as any).records || (res as any).tradeRecords || (Array.isArray(res) ? res : []);
           const traded = records.filter(r => r.outcome !== 'SKIPPED');
           
           if (traded.length > 0) {
@@ -378,29 +641,116 @@ export async function preProcessData(
             const trades = traded.length;
             const winRate = (wins / trades) * 100;
 
-            // ── Multi-Regime Half-Year Calculation ──
-            const halfYears: Record<string, number> = {};
-            for (const r of traded) {
+            // ── 1-Year Win Rate Calculation (Last 365 Days) ──
+            const oneYearAgoMs = new Date(endDate).getTime() - 365 * 24 * 60 * 60 * 1000;
+            const recentOneYearTrades = traded.filter(r => {
               const d = r.exitTime || r.entryTime || r.date || r.time;
-              if (!d) continue;
-              const dStr = typeof d === "string" ? d : (d.toISOString ? d.toISOString() : String(d));
-              const year = dStr.substring(0, 4);
-              const month = parseInt(dStr.substring(5, 7), 10);
-              if (!isNaN(month)) {
-                const half = month <= 6 ? "H1" : "H2";
-                const key = `${year}_${half}`;
-                halfYears[key] = (halfYears[key] || 0) + (r.rMultiple || 0);
+              if (!d) return false;
+              const tMs = new Date(d).getTime();
+              return tMs >= oneYearAgoMs;
+            });
+            const recentOneYearWins = recentOneYearTrades.filter(r => (r.rMultiple || r.pips || 0) > 0).length;
+            const oneYearWinRate = recentOneYearTrades.length > 0 ? (recentOneYearWins / recentOneYearTrades.length) * 100 : winRate;
+
+            // ── Multi-Regime Half-Year & Monthly Breakdown ──
+            const halfYears: Record<string, number> = {};
+            const monthlyNetR: Record<string, number> = {};
+            const dailyReturns: Record<string, number> = {};
+            const sourceDailyR: Record<string, number> = (res as any).dailyNetR || {};
+            if (Object.keys(sourceDailyR).length > 0) {
+              for (const [dateStr, r] of Object.entries(sourceDailyR)) {
+                const dayKey = dateStr;
+                const year = dateStr.substring(0, 4);
+                const month = parseInt(dateStr.substring(5, 7), 10);
+                const mKey = dateStr.substring(0, 7);
+                monthlyNetR[mKey] = (monthlyNetR[mKey] || 0) + (r as number);
+                dailyReturns[dayKey] = (dailyReturns[dayKey] || 0) + (r as number);
+
+                if (!isNaN(month)) {
+                  const half = month <= 6 ? "H1" : "H2";
+                  const key = `${year}_${half}`;
+                  halfYears[key] = (halfYears[key] || 0) + (r as number);
+                }
+              }
+            } else {
+              for (const r of traded) {
+                const d = r.exitTime || r.entryTime || r.date || r.time;
+                if (!d) continue;
+                const dStr = typeof d === "string" ? d : (d.toISOString ? d.toISOString() : String(d));
+                const dayKey = dStr.substring(0, 10);
+                const year = dStr.substring(0, 4);
+                const month = parseInt(dStr.substring(5, 7), 10);
+                const mKey = dStr.substring(0, 7);
+                monthlyNetR[mKey] = (monthlyNetR[mKey] || 0) + (r.rMultiple || 0);
+                dailyReturns[dayKey] = (dailyReturns[dayKey] || 0) + (r.rMultiple || 0);
+
+                if (!isNaN(month)) {
+                  const half = month <= 6 ? "H1" : "H2";
+                  const key = `${year}_${half}`;
+                  halfYears[key] = (halfYears[key] || 0) + (r.rMultiple || 0);
+                }
               }
             }
             const halfKeys = Object.keys(halfYears);
             const posHalves = halfKeys.filter(k => halfYears[k] > 0).length;
             const consistency = halfKeys.length > 0 ? (posHalves / halfKeys.length) * 100 : 0;
 
+            // ── Consecutive Prior-Year Monthly Loss Hard Gate ──────────────────
+            // Reject any config that had negative R in the same calendar month
+            // last year (e.g. August 2025) AND in the next month last year (September 2025).
+            const endYear = parseInt(endDate.substring(0, 4), 10);
+            const endMonth = parseInt(endDate.substring(5, 7), 10);
+            const priorYear = endYear - 1;
+            const nextMonth = endMonth === 12 ? 1 : endMonth + 1;
+            const nextMonthYear = endMonth === 12 ? endYear : priorYear;
+
+            const priorSameMonthKey = `${priorYear}-${String(endMonth).padStart(2, "0")}`;
+            const priorNextMonthKey = `${nextMonthYear}-${String(nextMonth).padStart(2, "0")}`;
+
+            const priorSameR = monthlyNetR[priorSameMonthKey] ?? 0;
+            const priorNextR = monthlyNetR[priorNextMonthKey] ?? 0;
+            const hasConsecutivePriorYearLoss = (priorSameR < 0 || priorNextR < 0);
+
+            // ── Zero Losing Month Hard Gate in Last 6 Months ──────────────────
+            // Reject any config that faced a single loss month in the last 6 months
+            const last6MonthKeys: string[] = [];
+            let curD = new Date(endDate);
+            for (let m = 0; m < 6; m++) {
+              const yStr = curD.getUTCFullYear();
+              const mStr = String(curD.getUTCMonth() + 1).padStart(2, "0");
+              last6MonthKeys.push(`${yStr}-${mStr}`);
+              curD.setUTCMonth(curD.getUTCMonth() - 1);
+            }
+            const hasLosingMonthInLast6 = last6MonthKeys.some(mKey => (monthlyNetR[mKey] !== undefined && monthlyNetR[mKey] < -0.01));
+
+            let peak = 0;
+            let running = 0;
+            let maxDd = 0;
+            let grossProfit = 0;
+            let grossLoss = 0;
+            for (const r of traded) {
+              const val = (r.rMultiple || 0);
+              running += val;
+              if (running > peak) peak = running;
+              const dd = peak - running;
+              if (dd > maxDd) maxDd = dd;
+              if (val > 0) grossProfit += val;
+              else if (val < 0) grossLoss += Math.abs(val);
+            }
+            const pf = grossLoss > 0 ? grossProfit / grossLoss : (grossProfit > 0 ? 5.0 : 1.0);
+
             auditResult = {
               threeYearNetR: totalNetR,
               threeYearTrades: trades,
               threeYearWinRate: winRate,
+              oneYearWinRate: oneYearWinRate,
               regimeConsistency: consistency,
+              threeYearMaxDrawdown: maxDd,
+              threeYearProfitFactor: pf,
+              hasConsecutivePriorYearLoss,
+              hasLosingMonthInLast6,
+              dailyReturns,
+              monthlyNetR,
             };
             cache[cacheKey] = auditResult;
             cacheDirty = true;
@@ -409,7 +759,12 @@ export async function preProcessData(
               threeYearNetR: 0,
               threeYearTrades: 0,
               threeYearWinRate: 0,
+              oneYearWinRate: 0,
               regimeConsistency: 0,
+              threeYearMaxDrawdown: 0,
+              threeYearProfitFactor: 1.0,
+              hasConsecutivePriorYearLoss: false,
+              hasLosingMonthInLast6: false,
             };
             cache[cacheKey] = auditResult;
             cacheDirty = true;
@@ -423,15 +778,42 @@ export async function preProcessData(
         p.threeYearNetR = auditResult.threeYearNetR;
         p.threeYearTrades = auditResult.threeYearTrades;
         p.threeYearWinRate = auditResult.threeYearWinRate;
+        p.threeYearMaxDrawdown = auditResult.threeYearMaxDrawdown ?? 1.0;
+        p.maxDrawdown = p.threeYearMaxDrawdown;
+        p.threeYearProfitFactor = auditResult.threeYearProfitFactor ?? 1.5;
+        p.profitFactor = p.threeYearProfitFactor;
+        p.recoveryFactor = p.maxDrawdown > 0 ? p.threeYearNetR / p.maxDrawdown : p.threeYearNetR * 2.0;
+        p.recentSixMonthWinRate = auditResult.oneYearWinRate ?? auditResult.threeYearWinRate;
         p.winRate = auditResult.threeYearWinRate;
         p.regimeConsistency = auditResult.regimeConsistency;
+        p.hasConsecutivePriorYearLoss = auditResult.hasConsecutivePriorYearLoss;
+        p.hasLosingMonthInLast6 = auditResult.hasLosingMonthInLast6;
+        if (auditResult.dailyReturns) {
+          p.dailyReturns = auditResult.dailyReturns;
+        }
 
-        // ── Active 3-Year Rejection Gate ──
+        const monthlyR = auditResult.monthlyNetR || {};
+        let r2025 = 0;
+        let r2026 = 0;
+        for (const [mKey, val] of Object.entries(monthlyR)) {
+          if (mKey.startsWith("2025")) r2025 += val;
+          if (mKey.startsWith("2026")) r2026 += val;
+        }
+        const expectancy = p.threeYearTrades > 0 ? p.threeYearNetR / p.threeYearTrades : 0;
+        const calmar = p.threeYearMaxDrawdown > 0 ? p.threeYearNetR / p.threeYearMaxDrawdown : p.threeYearNetR;
+        const effectiveOneYearWR = auditResult.oneYearWinRate ?? auditResult.threeYearWinRate;
+
         if (
-          p.threeYearNetR <= 0 ||
+          p.threeYearNetR < 18.0 ||
           p.threeYearTrades < 20 ||
-          p.threeYearWinRate < 22.0 ||
-          (p.regimeConsistency !== undefined && p.regimeConsistency < 50.0)
+          expectancy < 0.08 ||
+          calmar < 0.85 ||
+          r2025 < -0.5 ||
+          r2026 < -0.5 ||
+          effectiveOneYearWR < 22.0 ||
+          (p.regimeConsistency !== undefined && p.regimeConsistency < 40.0) ||
+          auditResult.hasConsecutivePriorYearLoss ||
+          auditResult.hasLosingMonthInLast6
         ) {
           validComponents.splice(i, 1);
           continue;
@@ -477,7 +859,26 @@ export async function preProcessData(
         spreadBoost = 1.15;
       }
 
-      p.hedgeScore = sharpeRank * recoveryRank * pfRank * spreadBoost;
+      // ── Convex Ballooning Curvature & Acceleration Objective Function ───────
+      // Forces the synthesizer to select setups whose equity curves are accelerating
+      // upward (beta2 > 0) with strong recent summer (Q4) growth.
+      const beta2 = p.curvatureBeta2 ?? 0;
+      const recentQ = p.recentQuarterR ?? 0;
+      const threeYrBase = (p.threeYearNetR !== undefined && p.threeYearNetR > 0)
+        ? p.threeYearNetR
+        : Math.max(p.totalTotalR, 0.01);
+
+      // Curvature exponent: reward positive acceleration (beta2 > 0) and penalize deceleration (beta2 < 0)
+      const curvatureRatio = beta2 / (Math.abs(threeYrBase) + 2.0);
+      const curvatureMultiplier = Math.exp(Math.max(-1.5, Math.min(2.0, 1.2 * curvatureRatio)));
+
+      // Recent quarter acceleration factor:
+      const q4Share = Math.max(0, recentQ) / (Math.abs(threeYrBase) + 1.0);
+      const q4Boost = Math.min(3.0, 1.0 + 2.5 * q4Share);
+
+      const balloonMultiplier = curvatureMultiplier * q4Boost;
+
+      p.hedgeScore = sharpeRank * recoveryRank * pfRank * spreadBoost * balloonMultiplier;
     }
   }
 
@@ -487,9 +888,10 @@ export async function preProcessData(
   const sages = getEliteComponents(validComponents, "Sage", minTrades);
   const normalList = [...mages, ...sages];
 
-  // Release memory for this symbol's cached M1/M5 tick arrays
-  clearMageBacktestCache(symbol);
-  clearSageBacktestCache(symbol);
+  // Release memory for this symbol's cached M1/M5 tick arrays and precomputed triggers
+  mageTriggerCache.clear();
+  sageTriggerCache.clear();
+  symbolCandleDataCache.delete(symbol);
 
   return { normalList, rawValidCount: validComponents.length };
 }

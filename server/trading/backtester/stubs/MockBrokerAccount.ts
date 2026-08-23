@@ -208,6 +208,7 @@ export class MockBrokerAccount {
     const id = `SIM_${this.orderId++}`;
     if (symbol.includes("XTIUSD")) console.log(`[DEBUG MOCK LIMIT BUY] id=${id} sym=${symbol} price=${price} sl=${sl} tp=${tp} opts=${JSON.stringify(opts)}`);
     this.pendingOrders.set(id, { id, symbol, direction: 'BUY', orderType: 'LIMIT', limitPrice: price, sl, tp, volume: lots, placedAt: this.currentCandle?.timestamp || 0, clientId: opts?.clientId, botId: this.deduceBotId(opts), magic: opts?.magic, orHigh: opts?.orHigh, orLow: opts?.orLow });
+    const orchState = this.getOrchState(opts);
     const isSage = this.deduceBotId(opts) === 'sage';
     if (isSage && orchState) {
       this.checkPendingOrderFills(orchState, id);
@@ -734,6 +735,10 @@ export class MockBrokerAccount {
           orHigh: pos.orHigh, orLow: pos.orLow, limitPlacedAt: pos.limitPlacedAt, trailLog: pos.trailLog
         });
         this.positions.delete(trade.metaOrderId);
+        const orch = (global as any).__SIM_ORCH__;
+        if (orch && typeof orch.onBrokerPositionClosed === "function") {
+          orch.onBrokerPositionClosed(trade.metaOrderId);
+        }
         orchestratorState.activeTrades = orchestratorState.activeTrades?.filter((t: any) => String(t.metaOrderId) !== String(trade.metaOrderId));
         if (String(orchestratorState.activeTrade?.metaOrderId) === String(trade.metaOrderId)) {
           delete orchestratorState.activeTrade;
@@ -750,6 +755,10 @@ export class MockBrokerAccount {
           orHigh: pos.orHigh, orLow: pos.orLow, limitPlacedAt: pos.limitPlacedAt, trailLog: pos.trailLog
         });
         this.positions.delete(trade.metaOrderId);
+        const orch = (global as any).__SIM_ORCH__;
+        if (orch && typeof orch.onBrokerPositionClosed === "function") {
+          orch.onBrokerPositionClosed(trade.metaOrderId);
+        }
         orchestratorState.activeTrades = orchestratorState.activeTrades?.filter((t: any) => String(t.metaOrderId) !== String(trade.metaOrderId));
         if (String(orchestratorState.activeTrade?.metaOrderId) === String(trade.metaOrderId)) {
           delete orchestratorState.activeTrade;
@@ -765,6 +774,10 @@ export class MockBrokerAccount {
           orHigh: pos.orHigh, orLow: pos.orLow, limitPlacedAt: pos.limitPlacedAt, trailLog: pos.trailLog
         });
         this.positions.delete(trade.metaOrderId);
+        const orch = (global as any).__SIM_ORCH__;
+        if (orch && typeof orch.onBrokerPositionClosed === "function") {
+          orch.onBrokerPositionClosed(trade.metaOrderId);
+        }
         orchestratorState.activeTrades = orchestratorState.activeTrades?.filter((t: any) => String(t.metaOrderId) !== String(trade.metaOrderId));
         if (String(orchestratorState.activeTrade?.metaOrderId) === String(trade.metaOrderId)) {
           delete orchestratorState.activeTrade;
@@ -785,6 +798,10 @@ export class MockBrokerAccount {
           orHigh: pos.orHigh, orLow: pos.orLow, limitPlacedAt: pos.limitPlacedAt, trailLog: pos.trailLog
         });
         this.positions.delete(trade.metaOrderId);
+        const orch = (global as any).__SIM_ORCH__;
+        if (orch && typeof orch.onBrokerPositionClosed === "function") {
+          orch.onBrokerPositionClosed(trade.metaOrderId);
+        }
         orchestratorState.activeTrades = orchestratorState.activeTrades?.filter((t: any) => String(t.metaOrderId) !== String(trade.metaOrderId));
         if (String(orchestratorState.activeTrade?.metaOrderId) === String(trade.metaOrderId)) {
           delete orchestratorState.activeTrade;
@@ -885,6 +902,13 @@ export class MockBrokerAccount {
     });
 
     this.positions.delete(positionId);
+    
+    // Parity Fix: Properly clear state via orchestrator instead of a single global state object
+    const orch = (global as any).__SIM_ORCH__;
+    if (orch && typeof orch.onBrokerPositionClosed === "function") {
+      orch.onBrokerPositionClosed(positionId);
+    }
+    
     const orchState = (global as any).__SIM_ORCH_STATE__;
     if (orchState) {
       if (orchState.activeTrades) {

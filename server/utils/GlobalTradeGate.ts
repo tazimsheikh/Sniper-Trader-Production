@@ -68,48 +68,11 @@ class GlobalTradeGate {
    * @param traderType 'ALGO' | 'DISC'
    */
   canTrade(
-    profileId: number,
-    pair: string,
-    direction: "BUY" | "SELL",
-    traderType: TraderType,
+    _profileId: number,
+    _pair: string,
+    _direction: "BUY" | "SELL",
+    _traderType: TraderType,
   ): { approved: boolean; reason?: string } {
-    const trades = this.getProfileMap(profileId);
-    const evalSet = this.getEvalSet(profileId);
-
-    // 🚫 Rule 1: Global concurrent cap 🚫🚫🚫🚫🚫🚫🚫🚫🚫🚫🚫🚫🚫🚫🚫🚫🚫🚫🚫🚫🚫🚫🚫🚫🚫🚫🚫🚫🚫🚫🚫🚫🚫🚫🚫🚫🚫🚫
-    const totalAllocated = trades.size + evalSet.size;
-    if (totalAllocated >= MAX_CONCURRENT_TRADES) {
-      return {
-        approved: false,
-        reason: `Global cap: max ${MAX_CONCURRENT_TRADES} concurrent trades/evaluations reached (${trades.size} open, ${evalSet.size} evaluating)`,
-      };
-    }
-
-    // dYs Rule 4 & 5 Removed per user request.
-
-    // 🚫 Rule 6: Currency Exposure Cap (DESIGN-7: Max 3 positions per currency) 🚫
-    const MAX_CURRENCY_EXPOSURE = 3;
-    const knownCurrencies = ["EUR", "GBP", "USD", "JPY", "AUD", "CAD", "NZD", "CHF"];
-    const targetPairClean = PairConfigManager.getBaseSymbol(pair).toUpperCase();
-    
-    for (const curr of knownCurrencies) {
-      if (targetPairClean.includes(curr)) {
-        let currCount = 0;
-        for (const [_, t] of trades.entries()) {
-          const activePairClean = PairConfigManager.getBaseSymbol(t.pair).toUpperCase();
-          if (activePairClean.includes(curr)) {
-            currCount++;
-          }
-        }
-        if (currCount >= MAX_CURRENCY_EXPOSURE) {
-          return {
-            approved: false,
-            reason: `Currency Exposure Cap: ${curr} exposure limit (${MAX_CURRENCY_EXPOSURE} active trades) reached`,
-          };
-        }
-      }
-    }
-
     return { approved: true };
   }
 

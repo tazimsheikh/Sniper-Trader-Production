@@ -20,8 +20,9 @@ const SAGE_DNA_DIR = path.join(OPTIMIZER_DIR, "sage", "dna_bank");
 // Macro Multi-Year Evaluation Parameters
 const HORIZON_YEARS = 3;
 const MIN_MACRO_TRADES = 15;
-const MAX_MACRO_DRAWDOWN = 25.0; // Max 25R drawdown over 3 full years
-const MAX_ELITES_PER_NICHE = 5;  // MAP-Elites capacity per niche
+const MAX_MACRO_DRAWDOWN = 20.0; // Max 20R drawdown over 3 full years
+const MIN_MACRO_CALMAR = 1.5;
+const MAX_ELITES_PER_NICHE = 3;  // MAP-Elites capacity per niche
 
 export interface EvaluatedAlpha {
   setup: string;
@@ -38,9 +39,13 @@ export interface EvaluatedAlpha {
 }
 
 export function parseMageConfig(setupStr: string): { session: string; config: PairConfig } | null {
+  if (setupStr.includes("Trig999") || setupStr.includes("Step999")) return null;
   const m = setupStr.match(/^(\w+)_([\d.]+)%_MinSL([\d.]+)_MaxSL([\d.]+)_Body([\d.]+)_Trig([\d.]+)_Step([\d.]+)_FC(\d+)_StartH(\d+)_StartM(\d+)_OrbMins(\d+)_ActMins(\d+)_Exit(\w+)$/);
   if (!m) return null;
   const [, sSession, sPb, sMinSL, sMaxSL, sBody, sTrig, sStep, sFC, sH, sM, sOrb, sAct, sExit] = m;
+  const stepVal = parseFloat(sStep);
+  if (stepVal < 1.0) return null; // Reject choking 0.5R trailing steps
+
   return {
     session: sSession === "NY_Forex" ? "ny" : sSession,
     config: {
@@ -50,7 +55,7 @@ export function parseMageConfig(setupStr: string): { session: string; config: Pa
       maxSlDist: parseFloat(sMaxSL),
       minBodyPips: parseFloat(sBody),
       trailingSlTrigger: parseFloat(sTrig),
-      trailingSlStep: parseFloat(sStep),
+      trailingSlStep: stepVal,
       forceCloseHours: parseInt(sFC),
       orbStartHour: parseInt(sH),
       orbStartMin: parseInt(sM),
@@ -62,9 +67,13 @@ export function parseMageConfig(setupStr: string): { session: string; config: Pa
 }
 
 export function parseSageConfig(setupStr: string): { session: string; config: PairConfig } | null {
+  if (setupStr.includes("Trig999") || setupStr.includes("Step999")) return null;
   const m = setupStr.match(/^(\w+)_([\d.]+)%_MinSL([\d.]+)_MaxSL([\d.]+)_Sweep([\d.]+)_MaxSwp([\d.]+)_ReqCls(true|false)_Exit(\w+)_Trig([\d.]+)_Step([\d.]+)_FC(\d+)_StartH(\d+)_StartM(\d+)_OrbMins(\d+)_ActMins(\d+)(?:_MaxBody([\d.]+))?$/);
   if (!m) return null;
   const [, sSession, sPen, sMinSL, sMaxSL, sSweep, sMaxSwp, sReqCls, sExit, sTrig, sStep, sFC, sH, sM, sOrb, sAct, sMaxBody] = m;
+  const stepVal = parseFloat(sStep);
+  if (stepVal < 1.0) return null; // Reject choking 0.5R trailing steps
+
   return {
     session: sSession,
     config: {
@@ -77,7 +86,7 @@ export function parseSageConfig(setupStr: string): { session: string; config: Pa
       requireCloseInside: sReqCls === 'true',
       exitMode: sExit as any,
       trailingSlTrigger: parseFloat(sTrig),
-      trailingSlStep: parseFloat(sStep),
+      trailingSlStep: stepVal,
       forceCloseHours: parseInt(sFC),
       orbStartHour: parseInt(sH),
       orbStartMin: parseInt(sM),
@@ -92,36 +101,20 @@ export function parseSageConfig(setupStr: string): { session: string; config: Pa
  * Classifies a Mage setup into a MAP-Elites Behavioral Niche
  */
 export function getMageNiche(parsed: { session: string; config: PairConfig }): string {
-  const h = parsed.config.orbStartHour ?? 0;
-  let sessionNiche = "asia";
-  if (h >= 3 && h < 8) sessionNiche = "london";
-  else if (h >= 8 && h < 12) sessionNiche = "ny_morning";
-  else if (h >= 12 && h < 18) sessionNiche = "ny_afternoon";
-
-  const minSl = parsed.config.minSlDist ?? 20;
-  let slNiche = "tight";
-  if (minSl > 80) slNiche = "wide";
-  else if (minSl > 25) slNiche = "medium";
-
-  const exitMode = parsed.config.exitMode || "TRAILING";
-  return `${sessionNiche}_${slNiche}_${exitMode.toLowerCase()}`;
+  const s = parsed.session;
+  const slBand = (parsed.config.minSlDist ?? 0) <= 15 ? "TightSL" : "WideSL";
+  const exit = parsed.config.exitMode || "TRAILING";
+  return `${s}_${slBand}_${exit}`;
 }
 
 /**
  * Classifies a Sage setup into a MAP-Elites Behavioral Niche
  */
 export function getSageNiche(parsed: { session: string; config: PairConfig }): string {
-  const h = parsed.config.orbStartHour ?? 0;
-  let sessionNiche = "asia";
-  if (h >= 3 && h < 8) sessionNiche = "london";
-  else if (h >= 8 && h < 12) sessionNiche = "ny_morning";
-  else if (h >= 12 && h < 18) sessionNiche = "ny_afternoon";
-
-  const sweep = parsed.config.sweepPips ?? 10;
-  const sweepNiche = sweep > 12 ? "deep_sweep" : "shallow_sweep";
-
-  const exitMode = parsed.config.exitMode || "TRAILING";
-  return `${sessionNiche}_${sweepNiche}_${exitMode.toLowerCase()}`;
+  const s = parsed.session;
+  const swpBand = (parsed.config.sweepPips ?? 0) <= 5 ? "ShallowSweep" : "DeepSweep";
+  const exit = parsed.config.exitMode || "TRAILING";
+  return `${s}_${swpBand}_${exit}`;
 }
 
 /**
@@ -141,19 +134,13 @@ export function curateMapElitesArchive(evaluated: EvaluatedAlpha[]): { survivors
 
   for (const [niche, candidates] of nicheMap.entries()) {
     // 1. Sort by Macro Calmar & Return (Fitness)
-    candidates.sort((a, b) => {
-      if (Math.abs(b.threeYearCalmar - a.threeYearCalmar) > 0.01) {
-        return b.threeYearCalmar - a.threeYearCalmar;
-      }
-      return b.threeYearNetR - a.threeYearNetR;
-    });
+    candidates.sort((a, b) => b.threeYearCalmar - a.threeYearCalmar);
 
     // 2. Select diverse non-dominated champions up to MAX_ELITES_PER_NICHE
     const eliteNiche: EvaluatedAlpha[] = [];
     for (const cand of candidates) {
       if (eliteNiche.length >= MAX_ELITES_PER_NICHE) break;
 
-      // Check if this candidate is an exact redundant clone of an already selected elite
       const isClone = eliteNiche.some(existing => {
         const netRDiff = Math.abs(existing.threeYearNetR - cand.threeYearNetR);
         const tradesDiff = Math.abs(existing.threeYearTrades - cand.threeYearTrades);
@@ -168,11 +155,12 @@ export function curateMapElitesArchive(evaluated: EvaluatedAlpha[]): { survivors
     survivors.push(...eliteNiche);
   }
 
+  survivors.sort((a, b) => b.threeYearCalmar - a.threeYearCalmar);
   const purgedCount = evaluated.length - survivors.length;
   return { survivors, purgedCount };
 }
 
-if (isMainThread && process.argv[1] === currentFile) {
+if (isMainThread) {
   const runMaster = async () => {
     const isDryRun = process.argv.includes("--dry-run");
     const targetSymbolArg = process.argv.find((_, i, arr) => arr[i - 1] === "--symbol");
@@ -181,7 +169,7 @@ if (isMainThread && process.argv[1] === currentFile) {
     console.log(`🧬 QUALITY-DIVERSITY (MAP-ELITES) DNA ARCHIVE CURATOR`);
     console.log(`================================================================================`);
     console.log(`Mode: ${isDryRun ? "🔍 DRY RUN (Simulation Only - No Files Modified)" : "⚡ LIVE APPLY (Curating DNA Banks)"}`);
-    console.log(`Evaluation: ${HORIZON_YEARS}-Year Full Macro Horizon (2023-2026) | Min Trades: ${MIN_MACRO_TRADES} | Max DD: ${MAX_MACRO_DRAWDOWN}R`);
+    console.log(`Evaluation: ${HORIZON_YEARS}-Year Full Macro Horizon (2023-2026) | Min Trades: ${MIN_MACRO_TRADES} | Max DD: ${MAX_MACRO_DRAWDOWN}R | Min Calmar: ${MIN_MACRO_CALMAR}`);
     console.log(`Biodiversity Engine: Multi-Dimensional MAP-Elites Grid (Capacity: ${MAX_ELITES_PER_NICHE} Elites/Niche)\n`);
 
     const symbols = new Set<string>();
@@ -257,8 +245,8 @@ if (isMainThread && process.argv[1] === currentFile) {
 } else if (!isMainThread) {
   const runWorker = async () => {
     const { symbol, isDryRun } = workerData;
-    const basePair = OPTIMIZER_CONFIG[symbol] ? symbol : (OPTIMIZER_CONFIG[symbol.replace(".Daily", "")] ? symbol.replace(".Daily", "") : symbol + ".Daily");
-    const configTemplate = OPTIMIZER_CONFIG[basePair];
+    const baseSymbol = symbol.replace('.Daily', '').split('_')[0];
+    const configTemplate = OPTIMIZER_CONFIG[baseSymbol] || OPTIMIZER_CONFIG[symbol];
 
     if (!configTemplate) {
       parentPort?.postMessage({ type: "log", data: `[WARN] Skipping ${symbol} - No OPTIMIZER_CONFIG found.` });
@@ -266,7 +254,10 @@ if (isMainThread && process.argv[1] === currentFile) {
       return;
     }
 
-    const csvFiles = fs.readdirSync(CSV_DIR).filter(f => f.startsWith(symbol) && f.endsWith(".csv"));
+    let csvFiles = fs.readdirSync(CSV_DIR).filter(f => f.startsWith(`${symbol}_M1`) && f.endsWith(".csv"));
+    if (!csvFiles.length) {
+      csvFiles = fs.readdirSync(CSV_DIR).filter(f => f.startsWith(symbol) && f.endsWith(".csv"));
+    }
     if (!csvFiles.length) {
       parentPort?.postMessage({ type: "result", mageInput: 0, mageSurvived: 0, sageInput: 0, sageSurvived: 0 });
       return;
@@ -274,16 +265,16 @@ if (isMainThread && process.argv[1] === currentFile) {
 
     const csvFilePath = path.join(CSV_DIR, csvFiles[0]);
     const endDate = getLatestDate(csvFilePath);
-    const startDate = new Date(endDate.getTime());
-    startDate.setFullYear(startDate.getFullYear() - HORIZON_YEARS);
-
-    const sixMoDate = new Date(endDate.getTime());
-    sixMoDate.setMonth(sixMoDate.getMonth() - 6);
-    const sixMoMs = sixMoDate.getTime();
+    const startDate = new Date(endDate.getTime() - HORIZON_YEARS * 365.25 * 86400000);
+    const sixMoMs = new Date(endDate.getTime() - 180 * 86400000).getTime();
 
     const m1Rows = await loadCsv(csvFilePath, configTemplate.spread, startDate, endDate);
-    const m5Candles = aggregateCandles(m1Rows, 5);
+    if (!m1Rows || m1Rows.length === 0) {
+      parentPort?.postMessage({ type: "result", mageInput: 0, mageSurvived: 0, sageInput: 0, sageSurvived: 0 });
+      return;
+    }
 
+    const m5Candles = aggregateCandles(m1Rows, 5);
     const m1Length = m1Rows.length;
     const m1Typed = {
       open: new Float64Array(m1Length),
@@ -320,73 +311,86 @@ if (isMainThread && process.argv[1] === currentFile) {
         m1Typed.isMidnightExpiry[i] = (prevH > h && h < 15) ? 1 : 0;
       }
       
-      const dateStr = new Date(r.timestamp).toISOString().split('T')[0];
-      m1Typed.isNewsForceClose[i] = isNewsForceClose(dateStr, h, m) ? 1 : 0;
+      m1Typed.isNewsForceClose[i] = isNewsForceClose(r.dateStr, h, m) ? 1 : 0;
     }
 
     const isForex = !symbol.includes("US30") && !symbol.includes("NAS") && !symbol.includes("SPX") && !symbol.includes("GER") && !symbol.includes("JPN") && !symbol.includes("XAU") && !symbol.includes("XTI") && !symbol.includes("BTC") && !symbol.includes("ETH");
-    const minSafeSlDist = configTemplate.spread * 1.5; // Broker execution floor
+    const spreadPts = configTemplate.spread * configTemplate.pipSize;
+
+    const MAGE_DUMP_DIR = path.join(OPTIMIZER_DIR, "mage", "mage_optimizer_dump");
+    const SAGE_DUMP_DIR = path.join(OPTIMIZER_DIR, "sage", "sage_optimizer_dump");
 
     let mageInput = 0, mageSurvived = 0;
     let sageInput = 0, sageSurvived = 0;
 
     // ==========================================
-    // ⚔️ 1. EVALUATE MAGE DNA BANK
+    // ⚔️ 1. EVALUATE MAGE CANDIDATES
     // ==========================================
     const mageDnaFile = path.join(MAGE_DNA_DIR, `mage_dna_${symbol}.json`);
+    const mageDumpFile = path.join(MAGE_DUMP_DIR, `state_${symbol}.json`);
+    let rawMage: any[] = [];
     if (fs.existsSync(mageDnaFile)) {
       try {
-        const raw = JSON.parse(fs.readFileSync(mageDnaFile, "utf8"));
-        if (Array.isArray(raw)) {
-          mageInput = raw.length;
-          const evaluatedMage: EvaluatedAlpha[] = [];
+        const d = JSON.parse(fs.readFileSync(mageDnaFile, "utf8"));
+        if (Array.isArray(d)) rawMage.push(...d);
+      } catch {}
+    }
+    if (fs.existsSync(mageDumpFile)) {
+      try {
+        const d = JSON.parse(fs.readFileSync(mageDumpFile, "utf8"));
+        if (Array.isArray(d)) rawMage.push(...d);
+      } catch {}
+    }
 
-          for (const item of raw) {
-            const parsed = parseMageConfig(item.setup);
-            if (!parsed) continue;
-            const { session, config } = parsed;
+    const uniqueMage = Array.from(new Map(rawMage.filter(c => c && c.setup).map(c => [c.setup, c])).values());
+    if (uniqueMage.length > 0) {
+      try {
+        mageInput = uniqueMage.length;
+        const evaluatedMage: EvaluatedAlpha[] = [];
 
-            // Enforce minimum safe stop loss
-            if ((config.minSlDist ?? 0) < minSafeSlDist) continue;
+        for (const item of uniqueMage) {
+          if (!item || !item.setup) continue;
+          const parsed = parseMageConfig(item.setup);
+          if (!parsed) continue;
+          const { session, config } = parsed;
 
-            const triggers = magePreCompute(
-              m5Candles,
-              m1Rows,
-              symbol,
-              configTemplate.spread * configTemplate.pipSize,
-              session,
-              isForex,
-              configTemplate.pipSize,
-              config.orbStartHour!,
-              config.orbStartMin!,
-              config.orbMinutes!,
-              config.actionMinutes!,
-              config.minBodyPips!
-            );
-            const res = mageEval(m1Typed, m5Candles, triggers, symbol, config, session, isForex);
+          const triggers = magePreCompute(
+            m5Candles,
+            m1Rows,
+            symbol,
+            spreadPts,
+            session,
+            isForex,
+            configTemplate.pipSize,
+            config.orbStartHour!,
+            config.orbStartMin!,
+            config.orbMinutes!,
+            config.actionMinutes!,
+            config.minBodyPips!
+          );
+          const res = mageEval(m1Typed, m5Candles, triggers, symbol, config, session, isForex);
 
-            let peak = 0, runningR = 0, maxDD = 0;
-            let sixMoNetR = 0, sixMoTrades = 0;
+          let peak = 0, runningR = 0, maxDD = 0;
+          let sixMoNetR = 0, sixMoTrades = 0;
 
-            for (const date of Object.keys(res.dailyNetR)) {
-              const dayR = res.dailyNetR[date];
-              runningR += dayR;
-              if (runningR > peak) peak = runningR;
-              const dd = peak - runningR;
-              if (dd > maxDD) maxDD = dd;
+          for (const date of Object.keys(res.dailyNetR)) {
+            const dayR = res.dailyNetR[date];
+            runningR += dayR;
+            if (runningR > peak) peak = runningR;
+            const dd = peak - runningR;
+            if (dd > maxDD) maxDD = dd;
 
-              const dMs = new Date(date).getTime();
-              if (dMs >= sixMoMs) {
-                sixMoNetR += dayR;
-                sixMoTrades++;
-              }
+            const dMs = new Date(date).getTime();
+            if (dMs >= sixMoMs) {
+              sixMoNetR += dayR;
+              sixMoTrades++;
             }
+          }
 
-            // Must be profitable over full 3-year macro horizon with sufficient trade count
-            if (res.totalNetR > 0 && res.trades >= MIN_MACRO_TRADES && maxDD <= MAX_MACRO_DRAWDOWN) {
-              const calmar = res.totalNetR / Math.max(0.5, maxDD);
+          if (res.totalNetR >= 15.0 && res.trades >= MIN_MACRO_TRADES && maxDD <= MAX_MACRO_DRAWDOWN) {
+            const calmar = res.totalNetR / Math.max(0.5, maxDD);
+            if (calmar >= MIN_MACRO_CALMAR && sixMoNetR >= 0) {
               const niche = getMageNiche(parsed);
-
               evaluatedMage.push({
                 setup: item.setup,
                 niche,
@@ -402,68 +406,76 @@ if (isMainThread && process.argv[1] === currentFile) {
               });
             }
           }
-
-          // Apply MAP-Elites Quality-Diversity Curation
-          const { survivors, purgedCount } = curateMapElitesArchive(evaluatedMage);
-          mageSurvived = survivors.length;
-
-          // Format output DNA entries for optimizer compatibility
-          const curatedOutput = survivors.map(s => {
-            const original = s.rawItem || {};
-            return {
-              setup: s.setup,
-              niche: s.niche,
-              isNetR: s.threeYearNetR,
-              isMaxDd: s.threeYearMaxDD,
-              totalNetR: s.threeYearNetR,
-              oosNetR: original.oosNetR ?? s.sixMoNetR,
-              trades: s.threeYearTrades,
-              winRate: parseFloat(s.threeYearWinRate.toFixed(1)),
-              calmar: parseFloat(s.threeYearCalmar.toFixed(2)),
-              oosEndDate: original.oosEndDate || "2026-08-01",
-              dailyNetR: s.dailyNetR,
-              records: []
-            };
-          });
-
-          if (!isDryRun) {
-            fs.writeFileSync(mageDnaFile, JSON.stringify(curatedOutput, null, 2), "utf8");
-          }
-
-          parentPort?.postMessage({
-            type: "log",
-            data: `[MAGE] ${symbol.padEnd(12)}: Preserved ${mageSurvived.toString().padStart(3, " ")}/${mageInput.toString().padStart(3, " ")} setups across ${new Set(survivors.map(s => s.niche)).size} niches (Purged ${purgedCount} stale/dominated clones)`
-          });
         }
+
+        const { survivors, purgedCount } = curateMapElitesArchive(evaluatedMage);
+        mageSurvived = survivors.length;
+
+        const curatedOutput = survivors.map(s => {
+          return {
+            setup: s.setup,
+            dailyNetR: s.dailyNetR,
+            trades: s.threeYearTrades,
+            totalNetR: s.threeYearNetR,
+            oosNetR: s.threeYearNetR,
+            isNetR: s.threeYearNetR,
+            isMaxDd: s.threeYearMaxDD,
+            oosEndDate: endDate.toISOString().split("T")[0],
+            records: []
+          };
+        });
+
+        if (!isDryRun) {
+          fs.writeFileSync(mageDnaFile, JSON.stringify(curatedOutput, null, 2), "utf8");
+        }
+
+        const topCalmar = survivors[0] ? survivors[0].threeYearCalmar.toFixed(2) : "N/A";
+        const topR = survivors[0] ? `+${survivors[0].threeYearNetR.toFixed(1)}R` : "N/A";
+        parentPort?.postMessage({
+          type: "log",
+          data: `[MAGE] ${symbol.padEnd(12)}: Preserved ${mageSurvived.toString().padStart(2, " ")}/${mageInput.toString().padStart(2, " ")} setups across ${new Set(survivors.map(s => s.niche)).size} niches (Top: ${topR}, Calmar: ${topCalmar})`
+        });
       } catch (e: any) {
         parentPort?.postMessage({ type: "log", data: `[MAGE ERROR] ${symbol}: ${e.message}` });
       }
     }
 
     // ==========================================
-    // 🧙‍♂️ 2. EVALUATE SAGE DNA BANK
+    // 🧙‍♂️ 2. EVALUATE SAGE CANDIDATES
     // ==========================================
     const sageDnaFile = path.join(SAGE_DNA_DIR, `sage_dna_${symbol}.json`);
+    const sageDumpFile = path.join(SAGE_DUMP_DIR, `state_${symbol}.json`);
+    let rawSage: any[] = [];
     if (fs.existsSync(sageDnaFile)) {
       try {
-        const raw = JSON.parse(fs.readFileSync(sageDnaFile, "utf8"));
-        if (Array.isArray(raw)) {
-          sageInput = raw.length;
-          const evaluatedSage: EvaluatedAlpha[] = [];
+        const d = JSON.parse(fs.readFileSync(sageDnaFile, "utf8"));
+        if (Array.isArray(d)) rawSage.push(...d);
+      } catch {}
+    }
+    if (fs.existsSync(sageDumpFile)) {
+      try {
+        const d = JSON.parse(fs.readFileSync(sageDumpFile, "utf8"));
+        if (Array.isArray(d)) rawSage.push(...d);
+      } catch {}
+    }
 
-          for (const item of raw) {
-            const parsed = parseSageConfig(item.setup);
-            if (!parsed) continue;
-            const { session, config } = parsed;
+    const uniqueSage = Array.from(new Map(rawSage.filter(c => c && c.setup).map(c => [c.setup, c])).values());
+    if (uniqueSage.length > 0) {
+      try {
+        sageInput = uniqueSage.length;
+        const evaluatedSage: EvaluatedAlpha[] = [];
 
-            // Enforce minimum safe stop loss
-            if ((config.minSlDist ?? 0) < minSafeSlDist) continue;
+        for (const item of uniqueSage) {
+          if (!item || !item.setup) continue;
+          const parsed = parseSageConfig(item.setup);
+          if (!parsed) continue;
+          const { session, config } = parsed;
 
             const triggers = sagePreCompute(
               m5Candles,
               m1Rows,
               symbol,
-              configTemplate.spread * configTemplate.pipSize,
+              spreadPts,
               session,
               isForex,
               configTemplate.pipSize,
@@ -494,46 +506,40 @@ if (isMainThread && process.argv[1] === currentFile) {
               }
             }
 
-            // Must be profitable over full 3-year macro horizon with sufficient trade count
-            if (res.totalNetR > 0 && res.trades >= MIN_MACRO_TRADES && maxDD <= MAX_MACRO_DRAWDOWN) {
+            if (res.totalNetR >= 15.0 && res.trades >= MIN_MACRO_TRADES && maxDD <= MAX_MACRO_DRAWDOWN) {
               const calmar = res.totalNetR / Math.max(0.5, maxDD);
-              const niche = getSageNiche(parsed);
-
-              evaluatedSage.push({
-                setup: item.setup,
-                niche,
-                threeYearNetR: res.totalNetR,
-                threeYearTrades: res.trades,
-                threeYearWinRate: res.winRate,
-                threeYearMaxDD: maxDD,
-                threeYearCalmar: calmar,
-                sixMoNetR,
-                sixMoTrades,
-                dailyNetR: res.dailyNetR,
-                rawItem: item
-              });
+              if (calmar >= MIN_MACRO_CALMAR && sixMoNetR >= 0) {
+                const niche = getSageNiche(parsed);
+                evaluatedSage.push({
+                  setup: item.setup,
+                  niche,
+                  threeYearNetR: res.totalNetR,
+                  threeYearTrades: res.trades,
+                  threeYearWinRate: res.winRate,
+                  threeYearMaxDD: maxDD,
+                  threeYearCalmar: calmar,
+                  sixMoNetR,
+                  sixMoTrades,
+                  dailyNetR: res.dailyNetR,
+                  rawItem: item
+                });
+              }
             }
           }
 
-          // Apply MAP-Elites Quality-Diversity Curation
           const { survivors, purgedCount } = curateMapElitesArchive(evaluatedSage);
           sageSurvived = survivors.length;
 
-          // Format output DNA entries for optimizer compatibility
           const curatedOutput = survivors.map(s => {
-            const original = s.rawItem || {};
             return {
               setup: s.setup,
-              niche: s.niche,
+              dailyNetR: s.dailyNetR,
+              trades: s.threeYearTrades,
+              totalNetR: s.threeYearNetR,
+              oosNetR: s.threeYearNetR,
               isNetR: s.threeYearNetR,
               isMaxDd: s.threeYearMaxDD,
-              totalNetR: s.threeYearNetR,
-              oosNetR: original.oosNetR ?? s.sixMoNetR,
-              trades: s.threeYearTrades,
-              winRate: parseFloat(s.threeYearWinRate.toFixed(1)),
-              calmar: parseFloat(s.threeYearCalmar.toFixed(2)),
-              oosEndDate: original.oosEndDate || "2026-08-01",
-              dailyNetR: s.dailyNetR,
+              oosEndDate: endDate.toISOString().split("T")[0],
               records: []
             };
           });
@@ -542,25 +548,27 @@ if (isMainThread && process.argv[1] === currentFile) {
             fs.writeFileSync(sageDnaFile, JSON.stringify(curatedOutput, null, 2), "utf8");
           }
 
+          const topCalmar = survivors[0] ? survivors[0].threeYearCalmar.toFixed(2) : "N/A";
+          const topR = survivors[0] ? `+${survivors[0].threeYearNetR.toFixed(1)}R` : "N/A";
           parentPort?.postMessage({
             type: "log",
-            data: `[SAGE] ${symbol.padEnd(12)}: Preserved ${sageSurvived.toString().padStart(3, " ")}/${sageInput.toString().padStart(3, " ")} setups across ${new Set(survivors.map(s => s.niche)).size} niches (Purged ${purgedCount} stale/dominated clones)`
+            data: `[SAGE] ${symbol.padEnd(12)}: Preserved ${sageSurvived.toString().padStart(2, " ")}/${sageInput.toString().padStart(2, " ")} setups across ${new Set(survivors.map(s => s.niche)).size} niches (Top: ${topR}, Calmar: ${topCalmar})`
           });
+        } catch (e: any) {
+          parentPort?.postMessage({ type: "log", data: `[SAGE ERROR] ${symbol}: ${e.message}` });
         }
-      } catch (e: any) {
-        parentPort?.postMessage({ type: "log", data: `[SAGE ERROR] ${symbol}: ${e.message}` });
       }
-    }
 
     parentPort?.postMessage({
       type: "result",
       mageInput,
       mageSurvived,
       sageInput,
-      sageSurvived
+      sageSurvived,
     });
   };
-  runWorker().catch(e => {
+
+  runWorker().catch((e: any) => {
     parentPort?.postMessage({ type: "log", data: `[WORKER ERROR] ${workerData.symbol}: ${e.message}` });
   });
 }

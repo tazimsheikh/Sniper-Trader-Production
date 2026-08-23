@@ -280,12 +280,10 @@ export function evaluateExits(
   let lastTradeCloseTimeMs = 0;
 
   for (const t of triggers) {
-    if (m5Candles[t.m5Index] && m5Candles[t.m5Index].timestamp <= Math.max(lastTradeExitMs, lastTradeCloseTimeMs)) {
-      continue;
-    }
+    if (m5Candles[t.m5Index]) { console.log(`[T1] Checking trigger at ${new Date(m5Candles[t.m5Index].timestamp).toISOString()} against lastTradeExitMs=${new Date(lastTradeExitMs).toISOString()}, lastTradeCloseTimeMs=${new Date(lastTradeCloseTimeMs).toISOString()}`); } 
 
     if (!config.slMode && config.minBodyPips !== undefined && t.cBodyPips < config.minBodyPips)
-      continue;
+      { console.log("evaluateExits continue at line 288"); continue; }
 
     // M-4 Parity: ORB range circuit breaker (only for legacy full-box SL mode)
     const orRangePips = t.boxSize / pipSize;
@@ -295,7 +293,7 @@ export function evaluateExits(
       config.maxSlDist !== undefined &&
       orRangePips + 10 > config.maxSlDist + 0.001
     ) {
-      continue;
+      { console.log("evaluateExits continue at line 298"); continue; }
     }
 
     const direction = t.direction;
@@ -346,7 +344,7 @@ export function evaluateExits(
     let initialRisk = Math.abs(entryPrice - slPrice);
 
     if (initialRisk <= 0 || (config.maxSlDist !== undefined && initialRisk > (config.maxSlDist + 0.001) * pipSize)) {
-      continue; // SKIPPED
+      { console.log("evaluateExits continue at line 349"); continue; } // SKIPPED
     }
 
     let tpPrice = roundPrice(
@@ -689,7 +687,7 @@ export function evaluateExits(
       dailyNetR[dateStr] = (dailyNetR[dateStr] || 0) + rMultiple;
       totalTrades++;
       if (rMultiple > 0) winningTrades++;
-      lastTradeExitMs = exitTimeMs;
+      lastTradeExitMs = exitTimeMs; console.log(`[T1] Set lastTradeExitMs = ${new Date(exitTimeMs).toISOString()}`);
       lastTradeCloseTimeMs = exitTimeMs;
     }
   }

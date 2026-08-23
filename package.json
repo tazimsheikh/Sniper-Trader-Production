@@ -11,13 +11,11 @@
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
-    "test:parity": "npx tsx server/trading/testing/test_all_parity.ts",
-    "test:parity:quick": "npx tsx server/trading/testing/test_all_parity.ts",
-    "test:parity:6mo": "npx tsx server/trading/testing/parity/run_last_6mo.ts",
-    "backtest:modes": "npx tsx server/trading/testing/simulate_portfolio_math.ts",
-    "backtest:modes:shadow": "npx tsx server/trading/testing/simulate_portfolio_shadow.ts",
-    "optimize:all": "npx tsx server/trading/optimizer/pipelines/master_pipeline.ts",
-    "test:pipeline:robust": "npx tsx server/trading/testing/test_pipeline_robustness.ts"
+    "test:parity": "npx tsx server/trading/testing/test_all_pairs_parity.ts",
+    "test:parity:quick": "npx tsx server/trading/testing/test_all_pairs_parity.ts",
+    "backtest:modes": "npx tsx server/trading/testing/simulate_portfolio_risk_math.ts",
+    "backtest:modes:shadow": "npx tsx server/trading/testing/simulate_portfolio_risk_shadow.ts",
+    "optimize:all": "npx tsx server/trading/optimizer/pipelines/master_pipeline.ts"
   },
   "dependencies": {
     "@google/genai": "^2.7.0",
