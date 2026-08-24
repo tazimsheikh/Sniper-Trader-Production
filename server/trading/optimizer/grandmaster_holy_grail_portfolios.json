@@ -1,122 +1,218 @@
 [
   {
-    "symbol": "GER40",
-    "botType": "Mage",
-    "setup": "london_0%_MinSL50_MaxSL350_Body12_Trig3_Step1.5_FC24_StartH5_StartM0_OrbMins15_ActMins60_ExitTRAILING",
-    "totalTotalR": 21.758443095358317,
-    "monteCarloDrawdown99": 0,
-    "riskPct": 0.029259231760329824
-  },
-  {
     "symbol": "XAUUSD",
     "botType": "Mage",
-    "setup": "london_30%_MinSL30_MaxSL80_Body15_Trig1_Step1.5_FC8_StartH3_StartM30_OrbMins10_ActMins120_ExitTRAILING",
-    "totalTotalR": 13.498878950489626,
-    "monteCarloDrawdown99": 0,
-    "riskPct": 0.03050521398637339
+    "setup": "london_30%_MinSL40_MaxSL200_Body15_Trig2_Step1_FC8_StartH3_StartM30_OrbMins10_ActMins180_ExitTRAILING",
+    "totalTotalR": 6.000000000000375,
+    "monteCarloDrawdown99": 28.904999999999944,
+    "riskPct": 0.01732522427093643
   },
   {
     "symbol": "AUDJPY",
     "botType": "Mage",
-    "setup": "NY_Forex_0%_MinSL20_MaxSL100_Body4_Trig3_Step1_FC24_StartH9_StartM30_OrbMins10_ActMins180_ExitTRAILING",
-    "totalTotalR": 13.87902341889611,
-    "monteCarloDrawdown99": 7.1801692865779945,
-    "riskPct": 0.021370495469277176
+    "setup": "london_30%_MinSL15_MaxSL60_Body4_Trig2_Step0.5_FC24_StartH3_StartM30_OrbMins10_ActMins180_ExitTRAILING",
+    "totalTotalR": 20.026666666666436,
+    "monteCarloDrawdown99": 13.000000000000096,
+    "riskPct": 0.022492073361729016
   },
   {
     "symbol": "USDJPY",
     "botType": "Mage",
-    "setup": "asia_15%_MinSL15_MaxSL150_Body4_Trig3_Step2_FC16_StartH20_StartM45_OrbMins10_ActMins180_ExitTRAILING",
-    "totalTotalR": 15.84299319727807,
-    "monteCarloDrawdown99": 9.971020408164177,
-    "riskPct": 0.0262737833636224
-  },
-  {
-    "symbol": "USDCHF",
-    "botType": "Mage",
-    "setup": "asia_0%_MinSL10_MaxSL70_Body4_Trig0.5_Step1_FC16_StartH0_StartM0_OrbMins45_ActMins180_ExitTRAILING",
-    "totalTotalR": 8.012847965738928,
-    "monteCarloDrawdown99": 4.17142857142851,
-    "riskPct": 0.14498234017028022
+    "setup": "london_30%_MinSL25_MaxSL30_Body4_Trig3_Step1_FC24_StartH3_StartM0_OrbMins10_ActMins60_ExitTRAILING",
+    "totalTotalR": 12.980000000000132,
+    "monteCarloDrawdown99": 20.90400000000011,
+    "riskPct": 0.018452628251760198
   },
   {
     "symbol": "US30",
-    "botType": "Mage",
-    "setup": "london_0%_MinSL50_MaxSL350_Body10_Trig3_Step2_FC12_StartH3_StartM15_OrbMins10_ActMins120_ExitTRAILING",
-    "totalTotalR": 26.995138294838462,
-    "monteCarloDrawdown99": 0,
-    "riskPct": 0.02017722228180775
-  },
-  {
-    "symbol": "EURUSD",
-    "botType": "Mage",
-    "setup": "NY_Forex_30%_MinSL5_MaxSL40_Body5_Trig2_Step1_FC8_StartH9_StartM45_OrbMins10_ActMins60_ExitTRAILING",
-    "totalTotalR": 11.174135723431855,
-    "monteCarloDrawdown99": 24.434242424241486,
-    "riskPct": 0.15132916711355812
-  },
-  {
-    "symbol": "JPN225",
-    "botType": "Mage",
-    "setup": "london_0%_MinSL60_MaxSL160_Body10_Trig3_Step2_FC24_StartH5_StartM0_OrbMins15_ActMins60_ExitTRAILING",
-    "totalTotalR": 8.067407968197223,
-    "monteCarloDrawdown99": 12.94510340577912,
-    "riskPct": 0.029609650960083875
-  },
-  {
-    "symbol": "GBPJPY",
-    "botType": "Mage",
-    "setup": "asia_0%_MinSL15_MaxSL50_Body5_Trig3_Step2_FC24_StartH20_StartM45_OrbMins10_ActMins60_ExitTRAILING",
-    "totalTotalR": 19.69251141552618,
-    "monteCarloDrawdown99": 16,
-    "riskPct": 0.02017722228180775
-  },
-  {
-    "symbol": "GBPJPY",
-    "botType": "Mage",
-    "setup": "london_0%_MinSL40_MaxSL100_Body5_Trig1_Step1.5_FC8_StartH3_StartM30_OrbMins10_ActMins60_ExitTRAILING",
-    "totalTotalR": 12.064842402326967,
-    "monteCarloDrawdown99": 6.8236812908318605,
-    "riskPct": 0.05936107349123883
-  },
-  {
-    "symbol": "CADJPY",
     "botType": "Sage",
-    "setup": "asia_0%_MinSL40_MaxSL60_Sweep10_MaxSwp2_ReqClstrue_ExitTRAILING_Trig0.5_Step2_FC16_StartH18_StartM0_OrbMins60_ActMins30",
-    "totalTotalR": 23.27213855708616,
-    "monteCarloDrawdown99": 7.294030385784829,
-    "riskPct": 0.08524690725438241
+    "setup": "NY_Indices_20%_MinSL40_MaxSL300_Sweep30_MaxSwp3_ReqClstrue_ExitTRAILING_Trig0.5_Step2_FC8_StartH9_StartM45_OrbMins15_ActMins15",
+    "totalTotalR": 3.5269662338929866,
+    "monteCarloDrawdown99": 11.784221443591104,
+    "riskPct": 0.02490755916405273
+  },
+  {
+    "symbol": "GER40",
+    "botType": "Mage",
+    "setup": "NY_Forex_0%_MinSL120_MaxSL250_Body10_Trig2_Step2_FC24_StartH8_StartM30_OrbMins10_ActMins60_ExitTRAILING",
+    "totalTotalR": 3.7186073505779254,
+    "monteCarloDrawdown99": 25.893346925400138,
+    "riskPct": 0.019122456166857774
   },
   {
     "symbol": "GER40",
     "botType": "Sage",
     "setup": "NY_Indices_0%_MinSL70_MaxSL150_Sweep20_MaxSwp3_ReqClstrue_ExitOPPOSITE_BOUNDARY_Trig1.5_Step1_FC8_StartH8_StartM0_OrbMins30_ActMins10",
     "totalTotalR": 1.1529565196400717,
-    "monteCarloDrawdown99": 7.149065560279482,
-    "riskPct": 0.15132916711355812
+    "monteCarloDrawdown99": 7.054205033763072,
+    "riskPct": 0.03394887508901133
+  },
+  {
+    "symbol": "USDCHF",
+    "botType": "Mage",
+    "setup": "asia_0%_MinSL8_MaxSL100_Body4_Trig1_Step2_FC16_StartH0_StartM0_OrbMins45_ActMins180_ExitTRAILING",
+    "totalTotalR": 25.508087044424727,
+    "monteCarloDrawdown99": 8.762295081967247,
+    "riskPct": 0.03132443689040336
+  },
+  {
+    "symbol": "USDCHF",
+    "botType": "Sage",
+    "setup": "asia_20%_MinSL30_MaxSL50_Sweep3_MaxSwp1.5_ReqClsfalse_ExitTRAILING_Trig0.5_Step2_FC12_StartH20_StartM0_OrbMins30_ActMins15",
+    "totalTotalR": 5.020000000000316,
+    "monteCarloDrawdown99": 26.74666666666652,
+    "riskPct": 0.018070351010655673
+  },
+  {
+    "symbol": "USDCAD",
+    "botType": "Sage",
+    "setup": "london_0%_MinSL25_MaxSL50_Sweep10_MaxSwp1.5_ReqClsfalse_ExitTRAILING_Trig0.5_Step1_FC8_StartH3_StartM15_OrbMins30_ActMins30",
+    "totalTotalR": 1.563116883116955,
+    "monteCarloDrawdown99": 21.77710245000821,
+    "riskPct": 0.015887568948297067
+  },
+  {
+    "symbol": "EURUSD",
+    "botType": "Sage",
+    "setup": "london_20%_MinSL15_MaxSL80_Sweep5_MaxSwp2_ReqClsfalse_ExitTRAILING_Trig1_Step0.5_FC12_StartH3_StartM15_OrbMins60_ActMins10",
+    "totalTotalR": 1.1933333333334082,
+    "monteCarloDrawdown99": 22.367916666666474,
+    "riskPct": 0.016187094252523817
   },
   {
     "symbol": "GER40",
     "botType": "Sage",
-    "setup": "asia_20%_MinSL70_MaxSL150_Sweep5_MaxSwp3_ReqClstrue_ExitTRAILING_Trig0.25_Step2_FC16_StartH20_StartM30_OrbMins30_ActMins30",
-    "totalTotalR": 4.087142857142837,
-    "monteCarloDrawdown99": 5.108571428571511,
-    "riskPct": 0.15132916711355812
+    "setup": "NY_Indices_0%_MinSL70_MaxSL80_Sweep20_MaxSwp3_ReqClstrue_ExitOPPOSITE_BOUNDARY_Trig2_Step2_FC8_StartH8_StartM0_OrbMins30_ActMins10",
+    "totalTotalR": 1.1529565196400717,
+    "monteCarloDrawdown99": 7.2521914873517215,
+    "riskPct": 0.03394887508901133
   },
   {
-    "symbol": "XAUUSD",
+    "symbol": "GBPUSD",
     "botType": "Mage",
-    "setup": "NY_Forex_0%_MinSL30_MaxSL200_Body15_Trig3_Step1.5_FC8_StartH9_StartM0_OrbMins10_ActMins180_ExitTRAILING",
-    "totalTotalR": 12.905719910227393,
-    "monteCarloDrawdown99": 0,
-    "riskPct": 0.027659287534715787
+    "setup": "NY_Forex_0%_MinSL7.5_MaxSL80_Body5_Trig1_Step0.5_FC16_StartH9_StartM30_OrbMins15_ActMins60_ExitTRAILING",
+    "totalTotalR": 7.472827586206968,
+    "monteCarloDrawdown99": 12.78723953108418,
+    "riskPct": 0.02069490586550142
+  },
+  {
+    "symbol": "CADJPY",
+    "botType": "Mage",
+    "setup": "london_0%_MinSL20_MaxSL80_Body4_Trig2_Step0.5_FC24_StartH3_StartM30_OrbMins10_ActMins60_ExitTRAILING",
+    "totalTotalR": 7.0303682448590905,
+    "monteCarloDrawdown99": 21.322588692283276,
+    "riskPct": 0.0248610962770228
+  },
+  {
+    "symbol": "SPX500",
+    "botType": "Mage",
+    "setup": "NY_Forex_0%_MinSL40_MaxSL40_Body5_Trig1_Step1_FC24_StartH9_StartM0_OrbMins10_ActMins120_ExitTRAILING",
+    "totalTotalR": 2.573034969052724,
+    "monteCarloDrawdown99": 13.001332642652224,
+    "riskPct": 0.02357367144828479
+  },
+  {
+    "symbol": "USDCHF",
+    "botType": "Mage",
+    "setup": "asia_0%_MinSL8_MaxSL120_Body4_Trig1_Step2_FC16_StartH0_StartM0_OrbMins45_ActMins180_ExitTRAILING",
+    "totalTotalR": 17.00539136294982,
+    "monteCarloDrawdown99": 8.762295081967249,
+    "riskPct": 0.03132443689040336
+  },
+  {
+    "symbol": "CHFJPY",
+    "botType": "Mage",
+    "setup": "asia_0%_MinSL20_MaxSL150_Body6_Trig1_Step2_FC16_StartH20_StartM30_OrbMins10_ActMins180_ExitTRAILING",
+    "totalTotalR": 5.965909090908639,
+    "monteCarloDrawdown99": 25.877934272300507,
+    "riskPct": 0.015887822170675258
+  },
+  {
+    "symbol": "CHFJPY",
+    "botType": "Sage",
+    "setup": "london_0%_MinSL40_MaxSL60_Sweep5_MaxSwp2_ReqClstrue_ExitTRAILING_Trig0.5_Step2_FC8_StartH2_StartM0_OrbMins15_ActMins15",
+    "totalTotalR": 5.999982154682064,
+    "monteCarloDrawdown99": 31.89984131392294,
+    "riskPct": 0.016693826081580564
+  },
+  {
+    "symbol": "GBPNZD",
+    "botType": "Mage",
+    "setup": "london_30%_MinSL40_MaxSL60_Body4_Trig1.5_Step1.5_FC16_StartH5_StartM0_OrbMins10_ActMins180_ExitTRAILING",
+    "totalTotalR": 8.487500000000116,
+    "monteCarloDrawdown99": 5.299999999999968,
+    "riskPct": 0.012367831928967225
+  },
+  {
+    "symbol": "EURNZD",
+    "botType": "Sage",
+    "setup": "asia_0%_MinSL50_MaxSL100_Sweep3_MaxSwp2_ReqClstrue_ExitTRAILING_Trig1.5_Step0.5_FC8_StartH21_StartM0_OrbMins60_ActMins30",
+    "totalTotalR": 3.3849865859372748,
+    "monteCarloDrawdown99": 13.732156692661016,
+    "riskPct": 0.020442424978023087
+  },
+  {
+    "symbol": "EURUSD",
+    "botType": "Mage",
+    "setup": "NY_Forex_30%_MinSL5_MaxSL50_Body5_Trig0.5_Step1_FC4_StartH9_StartM45_OrbMins10_ActMins180_ExitTRAILING",
+    "totalTotalR": 6.999999999999581,
+    "monteCarloDrawdown99": 15.387177033492495,
+    "riskPct": 0.01799938911755922
+  },
+  {
+    "symbol": "EURUSD",
+    "botType": "Sage",
+    "setup": "london_20%_MinSL15_MaxSL80_Sweep5_MaxSwp2_ReqClsfalse_ExitTRAILING_Trig1_Step0.5_FC16_StartH3_StartM15_OrbMins60_ActMins10",
+    "totalTotalR": 1.1933333333334082,
+    "monteCarloDrawdown99": 23.414677230047133,
+    "riskPct": 0.016187094252523817
+  },
+  {
+    "symbol": "CHFJPY",
+    "botType": "Sage",
+    "setup": "london_0%_MinSL40_MaxSL100_Sweep5_MaxSwp2_ReqClstrue_ExitTRAILING_Trig0.5_Step2_FC8_StartH2_StartM0_OrbMins15_ActMins15",
+    "totalTotalR": 5.999982154682064,
+    "monteCarloDrawdown99": 32.51173931192645,
+    "riskPct": 0.016693826081580564
+  },
+  {
+    "symbol": "USDCHF",
+    "botType": "Sage",
+    "setup": "asia_20%_MinSL30_MaxSL35_Sweep3_MaxSwp1.5_ReqClsfalse_ExitTRAILING_Trig0.5_Step2_FC12_StartH20_StartM0_OrbMins30_ActMins15",
+    "totalTotalR": 2.510000000000158,
+    "monteCarloDrawdown99": 26.61333333333262,
+    "riskPct": 0.018070351010655673
+  },
+  {
+    "symbol": "CHFJPY",
+    "botType": "Mage",
+    "setup": "asia_0%_MinSL20_MaxSL70_Body6_Trig1_Step2_FC16_StartH20_StartM30_OrbMins10_ActMins180_ExitTRAILING",
+    "totalTotalR": 5.965909090908639,
+    "monteCarloDrawdown99": 25.441684662493056,
+    "riskPct": 0.015887822170675258
   },
   {
     "symbol": "GER40",
     "botType": "Mage",
-    "setup": "NY_Forex_15%_MinSL50_MaxSL350_Body10_Trig3_Step1_FC24_StartH9_StartM45_OrbMins10_ActMins120_ExitTRAILING",
-    "totalTotalR": 20.406268193926014,
-    "monteCarloDrawdown99": 15.618000000000029,
-    "riskPct": 0.05139007010540621
+    "setup": "NY_Forex_0%_MinSL120_MaxSL200_Body10_Trig2_Step1_FC24_StartH8_StartM30_OrbMins10_ActMins60_ExitTRAILING",
+    "totalTotalR": 3.7186073505779254,
+    "monteCarloDrawdown99": 27.879720049250228,
+    "riskPct": 0.01770162259885799
+  },
+  {
+    "symbol": "EURCAD",
+    "botType": "Sage",
+    "setup": "asia_20%_MinSL50_MaxSL80_Sweep3_MaxSwp3_ReqClstrue_ExitTRAILING_Trig0.5_Step1_FC16_StartH21_StartM0_OrbMins30_ActMins15",
+    "totalTotalR": 1.740000000000246,
+    "monteCarloDrawdown99": 11.99799999999999,
+    "riskPct": 0.024588727884289414
+  },
+  {
+    "symbol": "EURUSD",
+    "botType": "Mage",
+    "setup": "NY_Forex_30%_MinSL5_MaxSL30_Body5_Trig0.5_Step1_FC4_StartH9_StartM45_OrbMins10_ActMins60_ExitTRAILING",
+    "totalTotalR": 6,
+    "monteCarloDrawdown99": 15.326413846054077,
+    "riskPct": 0.01799938911755922
   }
 ]

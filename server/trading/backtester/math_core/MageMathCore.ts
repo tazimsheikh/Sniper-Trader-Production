@@ -150,7 +150,7 @@ export function preComputeTriggers(
 
       // ── HTF Trend Filter (H1 50 EMA) ──
       const h1Idx = htfData.h1IndexMap[i];
-      if (_htfTrendFilter && h1Idx >= 50 && htfData.h1Candles && htfData.ema50) {
+      if (_htfTrendFilter && h1Idx !== undefined && h1Idx >= 50 && htfData.h1Candles && htfData.ema50) {
         const h1Close = htfData.h1Candles[h1Idx]?.close;
         const h1Ema = htfData.ema50[h1Idx];
         if (direction === "BUY" && h1Close < h1Ema) continue;
@@ -280,10 +280,8 @@ export function evaluateExits(
   let lastTradeCloseTimeMs = 0;
 
   for (const t of triggers) {
-    if (m5Candles[t.m5Index]) { console.log(`[T1] Checking trigger at ${new Date(m5Candles[t.m5Index].timestamp).toISOString()} against lastTradeExitMs=${new Date(lastTradeExitMs).toISOString()}, lastTradeCloseTimeMs=${new Date(lastTradeCloseTimeMs).toISOString()}`); } 
-
     if (!config.slMode && config.minBodyPips !== undefined && t.cBodyPips < config.minBodyPips)
-      { console.log("evaluateExits continue at line 288"); continue; }
+      continue;
 
     // M-4 Parity: ORB range circuit breaker (only for legacy full-box SL mode)
     const orRangePips = t.boxSize / pipSize;
@@ -293,7 +291,7 @@ export function evaluateExits(
       config.maxSlDist !== undefined &&
       orRangePips + 10 > config.maxSlDist + 0.001
     ) {
-      { console.log("evaluateExits continue at line 298"); continue; }
+      continue;
     }
 
     const direction = t.direction;
@@ -344,7 +342,7 @@ export function evaluateExits(
     let initialRisk = Math.abs(entryPrice - slPrice);
 
     if (initialRisk <= 0 || (config.maxSlDist !== undefined && initialRisk > (config.maxSlDist + 0.001) * pipSize)) {
-      { console.log("evaluateExits continue at line 349"); continue; } // SKIPPED
+      continue;
     }
 
     let tpPrice = roundPrice(
@@ -383,7 +381,7 @@ export function evaluateExits(
     let isInstantFill = (pbPct === 0) || isWithinProximity;
 
     let exitTimeMs = 0;
-    const startJ = isInstantFill ? t.m1Index : t.m1Index + 1;
+    const startJ = t.m1Index;
     // Using M1 Precision! Max 5000 minutes (approx 1000 M5 candles)
     for (
       let j = startJ;
@@ -687,7 +685,7 @@ export function evaluateExits(
       dailyNetR[dateStr] = (dailyNetR[dateStr] || 0) + rMultiple;
       totalTrades++;
       if (rMultiple > 0) winningTrades++;
-      lastTradeExitMs = exitTimeMs; console.log(`[T1] Set lastTradeExitMs = ${new Date(exitTimeMs).toISOString()}`);
+      lastTradeExitMs = exitTimeMs;
       lastTradeCloseTimeMs = exitTimeMs;
     }
   }

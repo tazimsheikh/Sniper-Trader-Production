@@ -86,47 +86,216 @@ export function runMonteCarlo(trades: number[], iterations: number): number {
   return drawdowns[index99];
 }
 
-export function admitAllWithCorrelationPenalty(
+export interface HedgingUnit {
+  unitId: string;
+  type: "SELF_PAIR" | "CROSS_PAIR" | "SINGLETON";
+  components: IndependentSynthesisComponent[];
+  combinedHedgeScore: number;
+  combinedDailyReturns: Record<string, number>;
+  periodReturns: number[];
+  pairwiseCorrelation?: number;
+}
+
+const MACRO_GROUPS: Record<string, string[]> = {
+  YEN_CROSS: ["USDJPY", "EURJPY", "GBPJPY", "AUDJPY", "CADJPY", "CHFJPY"],
+  EUROPE_USD_FX: ["EURUSD", "GBPUSD", "USDCHF", "USDCAD", "AUDUSD", "NZDUSD", "EURCAD", "GBPCAD", "GBPAUD", "GBPNZD", "EURAUD", "EURNZD"],
+  EQUITY_INDICES: ["GER40", "US30", "NAS100", "SPX500", "JPN225"],
+  COMMODITIES: ["XAUUSD", "XTIUSD", "ETHUSD"]
+};
+
+function getMacroGroup(symbol: string): string {
+  for (const [grp, syms] of Object.entries(MACRO_GROUPS)) {
+    if (syms.includes(symbol)) return grp;
+  }
+  return "OTHER";
+}
+
+export function buildHedgingUnits(
   pool: IndependentSynthesisComponent[],
-  globalDates: string[],
-  maxPerSymbolAndSession = 1,
-  bannedSessions?: Set<string>,
-  previouslySelected: IndependentSynthesisComponent[] = [],
-  maxTotalComponents = 20
-): IndependentSynthesisComponent[] {
-  const candidates = [...pool].sort((a, b) => b.hedgeScore - a.hedgeScore);
-  const selected: IndependentSynthesisComponent[] = [];
-  const symbolSessionCounts: Record<string, number> = {};
-  const seenSetups = new Set<string>();
+  globalDates: string[]
+): HedgingUnit[] {
+  const units: HedgingUnit[] = [];
+  const usedSetups = new Set<string>();
 
-  for (const cand of candidates) {
-    if (selected.length >= maxTotalComponents) break;
+  const getSetupKey = (c: IndependentSynthesisComponent) => `${c.symbol}_${c.botType}_${c.setup}`;
 
-    const parts = cand.setup.split("_");
-    let session = parts[0];
-    if (parts[0] === "NY") session = `NY_${parts[1]}`;
+  // Helper to combine component daily returns into a unified unit
+  const makeUnit = (
+    unitId: string,
+    type: "SELF_PAIR" | "CROSS_PAIR" | "SINGLETON",
+    comps: IndependentSynthesisComponent[],
+    corr?: number
+  ): HedgingUnit => {
+    const combinedDailyReturns: Record<string, number> = {};
+    const periodReturns: number[] = [];
 
-    const setupKey = `${cand.symbol}_${cand.botType}_${cand.setup}`;
-    if (seenSetups.has(setupKey)) continue;
+    for (const d of globalDates) {
+      let dayR = 0;
+      for (const c of comps) {
+        dayR += (c.dailyReturns && c.dailyReturns[d]) || 0;
+      }
+      combinedDailyReturns[d] = dayR;
+      periodReturns.push(dayR);
+    }
 
-    const key = `${cand.symbol}_${cand.botType}_${session}`;
-    const currentCount = symbolSessionCounts[key] || 0;
-    if (currentCount >= maxPerSymbolAndSession) continue;
+    let totalScore = 0;
+    for (const c of comps) totalScore += c.hedgeScore || 0;
+    let combinedHedgeScore = totalScore / comps.length;
 
-    let maxPairwiseCorr = 0;
-    if (cand.periodReturns && cand.periodReturns.length > 10) {
-      for (const sel of [...previouslySelected, ...selected]) {
-        if (sel.periodReturns && sel.periodReturns.length > 10) {
-          const corr = Math.abs(calculatePearsonCorrelation(cand.periodReturns, sel.periodReturns));
-          if (corr > maxPairwiseCorr) maxPairwiseCorr = corr;
+    // Apply natural hedging synergy bonus for low/negative correlation
+    if (comps.length === 2 && corr !== undefined) {
+      if (corr <= 0.20) {
+        combinedHedgeScore *= (1.0 + 0.60 * (1.0 - corr));
+      }
+    }
+
+    for (const c of comps) {
+      (c as any).unitId = unitId;
+      (c as any).unitType = type;
+      usedSetups.add(getSetupKey(c));
+    }
+
+    return {
+      unitId,
+      type,
+      components: comps,
+      combinedHedgeScore,
+      combinedDailyReturns,
+      periodReturns,
+      pairwiseCorrelation: corr
+    };
+  };
+
+  // PASS 1: Direct Self-Hedging (Same Symbol, Opposite Strategy: Mage Breakout + Sage Reversal)
+  const magePool = pool.filter(c => c.botType === "Mage").sort((a, b) => b.hedgeScore - a.hedgeScore);
+  const sagePool = pool.filter(c => c.botType === "Sage").sort((a, b) => b.hedgeScore - a.hedgeScore);
+
+  const symbols = Array.from(new Set(pool.map(c => c.symbol)));
+
+  for (const sym of symbols) {
+    const symMages = magePool.filter(c => c.symbol === sym && !usedSetups.has(getSetupKey(c)));
+    const symSages = sagePool.filter(c => c.symbol === sym && !usedSetups.has(getSetupKey(c)));
+
+    if (symMages.length > 0 && symSages.length > 0) {
+      let bestPair: [IndependentSynthesisComponent, IndependentSynthesisComponent] | null = null;
+      let bestCorr = Infinity;
+      let bestScore = -Infinity;
+
+      for (const m of symMages) {
+        for (const s of symSages) {
+          let corr = 0;
+          if (m.periodReturns && s.periodReturns && m.periodReturns.length > 10 && s.periodReturns.length > 10) {
+            const len = Math.min(m.periodReturns.length, s.periodReturns.length);
+            corr = calculatePearsonCorrelation(m.periodReturns.slice(0, len), s.periodReturns.slice(0, len));
+          }
+          const combinedR = m.totalTotalR + s.totalTotalR;
+          const corrWeight = corr <= 0.1 ? 1.5 : (corr <= 0.3 ? 1.2 : 0.9);
+          const score = combinedR * corrWeight;
+
+          if (corr <= 0.35 && score > bestScore) {
+            bestScore = score;
+            bestCorr = corr;
+            bestPair = [m, s];
+          }
+        }
+      }
+
+      if (bestPair) {
+        units.push(makeUnit(`${sym}_SELF_HEDGE`, "SELF_PAIR", bestPair, bestCorr));
+      }
+    }
+  }
+
+  // PASS 2: Cross-Asset Synthetic Residual Hedging (Leftover Mage + Leftover Sage)
+  const remainingMage = pool.filter(c => c.botType === "Mage" && !usedSetups.has(getSetupKey(c))).sort((a, b) => b.hedgeScore - a.hedgeScore);
+  const remainingSage = pool.filter(c => c.botType === "Sage" && !usedSetups.has(getSetupKey(c))).sort((a, b) => b.hedgeScore - a.hedgeScore);
+
+  for (const mageCand of remainingMage) {
+    if (usedSetups.has(getSetupKey(mageCand))) continue;
+    const mageGroup = getMacroGroup(mageCand.symbol);
+
+    let bestSagePartner: IndependentSynthesisComponent | null = null;
+    let bestPartnerCorr = Infinity;
+
+    for (const sageCand of remainingSage) {
+      if (usedSetups.has(getSetupKey(sageCand))) continue;
+      const sageGroup = getMacroGroup(sageCand.symbol);
+
+      if (mageCand.periodReturns && sageCand.periodReturns && mageCand.periodReturns.length > 10 && sageCand.periodReturns.length > 10) {
+        const len = Math.min(mageCand.periodReturns.length, sageCand.periodReturns.length);
+        const corr = calculatePearsonCorrelation(mageCand.periodReturns.slice(0, len), sageCand.periodReturns.slice(0, len));
+
+        // Prioritize same macro group or low/negative correlation
+        const isSameGroup = (mageGroup === sageGroup && mageGroup !== "OTHER");
+        const effectiveCorr = isSameGroup ? corr - 0.15 : corr;
+
+        if (effectiveCorr < bestPartnerCorr && corr <= 0.25) {
+          bestPartnerCorr = effectiveCorr;
+          bestSagePartner = sageCand;
         }
       }
     }
-    (cand as any).correlationTax = Math.max(0.2, 1.0 - maxPairwiseCorr);
 
-    selected.push(cand);
-    seenSetups.add(setupKey);
-    symbolSessionCounts[key] = currentCount + 1;
+    if (bestSagePartner) {
+      let trueCorr = 0;
+      const len = Math.min(mageCand.periodReturns.length, bestSagePartner.periodReturns.length);
+      trueCorr = calculatePearsonCorrelation(mageCand.periodReturns.slice(0, len), bestSagePartner.periodReturns.slice(0, len));
+
+      units.push(makeUnit(`${mageCand.symbol}_${bestSagePartner.symbol}_CROSS_HEDGE`, "CROSS_PAIR", [mageCand, bestSagePartner], trueCorr));
+    }
+  }
+
+  // PASS 3: Elite Singletons (Remaining high-quality standalone alphas)
+  const remainingPool = pool.filter(c => !usedSetups.has(getSetupKey(c))).sort((a, b) => b.hedgeScore - a.hedgeScore);
+  for (const c of remainingPool) {
+    units.push(makeUnit(`${c.symbol}_${c.botType}_SINGLE`, "SINGLETON", [c]));
+  }
+
+  return units;
+}
+
+export function admitHedgingUnitsWithCorrelationPenalty(
+  units: HedgingUnit[],
+  globalDates: string[],
+  maxTotalUnits = 100,
+  maxComponents = 100
+): HedgingUnit[] {
+  const candidates = [...units];
+  const selected: HedgingUnit[] = [];
+  let totalCompCount = 0;
+
+  while (selected.length < maxTotalUnits && totalCompCount < maxComponents) {
+    let bestUnit: HedgingUnit | null = null;
+    let bestScore = 0.05; // Quality threshold: Only admit units that add net positive value
+
+    for (const unit of candidates) {
+      if (selected.some(s => s.unitId === unit.unitId)) continue;
+      if (totalCompCount + unit.components.length > maxComponents) continue;
+
+      let maxPairwiseCorr = 0;
+      if (unit.periodReturns && unit.periodReturns.length > 10) {
+        for (const sel of selected) {
+          if (sel.periodReturns && sel.periodReturns.length > 10) {
+            const len = Math.min(unit.periodReturns.length, sel.periodReturns.length);
+            const corr = Math.abs(calculatePearsonCorrelation(unit.periodReturns.slice(0, len), sel.periodReturns.slice(0, len)));
+            if (corr > maxPairwiseCorr) maxPairwiseCorr = corr;
+          }
+        }
+      }
+
+      const correlationTax = Math.max(0.2, 1.0 - maxPairwiseCorr);
+      const effectiveScore = unit.combinedHedgeScore * correlationTax;
+
+      if (effectiveScore > bestScore) {
+        bestScore = effectiveScore;
+        bestUnit = unit;
+      }
+    }
+
+    if (!bestUnit) break;
+
+    selected.push(bestUnit);
+    totalCompCount += bestUnit.components.length;
   }
 
   return selected;
@@ -173,9 +342,14 @@ export function computeMasterRiskSizing(
 
   const totalScore = safetyScores.reduce((sum, item) => sum + item.score, 0);
 
+  // Dynamic bounds adaptive to any portfolio size N:
+  const baseWeight = 1.0 / portfolio.length;
+  const minWeight = baseWeight * 0.25;
+  const maxWeight = baseWeight * 3.50;
+
   for (const item of safetyScores) {
-    const rawWeight = totalScore > 0 ? item.score / totalScore : 1.0 / portfolio.length;
-    item.p.riskPct = Math.max(0.02, Math.min(0.15, rawWeight));
+    const rawWeight = totalScore > 0 ? item.score / totalScore : baseWeight;
+    item.p.riskPct = Math.max(minWeight, Math.min(maxWeight, rawWeight));
   }
 
   const finalWeightSum = portfolio.reduce((sum, p) => sum + (p.riskPct || 0), 0);
@@ -198,5 +372,12 @@ export function computeMasterRiskSizing(
   const masterMcDrawdown99 = runMonteCarlo(masterReturnsArray, 10000);
   const globalRiskPct = masterMcDrawdown99 > targetMcDd ? targetMcDd / masterMcDrawdown99 : 1.0;
 
-  return { masterMcDrawdown99, globalRiskPct };
+  for (const p of portfolio) {
+    p.riskPct = (p.riskPct || 0) * globalRiskPct;
+  }
+
+  const scaledMasterReturns = masterReturnsArray.map(r => r * globalRiskPct);
+  const scaledMasterMcDd99 = runMonteCarlo(scaledMasterReturns, 10000);
+
+  return { masterMcDrawdown99: scaledMasterMcDd99, globalRiskPct };
 }

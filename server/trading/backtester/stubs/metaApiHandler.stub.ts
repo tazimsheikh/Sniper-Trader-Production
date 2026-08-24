@@ -150,13 +150,59 @@ export function getSharedAccount(_token: string, _accountId: string) {
 }
 
 export function getSymbolSpec(symbol: string) {
-  const base = symbol.split(".")[0];
-  const optConfig = OPTIMIZER_CONFIG[symbol] || OPTIMIZER_CONFIG[base];
-  const pipSize = optConfig?.pipSize ?? 0.0001;
-  const tickSize = optConfig?.tickSize ?? 0.00001;
+  if (!symbol || typeof symbol !== "string") {
+    return {
+      pipSize: 0.0001,
+      contractSize: 100000,
+      digits: 5,
+      tickSize: 0.00001,
+      stopsLevel: 0,
+      minVolume: 0.01,
+      maxVolume: 100,
+      volumeStep: 0.01,
+      pipValuePerLot: 10,
+    };
+  }
+  const cleanSymbol = symbol
+    .replace(".Daily", "")
+    .replace(/_[0-9]+$/, "")
+    .replace("=X", "")
+    .replace("=F", "");
+  const optConfig = OPTIMIZER_CONFIG[cleanSymbol] || OPTIMIZER_CONFIG[symbol];
   
-  const tickStr = tickSize.toString();
-  const digits = tickStr.includes('.') ? tickStr.split('.')[1].length : 0;
+  let digits = 5;
+  let tickSize = 0.00001;
+  let pipSize = 0.0001;
+
+  if (optConfig) {
+    tickSize = optConfig.tickSize ?? 0.00001;
+    const tickStr = tickSize.toString();
+    digits = tickStr.includes('.') ? tickStr.split('.')[1].length : 0;
+    pipSize = optConfig.pipSize ?? 0.0001;
+  } else {
+    if (cleanSymbol.includes("JPY")) {
+      digits = 3;
+      tickSize = 0.001;
+      pipSize = 0.01;
+    } else if (cleanSymbol.includes("XAU") || cleanSymbol.includes("GOLD") || cleanSymbol.includes("XTI") || cleanSymbol.includes("OIL") || cleanSymbol.includes("BTC") || cleanSymbol.includes("ETH")) {
+      digits = 2;
+      tickSize = 0.01;
+      pipSize = cleanSymbol.includes("XAU") || cleanSymbol.includes("GOLD") ? 0.1 : 0.01;
+    } else if (cleanSymbol.includes("US30") || cleanSymbol.includes("NAS") || cleanSymbol.includes("GER40") || cleanSymbol.includes("DAX40") || cleanSymbol.includes("DE40") || cleanSymbol.includes("SPX") || cleanSymbol.includes("JPN225")) {
+      digits = 2;
+      tickSize = 0.1;
+      pipSize = 1.0;
+    } else {
+      digits = 5;
+      tickSize = 0.00001;
+      pipSize = 0.0001;
+    }
+  }
+
+  const isJpy = cleanSymbol.includes("JPY");
+  const isXauOrGer = cleanSymbol.includes("XAU") || cleanSymbol.includes("GOLD") || cleanSymbol.includes("GER40") || cleanSymbol.includes("DAX40") || cleanSymbol.includes("DE40") || cleanSymbol.includes("UK100") || cleanSymbol.includes("SPX500");
+  const isNas = cleanSymbol.includes("NAS") || cleanSymbol.includes("US30") || cleanSymbol.includes("BTC") || cleanSymbol.includes("ETH");
+  const pipValuePerLot = isJpy ? 6.5 : isXauOrGer ? 10 : isNas ? 1 : 10;
 
   return {
     pipSize,
@@ -167,7 +213,7 @@ export function getSymbolSpec(symbol: string) {
     minVolume: 0.01,
     maxVolume: 100,
     volumeStep: 0.01,
-    pipValuePerLot: 10,
+    pipValuePerLot,
   };
 }
 export function safeDecryptAccountId(id: string | undefined) {

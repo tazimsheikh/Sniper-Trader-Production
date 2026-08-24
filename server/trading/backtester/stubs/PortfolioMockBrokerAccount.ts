@@ -162,7 +162,6 @@ export class PortfolioMockBrokerAccount {
 
   async createLimitBuyOrder(symbol: string, lots: number, price: number, sl: number, tp: number, opts?: any) {
     const id = `SIM_${this.orderId++}`;
-    if (symbol.includes("XTIUSD")) console.log(`[DEBUG MOCK LIMIT BUY] id=${id} sym=${symbol} price=${price} sl=${sl} tp=${tp} opts=${JSON.stringify(opts)}`);
     this.pendingOrders.set(id, { id, symbol, direction: 'BUY', orderType: 'LIMIT', limitPrice: price, sl, tp, volume: lots, placedAt: this.currentCandles.get(symbol)?.timestamp || 0, clientId: opts?.clientId, botId: this.deduceBotId(opts), magic: opts?.magic, orHigh: opts?.orHigh, orLow: opts?.orLow });
     const orchState = this.getOrchState(opts);
     if (orchState) this.checkPendingOrderFills(orchState, id);
@@ -214,7 +213,6 @@ export class PortfolioMockBrokerAccount {
     if (opts?.limitPrice !== undefined) {
       price = Math.min(price, opts.limitPrice + slp);
     }
-    if (price > 100 && symbol.includes('EUR')) console.log(`[ANOMALY TRACE] createMarketBuyOrder: ${symbol} price=${price}`);
     const botId = this.deduceBotId(opts);
 
     

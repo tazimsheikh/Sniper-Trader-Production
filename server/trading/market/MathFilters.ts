@@ -1,7 +1,7 @@
 /**
- * MathFilters.ts - Stub Implementation
- * Exporting functions and classes needed for mathematical trade filtering.
- * The actual logic will be implemented by the implementation agent.
+ * MathFilters.ts — Production Trade Filtering Utilities
+ * Session-level math filters: rollover circuit breaker, EOD window,
+ * toxic-day detection, and volatility regime multiplier.
  */
 
 import type { BasicTrade as Trade } from "../config/types.js";

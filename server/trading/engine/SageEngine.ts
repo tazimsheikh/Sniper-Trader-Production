@@ -5,7 +5,6 @@ import { enqueueMetaApiRequest as realQueue } from "../../utils/MetaApiQueue.js"
 import { generateMagicNumber, isSageMagic } from "../../utils/magicNumber.js";
 import { isNewsBlackout as realNews } from '../../news/newsStore.js';
 import { isTradeAllowed, isEODSession, isRolloverCircuitBreaker, isToxicDay } from "../market/MathFilters.js";
-import { isNewsForceClose } from "../market/historicalNews.js";
 import { HTFContextTracker } from "../market/HTFContextTracker.js";
 import { globalTradeGate as realGate } from '../../utils/GlobalTradeGate.js';
 import realDb, { addBotLog as realAddBotLog } from '../../core/db.js';
@@ -547,9 +546,10 @@ export async function _runSageBotForConfig(orch: any, sessionPair: string, state
       const m5EstMin = m5EstDate.getUTCMinutes();
       const m5DateStr = new Date(actionCandle.timestamp).toISOString().split("T")[0];
       
+      const newsCheck = isNewsBlackout(baseSymbol, new Date(actionCandle.timestamp));
       if (
         isRolloverCircuitBreaker(m5EstHour, m5EstMin) ||
-        isNewsForceClose(m5DateStr, m5EstHour, m5EstMin)
+        newsCheck.blocked
       ) {
         logger.info(`[SageEngine] ${sessionPair} Rejected: News or Rollover blackout on ${m5DateStr}`);
         validSweep = false;
@@ -854,9 +854,9 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
     const attemptStart = Date.now();
     // Round all prices to exact broker decimal precision (SYMBOL_SPECS.digits)
     // This prevents hard 'Validation failed' rejections on BTCUSD (2dp), XAUUSD (2dp), etc.
-    const pEntry = roundPrice(ss.limitPrice, symbol.split("_")[0]);
-    const pSl = roundPrice(ss.slPrice, symbol.split("_")[0]);
-    const pTp = roundPrice(ss.tpPrice, symbol.split("_")[0]);
+    const pEntry = roundPrice(ss.limitPrice, brokerSymbol);
+    const pSl = roundPrice(ss.slPrice, brokerSymbol);
+    const pTp = roundPrice(ss.tpPrice, brokerSymbol);
 
     const penetrationPct = sageCfg.entryPenetrationPct ?? 0;
     const optCfg = PairConfigManager.getRepresentativeConfig(symbol);
@@ -941,7 +941,7 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
         }
 
         const isBuy = ss.direction === "BUY";
-        const latestPrice = c.close;
+        const latestPrice = roundPrice(c.close, brokerSymbol);
         const hitSl = isBuy ? (latestPrice <= pSl) : (latestPrice >= pSl);
         const hitTp = isBuy ? (latestPrice >= pTp) : (latestPrice <= pTp);
         if (hitSl || hitTp) {
@@ -960,7 +960,7 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
           return;
         }
 
-        const staticSpec = getSymbolSpec(symbol.split("_")[0]);
+        const staticSpec = getSymbolSpec(brokerSymbol);
         const stopsLevelPts = liveSpec?.stopsLevel || (staticSpec as any).stopsLevel || 0;
         const safePrices = calculateStopsLevelSafePrices(
           ss.direction as "BUY" | "SELL",
@@ -969,12 +969,14 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
           pTp,
           stopsLevelPts,
           liveSpec?.tickSize || staticSpec.tickSize || 0.00001,
-          liveSpec?.digits || staticSpec.digits || 5
+          liveSpec?.digits ?? staticSpec.digits ?? 5
         );
-        logger.info(`[SageEngine] 🛡️ Smart Market Fallback Prices: Entry=${latestPrice}, SL=${safePrices.pSl}, TP=${safePrices.pTp} (stopsLevel=${stopsLevelPts}pts)`);
+        const roundedSafeSl = roundPrice(safePrices.pSl, brokerSymbol);
+        const roundedSafeTp = roundPrice(safePrices.pTp, brokerSymbol);
+        logger.info(`[SageEngine] 🛡️ Smart Market Fallback Prices: Entry=${latestPrice}, SL=${roundedSafeSl}, TP=${roundedSafeTp} (stopsLevel=${stopsLevelPts}pts)`);
         orderRes = isBuy
-          ? await conn.createMarketBuyOrder(brokerSymbol, lots, safePrices.pSl, safePrices.pTp, { magic, clientId: shortClientId })
-          : await conn.createMarketSellOrder(brokerSymbol, lots, safePrices.pSl, safePrices.pTp, { magic, clientId: shortClientId });
+          ? await conn.createMarketBuyOrder(brokerSymbol, lots, roundedSafeSl, roundedSafeTp, { magic, clientId: shortClientId })
+          : await conn.createMarketSellOrder(brokerSymbol, lots, roundedSafeSl, roundedSafeTp, { magic, clientId: shortClientId });
       } else {
         globalTradeGate.release(orch.profileId, preRegKey);
         throw err;
@@ -1086,10 +1088,6 @@ export async function evaluateSageTrailingOnTick(
   tick: any,
   targetBotId: string = "SAGE"
 ) {
-  if (new Date(tick.timestamp).toISOString().startsWith("2025-01-03T03")) {
-    logger.info(`[T3 SAGE EVAL START] time:${new Date(tick.timestamp).toISOString()}`);
-  }
-
   // SAGE PENDING ORDER SWEEP GUARD
   if (state.sageStates) {
     for (const sig of Object.keys(state.sageStates)) {
@@ -1223,7 +1221,7 @@ export async function evaluateSageTrailingOnTick(
     // --- M1 TRAILING STOP MATH ---
     const pipSize2 = config.pipSize || state.config?.pipSize || getDynamicPipSize(baseSymbol);
     const isBuy = trade.direction === "BUY";
-    const brokerDigits = getSymbolSpec(baseSymbol.split("_")[0]).digits || 5;
+    const brokerDigits = getSymbolSpec(baseSymbol).digits ?? 5;
     if (!trade.originalSl) trade.originalSl = trade.slPrice;
     if (!trade.riskPips) trade.riskPips = Math.abs(trade.entryPrice - trade.originalSl) / pipSize2;
     const actualRisk = Math.abs(trade.entryPrice - trade.originalSl);
@@ -1314,6 +1312,7 @@ export async function evaluateSageTrailingOnTick(
           );
           try {
             if (!trade.isVirtualSlMode) {
+              const roundedTp = trade.tpPrice ? roundPrice(trade.tpPrice, baseSymbol) : null;
               await enqueueMetaApiRequest(
                 async () =>
                   (
@@ -1321,7 +1320,7 @@ export async function evaluateSageTrailingOnTick(
                   ).modifyPosition(
                     trade.metaOrderId,
                     roundedSl,
-                    trade.tpPrice || null,
+                    roundedTp,
                   ),
                 `TrailSL:${baseSymbol}`,
               );

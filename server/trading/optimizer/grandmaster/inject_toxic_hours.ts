@@ -1,8 +1,8 @@
 import * as fs from "fs";
 import * as path from "path";
 import { PairConfigManager, SAGE_PAIR_CONFIG, MAGE_PAIR_CONFIG } from "../../config/PairConfig.js";
-import { runSageMathBacktest } from "../../backtester/SageMathBacktester.js";
-import { runMathBacktest as runMageMathBacktest } from "../../backtester/MageMathBacktester.js";
+import { runSageMathBacktest, clearSageBacktestCache } from "../../backtester/SageMathBacktester.js";
+import { runMathBacktest as runMageMathBacktest, clearMageBacktestCache } from "../../backtester/MageMathBacktester.js";
 import { getFixedEstDate } from "../../engine/LiveOrchestrator.js";
 
 function safeWriteFileSync(filePath: string, content: string) {
@@ -34,8 +34,11 @@ async function runDynamicToxicFilterInjection() {
   const pairBannedDays: Record<string, number[]> = {};
 
   for (const pair of allPairs) {
-    let startDate1Yr = "2025-05-01";
-    let endDate1Yr = "2026-05-01";
+    const now = new Date();
+    let endDate1Yr = now.toISOString().substring(0, 10);
+    const sdDefault = new Date(now.getTime());
+    sdDefault.setFullYear(sdDefault.getFullYear() - 1);
+    let startDate1Yr = sdDefault.toISOString().substring(0, 10);
 
     const csvDir = path.join(process.cwd(), "data", "csv");
     const csvFiles = fs.readdirSync(csvDir).filter((f) => f.startsWith(`${pair.split("_")[0]}`) && f.endsWith(".csv"));
@@ -182,6 +185,8 @@ async function runDynamicToxicFilterInjection() {
     pairBannedDays[pair] = bannedDays;
 
     console.log(` Summary for ${pair} -> Toxic Hours: [${bannedHours.join(", ")}], Toxic Days: [${bannedDays.map(d => DAY_NAMES[d]).join(", ")}]`);
+    clearSageBacktestCache();
+    clearMageBacktestCache();
   }
 
   // Inject into PairConfig.ts

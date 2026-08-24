@@ -2,8 +2,8 @@ import {
   IndependentSynthesisComponent,
   evaluateComponent,
 } from "./GrandmasterMetrics.js";
-import { runMonteCarlo, calculatePearsonCorrelation, admitAllWithCorrelationPenalty, computeMasterRiskSizing } from "./utils/GrandmasterMath.js";
-import { deduplicateConfigs, preProcessData } from "./GrandmasterPreProcessor.js";
+import { runMonteCarlo, calculatePearsonCorrelation, computeMasterRiskSizing, buildHedgingUnits, admitHedgingUnitsWithCorrelationPenalty, HedgingUnit } from "./utils/GrandmasterMath.js";
+import { deduplicateConfigs, preProcessData, getRollingMonthKeys } from "./GrandmasterPreProcessor.js";
 import { generateRollingWindows } from "./grandmaster_plwfo.js";
 import { runCPCV } from "./grandmaster_cpcv.js";
 import fs from "fs";
@@ -163,7 +163,7 @@ async function runSynthesis() {
   }
 
   let completedSymbols = 0;
-  const symbolResults = await asyncPool(3, allSymbols, async (symbol) => {
+  const symbolResults = await asyncPool(6, allSymbols, async (symbol) => {
     const mageDataRaw = loadStateData(allMageFiles, symbol);
     const sageDataRaw = loadStateData(allSageFiles, symbol);
 
@@ -215,13 +215,29 @@ async function runSynthesis() {
     for (const d of mcDates) dailyReturnsArray.push(p.dailyReturns[d] || 0);
     p.monteCarloDrawdown99 = runMonteCarlo(dailyReturnsArray, 10000);
   }
-  // PHASE 2: Clustering & Selection (De-correlation)
-  console.log(`\n⚙️ PHASE 2: DETERMINISTIC DE-CORRELATION CLUSTERING (Hierarchical Risk Parity)`);
-  
-  const normalBannedSessions = new Set<string>();
-  let selectedNormal = admitAllWithCorrelationPenalty(rawNormalPool, globalDates, 1, normalBannedSessions, [], 20);
 
-  console.log(`Selected Holy Grail Portfolio: ${selectedNormal.length} configs`);
+  // Prune toxic candidates that carry unacceptable tail risk before clustering
+  const MAX_MC_DD_ALLOWED = 25.0; // Enforce a hard cap of 25R max historical tail risk (matches GrandmasterPreProcessor)
+  const beforePoolCount = rawNormalPool.length;
+  rawNormalPool = rawNormalPool.filter(p => (p.monteCarloDrawdown99 ?? 0) <= MAX_MC_DD_ALLOWED);
+  console.log(`[PRUNING] Removed ${beforePoolCount - rawNormalPool.length} candidates with > ${MAX_MC_DD_ALLOWED}R tail risk.`);
+
+  // PHASE 2: Natural Hedging Clustering (Self-Hedging & Cross-Asset Residual Pairing)
+  console.log(`\n⚙️ PHASE 2: NATURAL HEDGING CLUSTERING (Self-Hedging & Cross-Asset Pairing)`);
+  const allUnits = buildHedgingUnits(rawNormalPool, globalDates);
+  console.log(`[HEDGING] Formed ${allUnits.length} candidate Hedging Units:`);
+  console.log(`  🔗 Self-Pairs (Same Symbol): ${allUnits.filter(u => u.type === "SELF_PAIR").length}`);
+  console.log(`  🌐 Cross-Pairs (Synthetic): ${allUnits.filter(u => u.type === "CROSS_PAIR").length}`);
+  console.log(`  ⭐ Singletons: ${allUnits.filter(u => u.type === "SINGLETON").length}`);
+
+  let selectedUnits = admitHedgingUnitsWithCorrelationPenalty(allUnits, globalDates, 100, 100);
+  console.log(`[HEDGING] Admitted ${selectedUnits.length} diverse Hedging Units`);
+
+  let selectedNormal: IndependentSynthesisComponent[] = [];
+  for (const u of selectedUnits) {
+    selectedNormal.push(...u.components);
+  }
+  console.log(`Selected Holy Grail Portfolio: ${selectedNormal.length} configs across ${selectedUnits.length} Hedging Units`);
 
   // Build active calendar strictly from dates where selected components traded
   const portfolioDatesSet = new Set<string>();
@@ -242,31 +258,14 @@ async function runSynthesis() {
   const normalSizing = computeMasterRiskSizing(selectedNormal, portfolioDates, 1.0, 0.10);
   console.log(`[SIZING] 🌌 Holy Grail Portfolio Master MC DD 99%: ${normalSizing.masterMcDrawdown99.toFixed(2)} R. Global Risk Factor: ${normalSizing.globalRiskPct.toFixed(3)}.`);
 
-  // ── Fix 2: Minimum Allocation Floor ─────────────────────────────────────────
-  // Configs carrying less than 1.5% final allocation are "parasites" — they
-  // contribute negligible returns while still adding correlation drag, complexity,
-  // and CPCV overhead. Drop them before validation so CPCV evaluates only
-  // configs that materially affect portfolio performance.
-  const MIN_ALLOC_PCT = 0.015;
-  const beforeCount = selectedNormal.length;
-  selectedNormal = selectedNormal.filter(c => {
-    if ((c.riskPct ?? 0) < MIN_ALLOC_PCT) {
-      console.log(`  [ALLOC GATE] ❌ Dropped ${c.symbol} (${c.botType}) — allocation ${((c.riskPct ?? 0) * 100).toFixed(2)}% below ${(MIN_ALLOC_PCT * 100).toFixed(1)}% floor`);
-      return false;
-    }
-    return true;
-  });
-  if (selectedNormal.length < beforeCount) {
-    console.log(`  [ALLOC GATE] Cleaned portfolio: ${beforeCount} → ${selectedNormal.length} configs`);
-  }
-
-
-  // ── PHASE 3: PORTFOLIO-LEVEL ZERO-LOSS RECENT MONTHS AUDIT & PRUNING ──────────
-  console.log(`\n⚙️ PHASE 3: PORTFOLIO-LEVEL MONTHLY PROFITABILITY AUDIT (Zero-Loss Constraint)`);
-  const recentTargetMonths = ["2026-03", "2026-04", "2026-05", "2026-06", "2026-07", "2026-08"];
+  // ── PHASE 3: COUPLED-UNIT RECENT MONTHS AUDIT & PRUNING ──────────
+  console.log(`\n⚙️ PHASE 3: COUPLED-UNIT MONTHLY PROFITABILITY AUDIT (+0.25R Weighted Gate)`);
+  const lastDateStr = globalDates[globalDates.length - 1] || "2026-08-01";
+  const recentTargetMonths = getRollingMonthKeys(lastDateStr, 6);
+  const MONTHLY_WEIGHTED_FLOOR = 0.25;
   
   let pruneRounds = 0;
-  while (pruneRounds < 5 && selectedNormal.length > 5) {
+  while (pruneRounds < 8 && selectedUnits.length > 4) {
     const portfolioMonthlyWeightedR: Record<string, number> = {};
     for (const c of selectedNormal) {
       const weight = c.riskPct || (1 / selectedNormal.length);
@@ -276,43 +275,47 @@ async function runSynthesis() {
       }
     }
 
-    const losingMonths = recentTargetMonths.filter(m => (portfolioMonthlyWeightedR[m] !== undefined && portfolioMonthlyWeightedR[m] < -0.01));
+    const losingMonths = recentTargetMonths.filter(m => (portfolioMonthlyWeightedR[m] !== undefined && portfolioMonthlyWeightedR[m] < MONTHLY_WEIGHTED_FLOOR));
     if (losingMonths.length === 0) {
-      console.log(`  ✅ All recent target months (${recentTargetMonths.join(", ")}) are strictly non-negative!`);
+      console.log(`  ✅ All recent target months (${recentTargetMonths.join(", ")}) satisfy the ≥ +0.25R weighted floor!`);
       break;
     }
 
-    console.log(`  ⚠️ Detected monthly drag in: [${losingMonths.join(", ")}]. Identifying and pruning drag contributors...`);
+    console.log(`  ⚠️ Detected monthly sub-target drag in: [${losingMonths.join(", ")}]. Evaluating Coupled Units...`);
     
-    // Find the worst drag contributor across these losing months
-    let worstComp: IndependentSynthesisComponent | null = null;
-    let worstLoss = 0;
+    // Find the worst Unit across these losing months
+    let worstUnit: HedgingUnit | null = null;
+    let worstUnitLoss = 0;
 
-    for (const c of selectedNormal) {
-      let compLossSum = 0;
+    for (const unit of selectedUnits) {
+      let unitLossSum = 0;
       for (const m of losingMonths) {
         let mR = 0;
-        for (const [dateStr, r] of Object.entries(c.dailyReturns || {})) {
+        for (const [dateStr, r] of Object.entries(unit.combinedDailyReturns || {})) {
           if (dateStr.substring(0, 7) === m) mR += (r as number);
         }
-        if (mR < 0) compLossSum += mR;
+        if (mR < 0) unitLossSum += mR;
       }
-      if (compLossSum < worstLoss) {
-        worstLoss = compLossSum;
-        worstComp = c;
+      if (unitLossSum < worstUnitLoss) {
+        worstUnitLoss = unitLossSum;
+        worstUnit = unit;
       }
     }
 
-    if (worstComp && worstLoss < -0.1) {
-      console.log(`  [PRUNING] ❌ Dropping ${worstComp.symbol} (${worstComp.botType}) — contributed ${worstLoss.toFixed(2)}R drag across [${losingMonths.join(", ")}]`);
-      selectedNormal = selectedNormal.filter(c => c !== worstComp);
+    if (worstUnit && worstUnitLoss < -0.1) {
+      console.log(`  [PRUNING] ❌ Dropping Unit [${worstUnit.unitId}] (${worstUnit.type}) — combined ${worstUnitLoss.toFixed(2)}R drag across [${losingMonths.join(", ")}]`);
+      selectedUnits = selectedUnits.filter(u => u !== worstUnit);
+      selectedNormal = [];
+      for (const u of selectedUnits) selectedNormal.push(...u.components);
       pruneRounds++;
-      // Re-calculate sizing after pruning
-      computeMasterRiskSizing(selectedNormal, portfolioDates, 1.0, 0.10);
     } else {
       break;
     }
   }
+
+  // Final post-pruning master risk sizing strictly enforcing <= 1.0R Monte Carlo DD
+  const finalSizing = computeMasterRiskSizing(selectedNormal, portfolioDates, 1.0, 0.10);
+  console.log(`[FINAL SIZING] 🌌 Holy Grail Portfolio Master MC DD 99%: ${finalSizing.masterMcDrawdown99.toFixed(2)} R. Global Risk Factor: ${finalSizing.globalRiskPct.toFixed(3)}.`);
 
   console.log(`\n⚙️ PHASE 4: PORTFOLIO CPCV VALIDATION`);
   const windows = generateRollingWindows(portfolioDates.length, 6, 560, 140, 5);
@@ -374,7 +377,7 @@ async function runSynthesis() {
   const rawPortfolioNetR = selectedNormal.reduce((sum, p) => sum + p.totalTotalR, 0);
 
   holyGrailMd += `- **Total Scaled Portfolio Net R**: ${scaledPortfolioNetR.toFixed(2)} R (Raw Unscaled Net R: ${rawPortfolioNetR.toFixed(2)} R)\n`;
-  holyGrailMd += `- **Scaled Portfolio Max DD (99% MC)**: ${normalSizing?.masterMcDrawdown99.toFixed(2) ?? '0.00'} R\n`;
+  holyGrailMd += `- **Scaled Portfolio Max DD (99% MC)**: ${finalSizing?.masterMcDrawdown99.toFixed(2) ?? '0.00'} R\n`;
   holyGrailMd += `- **Components in Portfolio**: ${selectedNormal.length}\n`;
   holyGrailMd += `\n**Component Setups (${selectedNormal.length} total):**\n`;
   for (const item of selectedNormal) {

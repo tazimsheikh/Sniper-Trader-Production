@@ -62,7 +62,6 @@ const isNewsBlackout = (...args: any[]) =>
 import { globalTradeGate as realGate } from "../../utils/GlobalTradeGate.js";
 const globalTradeGate = (global as any).__SIM_TRADE_GATE__ || realGate;
 import { isTradeAllowed, isRolloverCircuitBreaker, isToxicDay } from "../market/MathFilters.js";
-import { buildAtrArray } from "../market/Indicators.js";
 import { HTFContextTracker } from "../market/HTFContextTracker.js";
 import { getShortHash } from "../../core/crypto.js";
 
@@ -265,9 +264,6 @@ export async function _runMageBotForConfig(orch: any, symbol: string, state: any
   os.lastEstHour = estHour;
   os.lastEstDateStr = dateStr;
   os.currentDateStr = dateStr;
-  if (symbol.includes("XTIUSD") && dateStr === "2026-06-01" && estHour === 7) {
-    console.log(`[DEBUG XTI TICK 06-01 07:xx] min=${estMin}, currentDateStr=${os.currentDateStr}, orBuilt=${os.orBuilt}, fired=${os.fired}, limitOrderId=${os.limitOrderId}, tradeTaken=${os.mageTradeTakenToday}`);
-  }
   if (os.mageTradeTakenToday) return;
   if (os.fired || os.limitOrderId) return;
 
@@ -446,7 +442,6 @@ export async function _runMageBotForConfig(orch: any, symbol: string, state: any
   const isForex = PairConfigManager.isForex(normalizedSymbol);
   const maxSlPips = _mCfg.maxSlDist!;
   if (orRangePips + (spreadPts / pipSize) > maxSlPips) {
-    if (symbol.includes("XTIUSD")) console.log(`[DEBUG XTI REJECT] Range too large: ${orRangePips} + ${spreadPts / pipSize} > ${maxSlPips}`);
     logger.verbose(`[MageEngine] ${symbol} Rejected: ORB Range (${orRangePips.toFixed(1)}) + spread (${spreadPts / pipSize}) > maxSlPips (${maxSlPips}) at ${new Date(c.timestamp).toISOString()}`);
     orch.addEyeFeedEvent({
       type: "REJECT",
@@ -491,9 +486,7 @@ export async function _runMageBotForConfig(orch: any, symbol: string, state: any
       return;
     }
 
-    if (len < 1) return;
-    const prevM5 = state.m5Buffer[len - 1];
-    const prevEstDate = getFixedEstDate(new Date(prevM5.timestamp));
+    const prevEstDate = getFixedEstDate(new Date(lastM5.timestamp));
     const prevM5Mins = prevEstDate.getUTCHours() * 60 + prevEstDate.getUTCMinutes();
 
     if (prevM5Mins < startMins + orDurationMins) {
@@ -517,10 +510,6 @@ export async function _runMageBotForConfig(orch: any, symbol: string, state: any
       if (lte(actionCandle.low, os.orLow)) sellTriggered = true;
     }
 
-    if (symbol.includes("XTIUSD") && dateStr === "2026-06-01" && estHour === 7) {
-      console.log(`[DEBUG XTI EVAL 06-01] isForex: ${isForex}, actHigh: ${actionCandle.high}, actLow: ${actionCandle.low}, actClose: ${actionCandle.close}, orHigh: ${os.orHigh}, orLow: ${os.orLow}, spreadPts: ${spreadPts}, buyTrig: ${buyTriggered}, sellTrig: ${sellTriggered}`);
-    }
-
     // Log scanning activity for visibility on dev console
     if (!(global as any).isSimulator) {
       logger.info(`[MageEngine][P${orch.profileId}] 🔍 Scanning ${_sessionPair} Breakout [${new Date(actionCandle.timestamp).toISOString().substring(11, 16)} EST] | ` +
@@ -529,7 +518,6 @@ export async function _runMageBotForConfig(orch: any, symbol: string, state: any
     }
 
     if ((global as any).isSimulator && symbol.includes("USDCHF")) {
-       console.log(`[DEBUG-MAGE] Evaluating USDCHF at ${new Date(actionCandle.timestamp).toISOString()} | orHigh: ${os.orHigh} | orLow: ${os.orLow} | cClose: ${actionCandle.close} | buyTrig: ${buyTriggered} | sellTrig: ${sellTriggered} | orBuilt: ${os.orBuilt} | fired: ${os.fired} | takenToday: ${os.mageTradeTakenToday}`);
     }
 
     if (buyTriggered || sellTriggered) {
@@ -538,11 +526,9 @@ export async function _runMageBotForConfig(orch: any, symbol: string, state: any
         return; 
       }
       if (buyTriggered && Math.max(actionCandle.open, actionCandle.close) < os.orHigh) {
-          if ((global as any).isSimulator && symbol.includes("USDCHF")) console.log("Blocked: Max(open,close) < orHigh");
           return;
       }
       if (sellTriggered && Math.min(actionCandle.open, actionCandle.close) > os.orLow) {
-          if ((global as any).isSimulator && symbol.includes("USDCHF")) console.log("Blocked: Min(open,close) > orLow");
           return;
       }
 
@@ -553,7 +539,6 @@ export async function _runMageBotForConfig(orch: any, symbol: string, state: any
         if (!(global as any).isSimulator) {
           logger.info(`[MageEngine][P${orch.profileId}] ATR-Relative OR filter skipped breakout for ${symbol}: Insufficient M5 history buffer (${state.m5Buffer?.length || 0}/14).`);
         }
-        if ((global as any).isSimulator && symbol.includes("USDCHF")) console.log("Blocked: ATR Buffer");
         return;
       }
       // ATR-Relative OR filter: use 14-period Wilder ATR from state
@@ -567,14 +552,12 @@ export async function _runMageBotForConfig(orch: any, symbol: string, state: any
           if (!(global as any).isSimulator) {
             logger.info(`[MageEngine][P${orch.profileId}] ATR-Relative OR filter blocked breakout for ${symbol}. OR/ATR ratio: ${ratio.toFixed(2)}`);
           }
-          if ((global as any).isSimulator && symbol.includes("USDCHF")) console.log(`Blocked: ATR Ratio ${ratio}`);
           return;
         }
       }
       if (_mCfg.minBodyPips !== void 0) {
         const bodySize = parseFloat((Math.abs(actionCandle.close - actionCandle.open) / pipSize).toFixed(1));
         if (bodySize < _mCfg.minBodyPips) {
-          if ((global as any).isSimulator && symbol.includes("USDCHF")) console.log(`Blocked: bodySize ${bodySize} < ${_mCfg.minBodyPips}`);
           logger.info(
             `[DiscretionaryTrader] ⛔ Mage aborted on ${symbol} at ${new Date(actionCandle.timestamp).toISOString()}: Breakout action body (${bodySize.toFixed(1)} pips) < minBodyPips (${_mCfg.minBodyPips}).`,
           );
@@ -939,9 +922,9 @@ async function placeMageLimitOrder(orch: any, symbol: string, state: any, c: any
       async () => {
         const conn = await getSharedConnection(token, accId);
         if (!conn) throw new Error("No shared connection available.");
-        const pEntry = roundPrice(os.limitPrice, PairConfigManager.getBaseSymbol(symbol));
-        const pSl = roundPrice(os.slPrice, PairConfigManager.getBaseSymbol(symbol));
-        const pTp = roundPrice(os.tpPrice, PairConfigManager.getBaseSymbol(symbol));
+        const pEntry = roundPrice(os.limitPrice, brokerSymbol);
+        const pSl = roundPrice(os.slPrice, brokerSymbol);
+        const pTp = roundPrice(os.tpPrice, brokerSymbol);
         
         let res: any;
         const pullbackPct = _mCfg.orbPullbackPct || 0;
@@ -968,7 +951,7 @@ async function placeMageLimitOrder(orch: any, symbol: string, state: any, c: any
 
         const optCfg = PairConfigManager.getRepresentativeConfig(symbol);
         const spreadPts = (optCfg && optCfg.spread !== undefined) ? optCfg.spread * pipSize : 0;
-        const currentPrice = isBuy ? c.close + spreadPts : c.close;
+        const currentPrice = roundPrice(isBuy ? c.close + spreadPts : c.close, brokerSymbol);
         const proximityThreshold = Math.max(2.5 * pipSize, (optCfg?.spread || 1) * 2.5 * pipSize, 0.10 * Math.abs(pEntry - pSl));
         const distFromEntry = isBuy ? (currentPrice - pEntry) : (pEntry - currentPrice);
         const isWithinProximity = Math.abs(distFromEntry) <= proximityThreshold || (isBuy ? currentPrice <= pEntry : currentPrice >= pEntry);
@@ -978,9 +961,9 @@ async function placeMageLimitOrder(orch: any, symbol: string, state: any, c: any
         if (executeAsMarket) {
           logger.info(`[MageEngine] ⚡ Executing direct MARKET ${os.breakoutDir} on ${brokerSymbol} (Proximity: ${(distFromEntry / pipSize).toFixed(1)} pips <= ${(proximityThreshold / pipSize).toFixed(1)} threshold, Target: ${pEntry}, Live: ${currentPrice})`);
           if (os.breakoutDir === "BUY") {
-            res = await conn.createMarketBuyOrder(brokerSymbol, calculatedVolume, pSl, pTp, { clientId: shortClientId });
+            res = await conn.createMarketBuyOrder(brokerSymbol, calculatedVolume, pSl, pTp, { clientId: shortClientId, limitPrice: pEntry });
           } else {
-            res = await conn.createMarketSellOrder(brokerSymbol, calculatedVolume, pSl, pTp, { clientId: shortClientId });
+            res = await conn.createMarketSellOrder(brokerSymbol, calculatedVolume, pSl, pTp, { clientId: shortClientId, limitPrice: pEntry });
           }
         } else {
           try {
@@ -1001,7 +984,7 @@ async function placeMageLimitOrder(orch: any, symbol: string, state: any, c: any
                 return;
               }
 
-              const latestPrice = isBuy ? c.close + spreadPts : c.close;
+              const latestPrice = roundPrice(isBuy ? c.close + spreadPts : c.close, brokerSymbol);
               const hitSl = isBuy ? (latestPrice <= pSl) : (latestPrice >= pSl);
               const hitTp = isBuy ? (latestPrice >= pTp) : (latestPrice <= pTp);
               if (hitSl || hitTp) {
@@ -1021,7 +1004,7 @@ async function placeMageLimitOrder(orch: any, symbol: string, state: any, c: any
               }
               // ------------------------------------
 
-              const staticSpec = getSymbolSpec(symbol.split("_")[0]);
+              const staticSpec = getSymbolSpec(brokerSymbol);
               const stopsLevelPts = liveSpec?.stopsLevel || (staticSpec as any).stopsLevel || 0;
               const safePrices = calculateStopsLevelSafePrices(
                 os.breakoutDir as "BUY" | "SELL",
@@ -1030,12 +1013,14 @@ async function placeMageLimitOrder(orch: any, symbol: string, state: any, c: any
                 pTp,
                 stopsLevelPts,
                 liveSpec?.tickSize || staticSpec.tickSize || 0.00001,
-                liveSpec?.digits || staticSpec.digits || 5
+                liveSpec?.digits ?? staticSpec.digits ?? 5
               );
-              logger.info(`[MageEngine] 🛡️ Smart Market Fallback Prices: Entry=${latestPrice}, SL=${safePrices.pSl}, TP=${safePrices.pTp} (stopsLevel=${stopsLevelPts}pts)`);
+              const roundedSafeSl = roundPrice(safePrices.pSl, brokerSymbol);
+              const roundedSafeTp = roundPrice(safePrices.pTp, brokerSymbol);
+              logger.info(`[MageEngine] 🛡️ Smart Market Fallback Prices: Entry=${latestPrice}, SL=${roundedSafeSl}, TP=${roundedSafeTp} (stopsLevel=${stopsLevelPts}pts)`);
               res = os.breakoutDir === "BUY"
-                ? await conn.createMarketBuyOrder(brokerSymbol, calculatedVolume, safePrices.pSl, safePrices.pTp, { clientId: shortClientId })
-                : await conn.createMarketSellOrder(brokerSymbol, calculatedVolume, safePrices.pSl, safePrices.pTp, { clientId: shortClientId });
+                ? await conn.createMarketBuyOrder(brokerSymbol, calculatedVolume, roundedSafeSl, roundedSafeTp, { clientId: shortClientId, limitPrice: pEntry })
+                : await conn.createMarketSellOrder(brokerSymbol, calculatedVolume, roundedSafeSl, roundedSafeTp, { clientId: shortClientId, limitPrice: pEntry });
             } else {
               throw err;
             }
@@ -1255,6 +1240,7 @@ export async function checkMageLimitFill(orch: any, sessionPair: string, state: 
             botId: targetBotId.toUpperCase(),
             direction: os.breakoutDir,
             entryPrice: pos.openPrice,
+            intendedEntryPrice: os.limitPrice || pos.openPrice,
             slPrice: os.slPrice,
             originalSl: os.slPrice,
             tpPrice: os.tpPrice,
@@ -1311,7 +1297,20 @@ export async function evaluateMageTrailingOnTick(
           slSwept = true;
         }
 
-        if (tpSwept || slSwept) {
+        const searchConfigs = PairConfigManager.getMageConfigs(sessionPair) || (state.config?.mageConfig ? [state.config.mageConfig] : []);
+        const sigCfg = searchConfigs.find((x: any) => x.signature === sig || (x.signature && sig.includes(x.signature))) || searchConfigs[0];
+        const fcHours = sigCfg?.forceCloseHours;
+        let isTimedOut = false;
+        if (fcHours !== undefined && os.limitPlacedAt && (c.timestamp - os.limitPlacedAt >= fcHours * 3600000)) {
+          isTimedOut = true;
+        }
+
+        const estDate = getFixedEstDate(new Date(c.timestamp));
+        const estHour = estDate.getUTCHours();
+        const estMin = estDate.getUTCMinutes();
+        const isRollover = isRolloverCircuitBreaker(estHour, estMin);
+
+        if (tpSwept || slSwept || isTimedOut || isRollover) {
           try {
             const conn = await getSharedConnection(orch.profileId);
             const cancelPromise = enqueueMetaApiRequest(
@@ -1325,7 +1324,8 @@ export async function evaluateMageTrailingOnTick(
           os.fired = true;
           os.mageTradeTakenToday = true;
           if (!(global as any).testParitySuppressLogging) {
-            logger.info(`[MageEngine] ${sessionPair} Cancelled pending limit order — ${tpSwept ? 'TP' : 'SL'} boundary swept before fill.`);
+            const reason = tpSwept ? 'TP boundary swept' : slSwept ? 'SL boundary swept' : isTimedOut ? `expired after ${fcHours}h` : 'rollover circuit breaker';
+            logger.info(`[MageEngine] ${sessionPair} Cancelled pending limit order — ${reason}.`);
           }
         }
       }
@@ -1443,7 +1443,7 @@ export async function evaluateMageTrailingOnTick(
       }
     }
 
-    const brokerDigits = getSymbolSpec(baseSymbol.split("_")[0]).digits || 5;
+    const brokerDigits = getSymbolSpec(baseSymbol).digits ?? 5;
     const spread = OPTIMIZER_CONFIG[baseSymbol.replace(".Daily", "")]?.spread; 
     const spreadPts = spread !== undefined ? spread * pipSize : 0;
     const peakHigh = Math.max(trade.highestPrice || trade.entryPrice, c.high);
@@ -1466,10 +1466,8 @@ export async function evaluateMageTrailingOnTick(
     const currentR = Math.max(actualR, theoreticalR);
 
     const tTrig = config.trailingSlTrigger;
-
-    const clog = (global as any).__ORIGINAL_LOG__ || console.log;
     const botLabel = trade.botId === "discretionary_trader" ? "MANUAL" : "MAGE";
-    clog(`📈 Trailing Eval (${botLabel}) ${baseSymbol}: FloatingR=${currentR >= 0 ? "+" : ""}${currentR.toFixed(2)}R | BreakEvenTrigger=${tTrig}R | Step=${config.trailingSlStep}R | CurrentSL=${trade.slPrice} | Entry=${trade.entryPrice}`);
+    logger.verbose(`📈 Trailing Eval (${botLabel}) ${baseSymbol}: FloatingR=${currentR >= 0 ? "+" : ""}${currentR.toFixed(2)}R | BreakEvenTrigger=${tTrig}R | Step=${config.trailingSlStep}R | CurrentSL=${trade.slPrice} | Entry=${trade.entryPrice}`);
 
     if (trade.lastTrailingLevel === undefined) trade.lastTrailingLevel = -1;
     let mageShouldUpdate = false;

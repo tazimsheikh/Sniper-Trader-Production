@@ -237,32 +237,6 @@ export function preComputeTriggers(
 }
 
 
-const weekCache: Record<string, string> = {};
-
-export function hasSevereLosingWeek(
-  dailyNetR: Record<string, number>,
-  maxLossR: number,
-): boolean {
-  const weeklySums: Record<string, number> = {};
-  for (const dateStr in dailyNetR) {
-    const returnVal = dailyNetR[dateStr];
-    let weekStr = weekCache[dateStr];
-    if (!weekStr) {
-      const d = new Date(dateStr);
-      const day = d.getUTCDay();
-      const diff = d.getUTCDate() - day + (day === 0 ? -6 : 1);
-      const monday = new Date(d);
-      monday.setUTCDate(diff);
-      weekStr = monday.toISOString().split("T")[0];
-      weekCache[dateStr] = weekStr;
-    }
-    weeklySums[weekStr] = (weeklySums[weekStr] || 0) + returnVal;
-  }
-  for (const weekStr in weeklySums) {
-    if (weeklySums[weekStr] <= maxLossR) return true;
-  }
-  return false;
-}
 
 export function evaluateExits(
   m1: M1TypedArrays,
@@ -493,7 +467,7 @@ export function evaluateExits(
         // PARITY: Cancel pending orders when the 4-hour session sweep window expires
         // This matches Live Engine which discards unfilled limit orders after the 4-hour sweep window
         const orbStartMins = config.orbStartHour * 60 + config.orbStartMin;
-        const orbDurationMins = config.orbMinutes || 60; // fallback to 60 if missing
+        const orbDurationMins = config.orbMinutes ?? 60; // fallback to 60 only if null/undefined
         const endSweepMins = orbStartMins + orbDurationMins + 4 * 60; // 4 hours after ORB finishes
         
         const currentMins = m1.estHour[j] * 60 + m1.minute[j];

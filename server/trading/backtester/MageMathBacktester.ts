@@ -159,12 +159,11 @@ export async function runMathBacktest(
     m1Typed.minute[i] = r.minute;
     if (i > 0) {
       const prevH = m1Rows[i-1].estHour;
-      m1Typed.isSessionReset[i] = ((prevH < 15 && r.estHour >= 15) || (prevH > r.estHour && r.estHour >= 15) || (r.estHour === 15 && r.minute === 0)) ? 1 : 0;
-      m1Typed.isMidnightExpiry[i] = (prevH > r.estHour && r.estHour < 15) ? 1 : 0;
+      m1Typed.isSessionReset[i] = ((prevH < 17 && r.estHour >= 17) || (prevH > r.estHour && r.estHour >= 17) || (r.estHour === 17 && r.minute === 0)) ? 1 : 0;
+      m1Typed.isMidnightExpiry[i] = (prevH > r.estHour && r.estHour < 17) ? 1 : 0;
     }
     const estDate = getFixedEstDate(new Date(r.timestamp));
     const dStr = estDate.toISOString().split("T")[0];
-    m1Typed.isEOD_standard[i] = isEODSession(r.estHour, r.minute) ? 1 : 0;
     m1Typed.isEOD_standard[i] = isEODSession(r.estHour, r.minute) ? 1 : 0;
     m1Typed.isNewsForceClose[i] = isNewsForceClose(dStr, r.estHour, r.minute) ? 1 : 0;
   }

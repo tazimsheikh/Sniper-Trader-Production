@@ -13,7 +13,7 @@ import { PairConfig, PairConfigManager } from "../../config/PairConfig.js";
 import { TriggerEvent, M1TypedArrays, SageOptimizerConfig } from "../../config/types.js";
 import { isNewsForceClose } from "../../market/historicalNews.js";
 import { isEODSession } from "../../market/MathFilters.js";
-import { preComputeTriggers, evaluateExits, hasSevereLosingWeek } from "../../backtester/math_core/SageMathCore.js";
+import { preComputeTriggers, evaluateExits } from "../../backtester/math_core/SageMathCore.js";
 import { WalkForwardEngine } from "../core/WalkForwardEngine.js";
 import { ChromosomeMapper } from "../core/ChromosomeMapper.js";
 import { HybridGeneticOptimizer, FitnessResult } from "../core/HybridGeneticOptimizer.js";

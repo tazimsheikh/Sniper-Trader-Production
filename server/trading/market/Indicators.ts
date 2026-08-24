@@ -273,7 +273,7 @@ export function isVolumeSpike(
   const avgVol = volSum / lookback;
   const avgBody = bodySum / lookback;
 
-  const currentVol = candles[idx].tickVolume || 1;
+  const currentVol = candles[idx].volume ?? candles[idx].tickVolume ?? 1;
   const currentBody = Math.abs(candles[idx].close - candles[idx].open);
 
   // A true institutional volume spike must be accompanied by SOME price body expansion (at least half the average)

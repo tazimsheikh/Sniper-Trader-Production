@@ -15,7 +15,7 @@ import { sendOtpEmail } from './email.js';
 import { deleteProfileTradeState } from '../manager/tradeManager.js';
 import { verifyMetaApiAccount, verifyMetaApiConnection, getSharedConnection, getProfileTradeHistory, clearSharedConnection } from '../trading/broker/metaApiHandler.js';
 import { discoverBrokerSymbols } from '../utils/discoverSymbols.js';
-import { registerProfileName } from '../utils/logger.js';
+import { registerProfileName, logger } from '../utils/logger.js';
 
 const jwtLib = jwtPkg as any;
 
@@ -434,22 +434,19 @@ authRouter.delete('/profiles/:id', requireAuth, async (req: AuthRequest, res) =>
         const rawToken = isEncrypted(user.metaapi_token) ? decrypt(user.metaapi_token) : user.metaapi_token;
         const decryptedAccountId = isEncrypted(profile.metaapi_account_id) ? decrypt(profile.metaapi_account_id) : profile.metaapi_account_id;
         clearSharedConnection(rawToken, decryptedAccountId);
-      } catch (e) {}
+      } catch (e: any) { logger.warn(`[auth] clearSharedConnection failed on profile delete: ${e?.message}`); }
     }
 
     try {
-
       deleteProfileTradeState(profileId);
       deleteProfileBotInstances(profileId);
-    } catch (e) {}
+    } catch (e: any) { logger.warn(`[auth] deleteProfileState failed: ${e?.message}`); }
 
     await db.prepare('DELETE FROM trading_profiles WHERE id = ? AND user_id = ?').run(profileId, req.user.id);
     await db.prepare('DELETE FROM bot_trade_states WHERE profile_id = ?').run(profileId);
     await db.prepare('DELETE FROM trade_diary WHERE profile_id = ?').run(profileId);
     await db.prepare('DELETE FROM bot_logs WHERE profile_id = ?').run(profileId);
     await db.prepare('DELETE FROM ai_decisions WHERE profile_id = ?').run(profileId);
-    
-    analyticsHistoryCache.delete(profileId);
     
     res.json({ success: true });
   } catch (err: any) {

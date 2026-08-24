@@ -1,4 +1,5 @@
 import { M1TypedArrays } from "../../config/types.js";
+import { logger } from "../../../utils/logger.js";
 
 export interface WfaWindow {
   windowIndex: number;
@@ -72,7 +73,7 @@ export class WalkForwardEngine {
           const FOURTEEN_DAYS_MS = 14 * 24 * 60 * 60 * 1000;
           
           if (partialDuration < FOURTEEN_DAYS_MS) {
-            console.log(`[WFA] Dropping final partial OOS window (only ${Math.round(partialDuration/86400000)} days, < 14 days required)`);
+            logger.info(`[WFA] Dropping final partial OOS window (only ${Math.round(partialDuration/86400000)} days, < 14 days required)`);
             break;
           }
           

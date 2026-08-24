@@ -29,7 +29,7 @@ import * as fs from 'fs';
 // so the dynamic imports in LiveOrchestrator hit our stubs.
 
 async function registerStubs() {
-  const stubDir = path.join(process.cwd(), 'server/discretionary_trader/backtester/stubs');
+  // Stubs are imported directly at the top of this file; no stub directory path needed.
   
   // We need to patch module resolution for LiveOrchestrator's static imports.
   // The cleanest approach: create mock module objects and attach them to a global registry
@@ -188,18 +188,11 @@ export async function runShadowBacktest(pair: string, startDate?: string, endDat
   let peakR = 0;
   let maxDrawdown = 0;
 
-  // Feed each M1 candle through the real LiveOrchestrator
-  const originalLog = console.log;
-  console.log = (...args: any[]) => {
-      const msg = args.join(' ');
-      originalLog(msg);
-  };
-
   let lastReportTs = 0;
   for (const m1 of m1Candles) {
     if (m1.timestamp - lastReportTs >= 30 * 86400000) {
         lastReportTs = m1.timestamp;
-        originalLog(`   ⏳ Progress: ${new Date(m1.timestamp).toISOString()}`);
+        console.log(`   ⏳ Progress: ${new Date(m1.timestamp).toISOString()}`);
     }
     const ts = m1.timestamp;
     if (!isFinite(ts)) continue;
@@ -240,12 +233,6 @@ export async function runShadowBacktest(pair: string, startDate?: string, endDat
     }
 
     // Distribute tick to orchestrator (engine applies trailing SL moves for NEXT candle's check)
-    if (ts >= 1735872900000 && ts <= 1735873200000) {
-       originalLog(`[BACKTESTER TICK] ${new Date(ts).toISOString()} fed to orch`);
-    }
-    if (ts === 1768798800000 || ts === 1768799100000) {
-       originalLog(`[MAGIC SHADOW FEED] Feeding ${ts} to orch!`);
-    }
     const basePair = pair.split(".")[0];
     await orch.onM1Tick(basePair, m1.open, m1.high, m1.low, m1.close, m1.tickVol || 1, ts);
 
@@ -365,7 +352,8 @@ export async function runShadowBacktest(pair: string, startDate?: string, endDat
     }
   }
 
-  console.log = originalLog; // Restore logging
+
+
 
   // Collect results only from target date range
   console.log(`[SHADOW] Total tradeLog length: ${mockAccount.tradeLog.length}`);

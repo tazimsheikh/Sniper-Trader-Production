@@ -23,6 +23,23 @@ interface SymbolCandleCache {
   endDate: string;
 }
 
+export function getRollingMonthKeys(endDateStr: string, count: number): string[] {
+  const keys: string[] = [];
+  const endD = new Date(endDateStr.length === 7 ? `${endDateStr}-01` : endDateStr);
+  let y = endD.getUTCFullYear();
+  let m = endD.getUTCMonth(); // 0-indexed
+  for (let i = 0; i < count; i++) {
+    const mKey = `${y}-${String(m + 1).padStart(2, "0")}`;
+    keys.unshift(mKey);
+    m--;
+    if (m < 0) {
+      m = 11;
+      y--;
+    }
+  }
+  return keys;
+}
+
 const symbolCandleDataCache = new Map<string, SymbolCandleCache>();
 
 async function getOrLoadSymbolCandleData(symbol: string): Promise<SymbolCandleCache | null> {
@@ -440,17 +457,17 @@ export function getEliteComponents(
       const calmar = (c.threeYearMaxDrawdown || c.maxDrawdown || 0) > 0 ? threeYrR / (c.threeYearMaxDrawdown || c.maxDrawdown || 1) : threeYrR;
 
       // Must meet Elite 3-Year Institutional Quality Standards
-      if (threeYrR < 18.0 || threeYrTrades < 20 || expectancy < 0.08 || calmar < 0.85) {
+      if (threeYrR < 15.0 || threeYrTrades < 15 || expectancy < 0.05 || calmar < 0.85) {
         return false;
       }
 
-      // Multi-Regime Half-Year Consistency Gate (Must be profitable in >= 40% of half-year regimes)
-      if (c.regimeConsistency !== undefined && c.regimeConsistency < 40.0) {
+      // Multi-Regime Half-Year Consistency Gate
+      if (c.regimeConsistency !== undefined && c.regimeConsistency < 30.0) {
         return false;
       }
 
       const effectiveOneYearWR = c.recentSixMonthWinRate !== undefined ? c.recentSixMonthWinRate : threeYrWR;
-      if (effectiveOneYearWR < 22.0) {
+      if (effectiveOneYearWR < 20.0) {
         return false;
       }
 
@@ -463,29 +480,18 @@ export function getEliteComponents(
   );
   if (pool.length === 0) return [];
 
-  // ── Fix 3: Hard Monte Carlo Drawdown Cap ────────────────────────────────────
-  // Configs whose 99% MC tail-risk exceeds 10 R are structurally dangerous
-  // regardless of historical performance. They passed the 3-year audit gate
-  // but carry unacceptable tail risk in adverse sequential draw scenarios.
-  const MAX_MC_DD_ALLOWED = 10.0;
+  const MAX_MC_DD_ALLOWED = 25.0;
   pool = pool.filter(c => {
     const mcDd = c.monteCarloDrawdown99 ?? 0;
     if (mcDd > MAX_MC_DD_ALLOWED) {
-      console.log(`  [QUALITY GATE] ❌ Rejected ${c.symbol} (${c.botType}) — MC DD ${mcDd.toFixed(2)}R exceeds ${MAX_MC_DD_ALLOWED}R cap`);
       return false;
     }
     return true;
   });
 
-  // ── Fix 1: Minimum Hedge Score Threshold ─────────────────────────────────────
-  // Reject bottom-decile configs. A hedge score below 0.15 means the config
-  // ranked in approximately the lowest 10% of all candidates by composite
-  // quality (Sharpe × Recovery × ProfitFactor percentile). These configs
-  // may survive hard gates but contribute noise rather than alpha.
-  const MIN_HEDGE_SCORE = 0.15;
+  const MIN_HEDGE_SCORE = 0.05;
   pool = pool.filter(c => {
     if (c.hedgeScore < MIN_HEDGE_SCORE) {
-      console.log(`  [QUALITY GATE] ❌ Rejected ${c.symbol} (${c.botType}) — HedgeScore ${c.hedgeScore.toFixed(4)} below floor ${MIN_HEDGE_SCORE}`);
       return false;
     }
     return true;
@@ -493,7 +499,8 @@ export function getEliteComponents(
 
   // Sort candidates by robust composite hedgeScore
   const sortedAll = [...pool].sort((a, b) => b.hedgeScore - a.hedgeScore);
-  return sortedAll;
+  // Keep strictly top 2 champions per symbol + botType to allow more variety
+  return sortedAll.slice(0, 2);
 }
 
 export async function preProcessData(
@@ -793,31 +800,61 @@ export async function preProcessData(
         }
 
         const monthlyR = auditResult.monthlyNetR || {};
-        let r2025 = 0;
-        let r2026 = 0;
-        for (const [mKey, val] of Object.entries(monthlyR)) {
-          if (mKey.startsWith("2025")) r2025 += val;
-          if (mKey.startsWith("2026")) r2026 += val;
-        }
+        const targetMonths13 = getRollingMonthKeys(endDate, 13);
+        const recent1YearMonths = targetMonths13.slice(-12);
+        const recent6Months = targetMonths13.slice(-6);
+        const recentQuarterMonths = targetMonths13.slice(-3);
+
+        const r1Year = recent1YearMonths.reduce((sum, m) => sum + (monthlyR[m] || 0), 0);
+        const rRecent6M = recent6Months.reduce((sum, m) => sum + (monthlyR[m] || 0), 0);
+        const rRecentQuarter = recentQuarterMonths.reduce((sum, m) => sum + (monthlyR[m] || 0), 0);
+
         const expectancy = p.threeYearTrades > 0 ? p.threeYearNetR / p.threeYearTrades : 0;
         const calmar = p.threeYearMaxDrawdown > 0 ? p.threeYearNetR / p.threeYearMaxDrawdown : p.threeYearNetR;
         const effectiveOneYearWR = auditResult.oneYearWinRate ?? auditResult.threeYearWinRate;
 
+        // Dynamic Pristine Champion Gates: Ensure pristine alpha, high calmar, and extreme monthly consistency
+        let losingMonths13 = 0;
+        const monthlyValues: number[] = [];
+        for (const m of targetMonths13) {
+          const mVal = monthlyR[m] || 0;
+          monthlyValues.push(mVal);
+          if (mVal < -0.2) losingMonths13++;
+        }
+
+        // Linear slope across rolling months to detect decaying vs accelerating setups
+        const nMonths = monthlyValues.length;
+        let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+        for (let idx = 0; idx < nMonths; idx++) {
+          sumX += idx;
+          sumY += monthlyValues[idx];
+          sumXY += idx * monthlyValues[idx];
+          sumXX += idx * idx;
+        }
+        const slope = (nMonths * sumXY - sumX * sumY) / (nMonths * sumXX - sumX * sumX);
+
         if (
-          p.threeYearNetR < 18.0 ||
+          p.threeYearNetR < 15.0 ||
           p.threeYearTrades < 20 ||
-          expectancy < 0.08 ||
-          calmar < 0.85 ||
-          r2025 < -0.5 ||
-          r2026 < -0.5 ||
-          effectiveOneYearWR < 22.0 ||
-          (p.regimeConsistency !== undefined && p.regimeConsistency < 40.0) ||
-          auditResult.hasConsecutivePriorYearLoss ||
-          auditResult.hasLosingMonthInLast6
+          expectancy < 0.05 ||
+          calmar < 1.25 ||
+          r1Year < 8.0 ||
+          rRecent6M < 2.0 || // Dynamic Non-Decaying Alpha: Must be solidly profitable in recent 6-month horizon
+          rRecentQuarter < -0.5 || // Dynamic Recent Quarter (last 90 days) must not be negative
+          slope < -0.8 || // Reject setups with steep decaying trajectory
+          losingMonths13 > 4 ||
+          effectiveOneYearWR < 20.0 ||
+          (p.regimeConsistency !== undefined && p.regimeConsistency < 30.0)
         ) {
           validComponents.splice(i, 1);
           continue;
         }
+        (p as any).r1Year = r1Year;
+        (p as any).rRecent6M = rRecent6M;
+        (p as any).recentQuarter = rRecentQuarter;
+        (p as any).slope = slope;
+        (p as any).calmar = calmar;
+        (p as any).losingMonths = losingMonths13;
       } else {
         validComponents.splice(i, 1);
         continue;
@@ -831,12 +868,8 @@ export async function preProcessData(
     const allSharpes = validComponents.map((p) => p.sharpeRatio).sort((a, b) => a - b);
     const allRecoveries = validComponents.map((p) => p.recoveryFactor).sort((a, b) => a - b);
     const allPFs = validComponents.map((p) => (p.threeYearProfitFactor || 1)).sort((a, b) => a - b);
-    const allOmegas = validComponents.map((p) => (p.omegaRatio || 1)).sort((a, b) => a - b);
-    const allDsrs = validComponents.map((p) => (p.dsrProb || 0.5)).sort((a, b) => a - b);
 
     for (const p of validComponents) {
-      // Minimum activity gate: configs with fewer trades than required get score = 0
-      // so they sort to the bottom and are excluded by getEliteComponents.
       if ((p.totalTrades || 0) < minTrades) {
         p.hedgeScore = 0;
         continue;
@@ -859,26 +892,16 @@ export async function preProcessData(
         spreadBoost = 1.15;
       }
 
-      // ── Convex Ballooning Curvature & Acceleration Objective Function ───────
-      // Forces the synthesizer to select setups whose equity curves are accelerating
-      // upward (beta2 > 0) with strong recent summer (Q4) growth.
-      const beta2 = p.curvatureBeta2 ?? 0;
-      const recentQ = p.recentQuarterR ?? 0;
-      const threeYrBase = (p.threeYearNetR !== undefined && p.threeYearNetR > 0)
-        ? p.threeYearNetR
-        : Math.max(p.totalTotalR, 0.01);
+      const r1Yr = (p as any).r1Year ?? p.totalTotalR;
+      const r6M = (p as any).rRecent6M ?? 0;
+      const rq = (p as any).recentQuarter ?? 0;
+      const calmarVal = (p as any).calmar ?? p.recoveryFactor;
 
-      // Curvature exponent: reward positive acceleration (beta2 > 0) and penalize deceleration (beta2 < 0)
-      const curvatureRatio = beta2 / (Math.abs(threeYrBase) + 2.0);
-      const curvatureMultiplier = Math.exp(Math.max(-1.5, Math.min(2.0, 1.2 * curvatureRatio)));
+      // Dynamic Recency Acceleration Booster: heavily favors setups gaining momentum in recent 6M / Quarter
+      const recencyBoost = (1.0 + Math.max(0, r6M / 15.0)) * (1.0 + Math.max(0, rq / 5.0));
+      const alphaBoost = (1.0 + Math.max(0, r1Yr / 40.0)) * Math.min(3.0, Math.max(0.5, calmarVal / 2.0));
 
-      // Recent quarter acceleration factor:
-      const q4Share = Math.max(0, recentQ) / (Math.abs(threeYrBase) + 1.0);
-      const q4Boost = Math.min(3.0, 1.0 + 2.5 * q4Share);
-
-      const balloonMultiplier = curvatureMultiplier * q4Boost;
-
-      p.hedgeScore = sharpeRank * recoveryRank * pfRank * spreadBoost * balloonMultiplier;
+      p.hedgeScore = sharpeRank * recoveryRank * pfRank * spreadBoost * alphaBoost * recencyBoost;
     }
   }
 

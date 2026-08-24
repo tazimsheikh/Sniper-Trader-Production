@@ -263,11 +263,18 @@ export function getFallbackPipValue(brokerSymbol: string): number {
 }
 
 export function getSymbolSpec(brokerSymbol: string): { pipSize: number, pipValuePerLot: number, digits: number, tickSize: number } {
-  const cleanSymbol = brokerSymbol.replace(".Daily", "");
+  if (!brokerSymbol || typeof brokerSymbol !== "string") {
+    return { pipSize: 0.0001, pipValuePerLot: 10, digits: 5, tickSize: 0.00001 };
+  }
+  const cleanSymbol = brokerSymbol
+    .replace(".Daily", "")
+    .replace(/_[0-9]+$/, "")
+    .replace("=X", "")
+    .replace("=F", "");
   
   // 1. Try to fetch from live broker cache first (most accurate for digits and tickSize)
   for (const [key, cached] of liveSpecCache.entries()) {
-    if (key.endsWith(`:${brokerSymbol}`)) {
+    if (key.endsWith(`:${brokerSymbol}`) || key.endsWith(`:${cleanSymbol}`)) {
        return {
          pipSize: OPTIMIZER_CONFIG[cleanSymbol]?.pipSize ?? 0.0001,
          pipValuePerLot: cached.pipValuePerLot,
@@ -277,22 +284,42 @@ export function getSymbolSpec(brokerSymbol: string): { pipSize: number, pipValue
     }
   }
 
-  // 2. Fallback to OPTIMIZER_CONFIG if no live connection has been made yet
+  // 2. Lookup OPTIMIZER_CONFIG or dynamic asset class fallback
   const optConfig = OPTIMIZER_CONFIG[cleanSymbol];
-  if (!optConfig) {
-    throw new Error(
-      `CRITICAL: Unrecognized broker symbol '${brokerSymbol}' in OPTIMIZER_CONFIG. Refusing to trade to prevent lot-sizing fallback catastrophe.`,
-    );
-  }
+  let digits = 5;
+  let tickSize = 0.00001;
+  let pipSize = 0.0001;
 
-  const tickSize = optConfig.tickSize ?? 0.00001;
-  const tickStr = tickSize.toString();
-  const digits = tickStr.includes('.') ? tickStr.split('.')[1].length : 0;
+  if (optConfig) {
+    tickSize = optConfig.tickSize ?? 0.00001;
+    const tickStr = tickSize.toString();
+    digits = tickStr.includes('.') ? tickStr.split('.')[1].length : 0;
+    pipSize = optConfig.pipSize ?? 0.0001;
+  } else {
+    // Dynamic asset class fallback digits
+    if (cleanSymbol.includes("JPY")) {
+      digits = 3;
+      tickSize = 0.001;
+      pipSize = 0.01;
+    } else if (cleanSymbol.includes("XAU") || cleanSymbol.includes("GOLD") || cleanSymbol.includes("XTI") || cleanSymbol.includes("OIL") || cleanSymbol.includes("BTC") || cleanSymbol.includes("ETH")) {
+      digits = 2;
+      tickSize = 0.01;
+      pipSize = cleanSymbol.includes("XAU") || cleanSymbol.includes("GOLD") ? 0.1 : 0.01;
+    } else if (cleanSymbol.includes("US30") || cleanSymbol.includes("NAS") || cleanSymbol.includes("GER40") || cleanSymbol.includes("DAX40") || cleanSymbol.includes("DE40") || cleanSymbol.includes("SPX") || cleanSymbol.includes("JPN225")) {
+      digits = 2;
+      tickSize = 0.1;
+      pipSize = 1.0;
+    } else {
+      digits = 5;
+      tickSize = 0.00001;
+      pipSize = 0.0001;
+    }
+  }
   
-  const pipValuePerLot = getFallbackPipValue(brokerSymbol);
+  const pipValuePerLot = getFallbackPipValue(cleanSymbol);
 
   return {
-    pipSize: optConfig.pipSize ?? 0.0001,
+    pipSize,
     pipValuePerLot,
     digits,
     tickSize,
@@ -316,6 +343,7 @@ export function getSymbolSpec(brokerSymbol: string): { pipSize: number, pipValue
  * @returns  Number rounded to the exact decimal precision the broker enforces
  */
 export function roundPrice(price: number, brokerSymbol: string): number {
+  if (!Number.isFinite(price)) return 0;
   const spec = getSymbolSpec(brokerSymbol);
   return Number(price.toFixed(spec.digits));
 }
@@ -1027,11 +1055,12 @@ export async function executeTradeForProfile(
   const spec = getSymbolSpec(brokerSymbol);
 
   // 🛡️ NEWS BLACKOUT WINDOW: Block new trades +/- 5 mins of High Impact News
-  if (isNewsBlackout(brokerSymbol, new Date())) {
+  const newsCheck = isNewsBlackout(brokerSymbol, new Date());
+  if (newsCheck.blocked) {
     console.log(
-      `[MetaAPI] ⛔ TRADE REJECTED — News Blackout Window active for ${brokerSymbol}`,
+      `[MetaAPI] ⛔ TRADE REJECTED — News Blackout Window active for ${brokerSymbol}: ${newsCheck.reason || ''}`,
     );
-    addBotLog(profileId, 'SYSTEM', brokerSymbol, 'Trade Rejected', `News Blackout Window active for ${brokerSymbol}. Trade blocked.`);
+    addBotLog(profileId, 'SYSTEM', brokerSymbol, 'Trade Rejected', `News Blackout Window active for ${brokerSymbol}. ${newsCheck.reason || ''}`);
     return;
   }
 

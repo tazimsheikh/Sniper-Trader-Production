@@ -288,10 +288,6 @@ export async function runMageMathBacktestExp(
       const maxSlPips = config.maxSlDist!;
       const rangeTooBig = isForex && orRangePips + 10 > maxSlPips;
 
-      if (new Date(c.timestamp).toISOString().startsWith("2025-11-24") && currentMins >= 560 && currentMins <= 580) {
-        console.log(`[MATH 11-24] time=${new Date(c.timestamp).toISOString()} prevC.close=${prevC.close} prevC.low=${prevC.low} orHigh=${orHigh} orLow=${orLow} rangeTooBig=${rangeTooBig} mageTradeTaken=${mageTradeTaken}`);
-      }
-
       if (!rangeTooBig) {
         const reqBuyHigh = roundPrice(orHigh + spreadPts, pair);
         let buyTriggered = isForex
@@ -344,16 +340,6 @@ export async function runMageMathBacktestExp(
               sellTriggered = false;
            }
         }
-        // -----------------------------
-        if (
-          new Date(c.timestamp).toISOString().includes("2023-03-07") ||
-          new Date(c.timestamp).toISOString().includes("2024-01-24") ||
-          new Date(c.timestamp).toISOString().includes("2025-03-05")
-        ) {
-          console.log(
-            `[MATH ORB CHECK] time=${new Date(c.timestamp).toISOString()} mins=${currentMins} startMins=${startMins} endMins=${endMins} orBuilt=${orBuilt} orHigh=${orHigh} orLow=${orLow} prevC.close=${prevC?.close} buyTrig=${buyTriggered} sellTrig=${sellTriggered} mageTradeTaken=${mageTradeTaken}`,
-          );
-        }
         if (!(buyTriggered && sellTriggered)) {
           if (buyTriggered || sellTriggered) {
             // 🚫 Prop Firm Compliance: Blackout Windows 🚫
@@ -372,15 +358,6 @@ export async function runMageMathBacktestExp(
             mageTradeTaken = true;
             const dir: "BUY" | "SELL" = buyTriggered ? "BUY" : "SELL";
             const cBodyPips = Math.abs(prevC.open - prevC.close) / pipSize;
-            if (
-              c.timestamp === 1704291300000 ||
-              c.timestamp === 1704291300000 + 300000
-            ) {
-              // 2024-01-03T14:15:00.000Z or around there
-              console.log(
-                
-              );
-            }
             triggerSetup = {
               direction: dir,
               orHigh,
@@ -388,16 +365,6 @@ export async function runMageMathBacktestExp(
               boxSize: Math.abs(orHigh - orLow),
               cBodyPips,
             };
-            if (c.timestamp === 1735888800000 || new Date(c.timestamp).toISOString().includes("2025-03-11")) {
-              console.log(
-                
-                prevC,
-                `orHigh:`,
-                orHigh,
-                `orLow:`,
-                orLow,
-              );
-            }
           }
         }
       }
@@ -545,9 +512,6 @@ export async function runMageMathBacktestExp(
 
           if (!tradeActive && !missedTrade) {
             if (direction === "BUY" && (fc.high >= tpPrice || fc.low <= slPrice)) {
-              if (new Date(c.timestamp).toISOString().includes("2025-11-24")) {
-                 
-              }
               missedTrade = true;
               outcome = "SKIPPED";
               rMultiple = 0;
@@ -556,9 +520,6 @@ export async function runMageMathBacktestExp(
               direction === "SELL" &&
               (fc.low + spreadPts <= tpPrice || fc.high >= slPrice)
             ) {
-              if (new Date(c.timestamp).toISOString().includes("2025-11-24")) {
-                 
-              }
               missedTrade = true;
               outcome = "SKIPPED";
               rMultiple = 0;

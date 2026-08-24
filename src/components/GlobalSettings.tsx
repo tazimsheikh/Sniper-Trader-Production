@@ -639,11 +639,20 @@ export default function GlobalSettings({ onClose, onLogout }: GlobalSettingsProp
                             <div className="flex flex-col flex-1">
                               <span className="text-slate-500 font-mono text-[9px] uppercase tracking-widest">Live Daily PnL</span>
                               {(() => {
-                                if (isBalanceLoading || liveBalance === null) {
+                                if (isBalanceLoading) {
                                   return (
                                     <div className="flex items-baseline gap-2 mt-1">
                                       <span className="font-display font-bold text-sm text-slate-400 animate-pulse">
                                         Syncing live balance...
+                                      </span>
+                                    </div>
+                                  );
+                                }
+                                if (liveBalance === null) {
+                                  return (
+                                    <div className="flex items-baseline gap-2 mt-1">
+                                      <span className="font-display font-bold text-sm text-rose-500">
+                                        MetaAPI Connection Failed
                                       </span>
                                     </div>
                                   );

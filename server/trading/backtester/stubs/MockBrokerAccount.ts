@@ -88,9 +88,6 @@ export class MockBrokerAccount {
     this.spread = spread;
     this.pipSize = pipSize;
     this.spreadPts = spread * pipSize;
-    if (symbol.includes("BTCUSD")) {
-      console.log(`[MB INIT] symbol=${symbol} rawSpread=${spread} this.spread=${this.spread} this.spreadPts=${this.spreadPts}`);
-    }
   }
 
   /** Called before each M1 tick is fed to the orchestrator */
@@ -206,39 +203,20 @@ export class MockBrokerAccount {
 
   async createLimitBuyOrder(symbol: string, lots: number, price: number, sl: number, tp: number, opts?: any) {
     const id = `SIM_${this.orderId++}`;
-    if (symbol.includes("XTIUSD")) console.log(`[DEBUG MOCK LIMIT BUY] id=${id} sym=${symbol} price=${price} sl=${sl} tp=${tp} opts=${JSON.stringify(opts)}`);
+    
     this.pendingOrders.set(id, { id, symbol, direction: 'BUY', orderType: 'LIMIT', limitPrice: price, sl, tp, volume: lots, placedAt: this.currentCandle?.timestamp || 0, clientId: opts?.clientId, botId: this.deduceBotId(opts), magic: opts?.magic, orHigh: opts?.orHigh, orLow: opts?.orLow });
-    const orchState = this.getOrchState(opts);
-    const isSage = this.deduceBotId(opts) === 'sage';
-    if (isSage && orchState) {
-      this.checkPendingOrderFills(orchState, id);
-      if (this.pendingOrders.has(id)) {
-        this.checkPendingOrderFillsWithSweepCandle(orchState, id);
-      }
-    }
     return { orderId: id };
   }
 
   async createLimitSellOrder(symbol: string, lots: number, price: number, sl: number, tp: number, opts?: any) {
     const id = `SIM_${this.orderId++}`;
     this.pendingOrders.set(id, { id, symbol, direction: 'SELL', orderType: 'LIMIT', limitPrice: price, sl, tp, volume: lots, placedAt: this.currentCandle?.timestamp || 0, clientId: opts?.clientId, botId: this.deduceBotId(opts), magic: opts?.magic, orHigh: opts?.orHigh, orLow: opts?.orLow });
-    const orchState = this.getOrchState(opts);
-    const isSage = this.deduceBotId(opts) === 'sage';
-    if (isSage && orchState) {
-      this.checkPendingOrderFills(orchState, id);
-      if (this.pendingOrders.has(id)) {
-        this.checkPendingOrderFillsWithSweepCandle(orchState, id);
-      }
-    }
     return { orderId: id };
   }
 
 
   async createStopBuyOrder(symbol: string, lots: number, price: number, sl: number, tp: number, opts?: any) {
     const id = `SIM_${this.orderId++}`;
-    if (symbol.includes("CHFJPY") && this.currentCandle?.timestamp && new Date(this.currentCandle.timestamp).toISOString().includes("2025-06-09")) {
-      console.log(`[MockBroker] createStopBuyOrder CHFJPY at limitPrice=${price} time=${new Date(this.currentCandle.timestamp).toISOString()}`);
-    }
     // Store clientId (sig) from Sage so checkPendingOrderFills can directly populate state.activeTrades[].
     const clientId = opts?.clientId as string | undefined;
     this.pendingOrders.set(id, { id, symbol, direction: 'BUY', orderType: 'STOP', limitPrice: price, sl, tp, volume: lots, placedAt: this.currentCandle?.timestamp || 0, clientId, botId: this.deduceBotId(opts), magic: opts?.magic, orHigh: opts?.orHigh, orLow: opts?.orLow });
@@ -267,9 +245,6 @@ export class MockBrokerAccount {
   async createMarketBuyOrder(symbol: string, lots: number, sl: number, tp: number, opts?: any) {
     const id = `SIM_${this.orderId++}`;
     let price = (this.currentCandle?.open || 0) + this.spreadPts;
-    if (opts?.limitPrice !== undefined) {
-      price = Math.min(price, opts.limitPrice);
-    }
     const c = this.currentCandle;
     const botId = this.deduceBotId(opts);
     
@@ -330,9 +305,6 @@ export class MockBrokerAccount {
   async createMarketSellOrder(symbol: string, lots: number, sl: number, tp: number, opts?: any) {
     const id = `SIM_${this.orderId++}`;
     let price = (this.currentCandle?.open || 0);
-    if (opts?.limitPrice !== undefined) {
-      price = Math.max(price, opts.limitPrice);
-    }
     const c = this.currentCandle;
     const botId = this.deduceBotId(opts);
 
@@ -514,9 +486,6 @@ export class MockBrokerAccount {
           order.limitPrice = Math.min(c.open, order.limitPrice);
         }
       } else {
-        if (c.timestamp === 1775092260000 || (c.timestamp >= 1775091600000 && c.timestamp <= 1775093000000)) {
-          console.log(`[DEBUG PENDING FILL] ts=${new Date(c.timestamp).toISOString()} L+spread=${c.low + this.spreadPts} limitPrice=${order.limitPrice} isBuy=${isBuy} matches=${Number((c.low + this.spreadPts).toFixed(5)) <= Number(order.limitPrice.toFixed(5))}`);
-        }
         if (isBuy && Number((c.low + this.spreadPts).toFixed(5)) <= Number(order.limitPrice.toFixed(5))) {
           buyFilled = true;
           order.limitPrice = Math.min((c.open + this.spreadPts), order.limitPrice);
@@ -619,6 +588,7 @@ export class MockBrokerAccount {
                 symbol: this.symbol,
                 direction: isBuy ? 'BUY' : 'SELL',
                 entryPrice: pos.openPrice,
+                intendedEntryPrice: originalLimitPrice || pos.intendedEntryPrice || pos.openPrice,
                 slPrice: pos.sl,
                 originalSl: pos.originalSl || pos.sl,
                 tpPrice: pos.tp,
@@ -678,7 +648,7 @@ export class MockBrokerAccount {
             targetState.activeTrades = (targetState.activeTrades || []).filter((t: any) => String(t.metaOrderId) !== String(orderId));
             sameCandleExit = true;
           } else if (!isBuy && c.low + this.spreadPts <= fillTp) {
-            console.log(`[T2 TP HIT] Time: ${new Date(c.timestamp).toISOString()} | Low: ${c.low} | SpreadPts: ${this.spreadPts} | pos.tp: ${fillTp}`);
+            
             const rMultiple = fillRiskPips > 0 ? (fillEntryPrice - fillTp) / this.pipSize / fillRiskPips : 0;
             this.tradeLog.push({
               symbol: this.symbol, direction: 'SELL', entryPrice: fillEntryPrice,
@@ -703,113 +673,121 @@ export class MockBrokerAccount {
       }
     }
   }
-  checkPositionSLHits(orchestratorState: any): boolean {
+  checkPositionSLHits(orchestratorState?: any): boolean {
     if (!this.currentCandle) return false;
     const c = this.currentCandle;
-
-    const allTrades: any[] = orchestratorState?.activeTrades ?? [];
-    
-    if (allTrades.length === 0 && orchestratorState?.activeTrade) {
-        allTrades.push(orchestratorState.activeTrade);
-    }
-    
     let anyHit = false;
-    // Iterate over a shallow copy to safely mutate orchestratorState.activeTrades during iteration
-    for (const trade of [...allTrades]) {
-      const pos = this.positions.get(trade.metaOrderId);
-      if (!pos) continue;
-      const isBuy = trade.direction === 'BUY';
-      const clog = (global as any).__ORIGINAL_LOG__ || console.log;
-      if (this.symbol.includes("XAUUSD")) {
-        clog(`[DEBUG SL CHECK] ts=${new Date(c.timestamp).toISOString()} posId=${pos.id} isBuy=${isBuy} c.low=${c.low} c.high=${c.high} pos.sl=${pos.sl}`);
-      }
-      
+
+    // Iterate over broker positions directly so no position is ever orphaned or unmanaged
+    for (const pos of Array.from(this.positions.values())) {
+      const isBuy = pos.type === 'POSITION_TYPE_BUY';
+      const actualRiskPips = Math.abs(pos.openPrice - (pos.originalSl || pos.sl)) / this.pipSize;
+      const effectiveRiskPips = actualRiskPips > 0 ? actualRiskPips : 1;
+
       if (isBuy && c.low <= pos.sl) {
-        const exitPrice = (c.open < pos.sl && c.high < pos.sl) ? c.open : pos.sl;
-        const rMultiple = ((exitPrice - trade.entryPrice) / this.pipSize) / trade.riskPips;
+        const exitPrice = (c.open < pos.sl) ? c.open : pos.sl;
+        const rMultiple = ((exitPrice - pos.openPrice) / this.pipSize) / effectiveRiskPips;
         this.tradeLog.push({
-          symbol: this.symbol, direction: 'BUY', entryPrice: trade.entryPrice,
+          symbol: this.symbol, direction: 'BUY', entryPrice: pos.openPrice,
           exitPrice: exitPrice, slPrice: pos.sl, originalSl: pos.originalSl || pos.sl, tpPrice: pos.tp, outcome: 'SL',
-          rMultiple, openTime: trade.openTime, closeTime: c.timestamp,
-          botId: trade.botId, clientId: trade.clientId, magic: pos.magic,
+          rMultiple, openTime: new Date(pos.time).getTime(), closeTime: c.timestamp,
+          botId: pos.botId, clientId: pos.clientId, magic: pos.magic,
           orHigh: pos.orHigh, orLow: pos.orLow, limitPlacedAt: pos.limitPlacedAt, trailLog: pos.trailLog
         });
-        this.positions.delete(trade.metaOrderId);
+        this.positions.delete(pos.id);
         const orch = (global as any).__SIM_ORCH__;
         if (orch && typeof orch.onBrokerPositionClosed === "function") {
-          orch.onBrokerPositionClosed(trade.metaOrderId);
+          orch.onBrokerPositionClosed(pos.id);
         }
-        orchestratorState.activeTrades = orchestratorState.activeTrades?.filter((t: any) => String(t.metaOrderId) !== String(trade.metaOrderId));
-        if (String(orchestratorState.activeTrade?.metaOrderId) === String(trade.metaOrderId)) {
-          delete orchestratorState.activeTrade;
+        if (orchestratorState) {
+          orchestratorState.activeTrades = orchestratorState.activeTrades?.filter((t: any) => String(t.metaOrderId) !== String(pos.id));
+          if (String(orchestratorState.activeTrade?.metaOrderId) === String(pos.id)) {
+            delete orchestratorState.activeTrade;
+          }
+          if (pos.clientId && orchestratorState.sageStates?.[pos.clientId]) {
+            orchestratorState.sageStates[pos.clientId].limitOrderId = null;
+            orchestratorState.sageStates[pos.clientId].fired = false;
+            orchestratorState.sageStates[pos.clientId].fired_fill_check = false;
+          }
         }
         anyHit = true;
       } else if (!isBuy && c.high + this.spreadPts >= pos.sl) {
-        const exitPrice = ((c.open + this.spreadPts) > pos.sl && (c.low + this.spreadPts) > pos.sl) ? (c.open + this.spreadPts) : pos.sl;
-        const rMultiple = ((trade.entryPrice - exitPrice) / this.pipSize) / trade.riskPips;
+        const exitPrice = (c.open + this.spreadPts > pos.sl) ? (c.open + this.spreadPts) : pos.sl;
+        const rMultiple = ((pos.openPrice - exitPrice) / this.pipSize) / effectiveRiskPips;
         this.tradeLog.push({
-          symbol: this.symbol, direction: 'SELL', entryPrice: trade.entryPrice,
+          symbol: this.symbol, direction: 'SELL', entryPrice: pos.openPrice,
           exitPrice: exitPrice, slPrice: pos.sl, originalSl: pos.originalSl || pos.sl, tpPrice: pos.tp, outcome: 'SL',
-          rMultiple, openTime: trade.openTime, closeTime: c.timestamp,
-          botId: trade.botId, clientId: trade.clientId, magic: pos.magic,
+          rMultiple, openTime: new Date(pos.time).getTime(), closeTime: c.timestamp,
+          botId: pos.botId, clientId: pos.clientId, magic: pos.magic,
           orHigh: pos.orHigh, orLow: pos.orLow, limitPlacedAt: pos.limitPlacedAt, trailLog: pos.trailLog
         });
-        this.positions.delete(trade.metaOrderId);
+        this.positions.delete(pos.id);
         const orch = (global as any).__SIM_ORCH__;
         if (orch && typeof orch.onBrokerPositionClosed === "function") {
-          orch.onBrokerPositionClosed(trade.metaOrderId);
+          orch.onBrokerPositionClosed(pos.id);
         }
-        orchestratorState.activeTrades = orchestratorState.activeTrades?.filter((t: any) => String(t.metaOrderId) !== String(trade.metaOrderId));
-        if (String(orchestratorState.activeTrade?.metaOrderId) === String(trade.metaOrderId)) {
-          delete orchestratorState.activeTrade;
+        if (orchestratorState) {
+          orchestratorState.activeTrades = orchestratorState.activeTrades?.filter((t: any) => String(t.metaOrderId) !== String(pos.id));
+          if (String(orchestratorState.activeTrade?.metaOrderId) === String(pos.id)) {
+            delete orchestratorState.activeTrade;
+          }
+          if (pos.clientId && orchestratorState.sageStates?.[pos.clientId]) {
+            orchestratorState.sageStates[pos.clientId].limitOrderId = null;
+            orchestratorState.sageStates[pos.clientId].fired = false;
+            orchestratorState.sageStates[pos.clientId].fired_fill_check = false;
+          }
         }
         anyHit = true;
-      } else if (trade.tpPrice && isBuy && c.high >= trade.tpPrice) {
-        const rMultiple = (trade.tpPrice - trade.entryPrice) / this.pipSize / trade.riskPips;
+      } else if (pos.tp && isBuy && c.high >= pos.tp) {
+        const rMultiple = (pos.tp - pos.openPrice) / this.pipSize / effectiveRiskPips;
         this.tradeLog.push({
-          symbol: this.symbol, direction: 'BUY', entryPrice: trade.entryPrice,
-          exitPrice: trade.tpPrice, slPrice: pos.sl, originalSl: pos.originalSl || pos.sl, tpPrice: trade.tpPrice, outcome: 'TP',
-          rMultiple, openTime: trade.openTime, closeTime: c.timestamp,
-          botId: trade.botId, clientId: trade.clientId, magic: pos.magic,
+          symbol: this.symbol, direction: 'BUY', entryPrice: pos.openPrice,
+          exitPrice: pos.tp, slPrice: pos.sl, originalSl: pos.originalSl || pos.sl, tpPrice: pos.tp, outcome: 'TP',
+          rMultiple, openTime: new Date(pos.time).getTime(), closeTime: c.timestamp,
+          botId: pos.botId, clientId: pos.clientId, magic: pos.magic,
           orHigh: pos.orHigh, orLow: pos.orLow, limitPlacedAt: pos.limitPlacedAt, trailLog: pos.trailLog
         });
-        this.positions.delete(trade.metaOrderId);
+        this.positions.delete(pos.id);
         const orch = (global as any).__SIM_ORCH__;
         if (orch && typeof orch.onBrokerPositionClosed === "function") {
-          orch.onBrokerPositionClosed(trade.metaOrderId);
+          orch.onBrokerPositionClosed(pos.id);
         }
-        orchestratorState.activeTrades = orchestratorState.activeTrades?.filter((t: any) => String(t.metaOrderId) !== String(trade.metaOrderId));
-        if (String(orchestratorState.activeTrade?.metaOrderId) === String(trade.metaOrderId)) {
-          delete orchestratorState.activeTrade;
-        }
-        if (trade.clientId && orchestratorState.sageStates?.[trade.clientId]) {
-          orchestratorState.sageStates[trade.clientId].limitOrderId = null;
-          orchestratorState.sageStates[trade.clientId].fired = false;
-          orchestratorState.sageStates[trade.clientId].fired_fill_check = false;
+        if (orchestratorState) {
+          orchestratorState.activeTrades = orchestratorState.activeTrades?.filter((t: any) => String(t.metaOrderId) !== String(pos.id));
+          if (String(orchestratorState.activeTrade?.metaOrderId) === String(pos.id)) {
+            delete orchestratorState.activeTrade;
+          }
+          if (pos.clientId && orchestratorState.sageStates?.[pos.clientId]) {
+            orchestratorState.sageStates[pos.clientId].limitOrderId = null;
+            orchestratorState.sageStates[pos.clientId].fired = false;
+            orchestratorState.sageStates[pos.clientId].fired_fill_check = false;
+          }
         }
         anyHit = true;
-      } else if (trade.tpPrice && !isBuy && c.low + this.spreadPts <= trade.tpPrice) {
-        const rMultiple = (trade.entryPrice - trade.tpPrice) / this.pipSize / trade.riskPips;
+      } else if (pos.tp && !isBuy && c.low + this.spreadPts <= pos.tp) {
+        const rMultiple = (pos.openPrice - pos.tp) / this.pipSize / effectiveRiskPips;
         this.tradeLog.push({
-          symbol: this.symbol, direction: 'SELL', entryPrice: trade.entryPrice,
-          exitPrice: trade.tpPrice, slPrice: pos.sl, originalSl: pos.originalSl || pos.sl, tpPrice: trade.tpPrice, outcome: 'TP',
-          rMultiple, openTime: trade.openTime, closeTime: c.timestamp,
-          botId: trade.botId, clientId: trade.clientId, magic: pos.magic,
+          symbol: this.symbol, direction: 'SELL', entryPrice: pos.openPrice,
+          exitPrice: pos.tp, slPrice: pos.sl, originalSl: pos.originalSl || pos.sl, tpPrice: pos.tp, outcome: 'TP',
+          rMultiple, openTime: new Date(pos.time).getTime(), closeTime: c.timestamp,
+          botId: pos.botId, clientId: pos.clientId, magic: pos.magic,
           orHigh: pos.orHigh, orLow: pos.orLow, limitPlacedAt: pos.limitPlacedAt, trailLog: pos.trailLog
         });
-        this.positions.delete(trade.metaOrderId);
+        this.positions.delete(pos.id);
         const orch = (global as any).__SIM_ORCH__;
         if (orch && typeof orch.onBrokerPositionClosed === "function") {
-          orch.onBrokerPositionClosed(trade.metaOrderId);
+          orch.onBrokerPositionClosed(pos.id);
         }
-        orchestratorState.activeTrades = orchestratorState.activeTrades?.filter((t: any) => String(t.metaOrderId) !== String(trade.metaOrderId));
-        if (String(orchestratorState.activeTrade?.metaOrderId) === String(trade.metaOrderId)) {
-          delete orchestratorState.activeTrade;
-        }
-        if (trade.clientId && orchestratorState.sageStates?.[trade.clientId]) {
-          orchestratorState.sageStates[trade.clientId].limitOrderId = null;
-          orchestratorState.sageStates[trade.clientId].fired = false;
-          orchestratorState.sageStates[trade.clientId].fired_fill_check = false;
+        if (orchestratorState) {
+          orchestratorState.activeTrades = orchestratorState.activeTrades?.filter((t: any) => String(t.metaOrderId) !== String(pos.id));
+          if (String(orchestratorState.activeTrade?.metaOrderId) === String(pos.id)) {
+            delete orchestratorState.activeTrade;
+          }
+          if (pos.clientId && orchestratorState.sageStates?.[pos.clientId]) {
+            orchestratorState.sageStates[pos.clientId].limitOrderId = null;
+            orchestratorState.sageStates[pos.clientId].fired = false;
+            orchestratorState.sageStates[pos.clientId].fired_fill_check = false;
+          }
         }
         anyHit = true;
       }
