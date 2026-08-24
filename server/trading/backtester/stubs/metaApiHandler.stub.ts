@@ -256,6 +256,43 @@ export function quantizeLots(rawLots: number, volumeStep = 0.01, minVolume = 0.0
   const clamped = Math.min(Math.max(stepped, minVolume), maxVolume);
   return Math.round(clamped * 1e8) / 1e8;
 }
+export function calculateStopsLevelSafePrices(
+  direction: "BUY" | "SELL",
+  currentPrice: number,
+  rawSl: number,
+  rawTp: number,
+  stopsLevelPoints: number = 0,
+  tickSize: number = 0.00001,
+  digits: number = 5,
+  isFallback: boolean = false
+): { pSl: number; pTp: number } {
+  const extraBuffer = isFallback ? tickSize * 25 : 0;
+  const minStopDist = Math.max((stopsLevelPoints + 10) * tickSize + extraBuffer, tickSize * 10 + extraBuffer);
+  let finalSl = Number.isFinite(rawSl) ? rawSl : (direction === "BUY" ? currentPrice - minStopDist : currentPrice + minStopDist);
+  let finalTp = Number.isFinite(rawTp) ? rawTp : 0;
+
+  if (direction === "BUY") {
+    if (currentPrice - finalSl < minStopDist) {
+      finalSl = currentPrice - minStopDist;
+    }
+    if (finalTp > 0 && finalTp - currentPrice < minStopDist) {
+      finalTp = currentPrice + minStopDist;
+    }
+  } else {
+    if (finalSl - currentPrice < minStopDist) {
+      finalSl = currentPrice + minStopDist;
+    }
+    if (finalTp > 0 && currentPrice - finalTp < minStopDist) {
+      finalTp = currentPrice - minStopDist;
+    }
+  }
+
+  return {
+    pSl: Number.isFinite(finalSl) && finalSl > 0 ? Number(finalSl.toFixed(digits)) : 0,
+    pTp: Number.isFinite(finalTp) && finalTp > 0 ? Number(finalTp.toFixed(digits)) : 0,
+  };
+}
+
 export default {
   getSharedConnection,
   getSharedAccount,
@@ -266,6 +303,8 @@ export default {
   forceRebootMetaApi,
   getLiveBrokerSpec,
   quantizeLots,
+  calculateStopsLevelSafePrices,
+  roundPrice,
 };
 
 export function roundPrice(price: number, brokerSymbol: string): number {

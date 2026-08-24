@@ -311,9 +311,9 @@ async function runRiskModesModule(trades: any[]) {
 // MODULE 2: Comprehensive 3-Year Monthly Breakdown
 // ─────────────────────────────────────────────────────────────────────────────
 async function runMonthlyModule(trades: any[]) {
-  console.log("\n========================================================================================================================");
+  console.log("\n======================================================================================================================================================");
   console.log(" 📅 MODULE 2: 3-YEAR MONTH-BY-MONTH PORTFOLIO PERFORMANCE TABLE");
-  console.log("========================================================================================================================");
+  console.log("======================================================================================================================================================");
 
   const monthlyBuckets: Record<string, any[]> = {};
   for (const t of trades) {
@@ -325,9 +325,9 @@ async function runMonthlyModule(trades: any[]) {
   }
 
   const sortedMonths = Object.keys(monthlyBuckets).sort();
-  console.log("------------------------------------------------------------------------------------------------------------------------");
-  console.log(" MONTH   | TRADES | WINS | WIN %  | RAW NET R   | WEIGHTED NET R | MONTH MAX DD (R) | CUMULATIVE NET R | CUM MAX DD (R)");
-  console.log("------------------------------------------------------------------------------------------------------------------------");
+  console.log("------------------------------------------------------------------------------------------------------------------------------------------------------");
+  console.log(" MONTH   | TRADES | WINS | LOSS |  BE  |  WIN %  | LOSS %  |  BE %   | RAW NET R   | WEIGHTED NET R | MONTH MAX DD (R) | CUMULATIVE NET R | CUM MAX DD (R)");
+  console.log("------------------------------------------------------------------------------------------------------------------------------------------------------");
 
   let cumRawR = 0;
   let cumWeightedR = 0;
@@ -339,25 +339,34 @@ async function runMonthlyModule(trades: any[]) {
   let yearWeightedR = 0;
   let yearTrades = 0;
   let yearWins = 0;
+  let yearLosses = 0;
+  let yearBe = 0;
 
   for (const mKey of sortedMonths) {
     const monthTrades = monthlyBuckets[mKey];
     const y = mKey.substring(0, 4);
 
     if (y !== currentYear) {
-      console.log("------------------------------------------------------------------------------------------------------------------------");
-      console.log(` 🏆 TOTAL ${currentYear} | Trades: ${String(yearTrades).padStart(4)} | Win%: ${((yearWins / yearTrades) * 100).toFixed(1)}% | Raw Net R: +${yearRawR.toFixed(2)} R | Weighted Net R: +${yearWeightedR.toFixed(2)} R`);
-      console.log("------------------------------------------------------------------------------------------------------------------------");
+      const yWinPct = yearTrades > 0 ? (yearWins / yearTrades) * 100 : 0;
+      const yLossPct = yearTrades > 0 ? (yearLosses / yearTrades) * 100 : 0;
+      const yBePct = yearTrades > 0 ? (yearBe / yearTrades) * 100 : 0;
+      console.log("------------------------------------------------------------------------------------------------------------------------------------------------------");
+      console.log(` 🏆 TOTAL ${currentYear} | Trades: ${String(yearTrades).padStart(4)} | Win%: ${yWinPct.toFixed(1)}% | Loss%: ${yLossPct.toFixed(1)}% | BE%: ${yBePct.toFixed(1)}% | Raw Net R: +${yearRawR.toFixed(2)} R | Weighted Net R: +${yearWeightedR.toFixed(2)} R`);
+      console.log("------------------------------------------------------------------------------------------------------------------------------------------------------");
       currentYear = y;
       yearRawR = 0;
       yearWeightedR = 0;
       yearTrades = 0;
       yearWins = 0;
+      yearLosses = 0;
+      yearBe = 0;
     }
 
     let mRawR = 0;
     let mWeightedR = 0;
     let mWins = 0;
+    let mLosses = 0;
+    let mBe = 0;
     let mPeakWeightedR = 0;
     let mMaxDdWeightedR = 0;
 
@@ -366,7 +375,13 @@ async function runMonthlyModule(trades: any[]) {
       const wR = r * (t.riskMultiplier || 1.0);
       mRawR += r;
       mWeightedR += wR;
-      if (r > 0) mWins++;
+      if (r > 0.0001) {
+        mWins++;
+      } else if (r < -0.0001) {
+        mLosses++;
+      } else {
+        mBe++;
+      }
 
       if (mWeightedR > mPeakWeightedR) mPeakWeightedR = mWeightedR;
       const dd = mPeakWeightedR - mWeightedR;
@@ -383,20 +398,27 @@ async function runMonthlyModule(trades: any[]) {
     yearWeightedR += mWeightedR;
     yearTrades += monthTrades.length;
     yearWins += mWins;
+    yearLosses += mLosses;
+    yearBe += mBe;
 
     const winPct = monthTrades.length > 0 ? (mWins / monthTrades.length) * 100 : 0;
+    const lossPct = monthTrades.length > 0 ? (mLosses / monthTrades.length) * 100 : 0;
+    const bePct = monthTrades.length > 0 ? (mBe / monthTrades.length) * 100 : 0;
     const rawRStr = (mRawR >= 0 ? "+" : "") + mRawR.toFixed(2) + " R";
     const wRStr = (mWeightedR >= 0 ? "+" : "") + mWeightedR.toFixed(2) + " R";
     const cumRStr = (cumWeightedR >= 0 ? "+" : "") + cumWeightedR.toFixed(2) + " R";
 
     console.log(
-      ` ${mKey} | ${String(monthTrades.length).padStart(6)} | ${String(mWins).padStart(4)} | ${winPct.toFixed(1).padStart(5)}% | ${rawRStr.padStart(11)} | ${wRStr.padStart(14)} | ${mMaxDdWeightedR.toFixed(2).padStart(14)} R | ${cumRStr.padStart(14)} | ${cumMaxDdWeightedR.toFixed(2).padStart(12)} R`
+      ` ${mKey} | ${String(monthTrades.length).padStart(6)} | ${String(mWins).padStart(4)} | ${String(mLosses).padStart(4)} | ${String(mBe).padStart(4)} | ${winPct.toFixed(1).padStart(6)}% | ${lossPct.toFixed(1).padStart(6)}% | ${bePct.toFixed(1).padStart(6)}% | ${rawRStr.padStart(11)} | ${wRStr.padStart(14)} | ${mMaxDdWeightedR.toFixed(2).padStart(14)} R | ${cumRStr.padStart(14)} | ${cumMaxDdWeightedR.toFixed(2).padStart(12)} R`
     );
   }
 
-  console.log("------------------------------------------------------------------------------------------------------------------------");
-  console.log(` 🏆 TOTAL ${currentYear} | Trades: ${String(yearTrades).padStart(4)} | Win%: ${((yearWins / yearTrades) * 100).toFixed(1)}% | Raw Net R: +${yearRawR.toFixed(2)} R | Weighted Net R: +${yearWeightedR.toFixed(2)} R`);
-  console.log("========================================================================================================================\n");
+  const finalYearWinPct = yearTrades > 0 ? (yearWins / yearTrades) * 100 : 0;
+  const finalYearLossPct = yearTrades > 0 ? (yearLosses / yearTrades) * 100 : 0;
+  const finalYearBePct = yearTrades > 0 ? (yearBe / yearTrades) * 100 : 0;
+  console.log("------------------------------------------------------------------------------------------------------------------------------------------------------");
+  console.log(` 🏆 TOTAL ${currentYear} | Trades: ${String(yearTrades).padStart(4)} | Win%: ${finalYearWinPct.toFixed(1)}% | Loss%: ${finalYearLossPct.toFixed(1)}% | BE%: ${finalYearBePct.toFixed(1)}% | Raw Net R: +${yearRawR.toFixed(2)} R | Weighted Net R: +${yearWeightedR.toFixed(2)} R`);
+  console.log("======================================================================================================================================================\n");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

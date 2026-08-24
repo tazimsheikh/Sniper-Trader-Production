@@ -886,22 +886,46 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
 
     try {
       if (executeAsMarket) {
-        logger.info(`[SageEngine] ⚡ Executing direct MARKET ${ss.direction} on ${brokerSymbol} (Proximity: ${(distFromEntry / pipSize).toFixed(1)} pips <= ${(proximityThreshold / pipSize).toFixed(1)} threshold, Target: ${pEntry}, Live: ${c.close})`);
+        const isBuy = ss.direction === "BUY";
+        const latestPrice = roundPrice(c.close, brokerSymbol);
+        const hitSl = isBuy ? (latestPrice <= pSl) : (latestPrice >= pSl);
+        const hitTp = isBuy ? (latestPrice >= pTp) : (latestPrice <= pTp);
+        if (hitSl || hitTp) {
+          logger.info(`[SageEngine] 🛑 Direct Market Order Aborted: Live price (${latestPrice}) already hit ${hitSl ? 'Stop Loss' : 'Take Profit'}!`);
+          globalTradeGate.release(orch.profileId, preRegKey);
+          return;
+        }
+
+        const staticSpec = getSymbolSpec(brokerSymbol);
+        const stopsLevelPts = liveSpec?.stopsLevel || (staticSpec as any).stopsLevel || 0;
+        const safePrices = calculateStopsLevelSafePrices(
+          ss.direction as "BUY" | "SELL",
+          latestPrice,
+          pSl,
+          pTp,
+          stopsLevelPts,
+          liveSpec?.tickSize || staticSpec.tickSize || 0.00001,
+          liveSpec?.digits ?? staticSpec.digits ?? 5
+        );
+        const roundedSafeSl = roundPrice(safePrices.pSl, brokerSymbol);
+        const roundedSafeTp = roundPrice(safePrices.pTp, brokerSymbol);
+
+        logger.info(`[SageEngine] ⚡ Executing direct MARKET ${ss.direction} on ${brokerSymbol} (Proximity: ${(distFromEntry / pipSize).toFixed(1)} pips <= ${(proximityThreshold / pipSize).toFixed(1)} threshold, Target: ${pEntry}, Live: ${latestPrice}, SL: ${roundedSafeSl}, TP: ${roundedSafeTp})`);
         orderRes = await enqueueMetaApiRequest(
           async () =>
-            ss.direction === "BUY"
+            isBuy
               ? conn.createMarketBuyOrder(
                   brokerSymbol,
                   lots,
-                  pSl,
-                  pTp,
+                  roundedSafeSl,
+                  roundedSafeTp,
                   { magic, clientId: shortClientId },
                 )
               : conn.createMarketSellOrder(
                   brokerSymbol,
                   lots,
-                  pSl,
-                  pTp,
+                  roundedSafeSl,
+                  roundedSafeTp,
                   { magic, clientId: shortClientId },
                 ),
           `CreateSageMarketOrder:${brokerSymbol}`,

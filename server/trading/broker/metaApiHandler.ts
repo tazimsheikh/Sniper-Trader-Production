@@ -383,8 +383,8 @@ export function calculateStopsLevelSafePrices(
 ): { pSl: number; pTp: number } {
   const extraBuffer = isFallback ? tickSize * 25 : 0;
   const minStopDist = Math.max((stopsLevelPoints + 10) * tickSize + extraBuffer, tickSize * 10 + extraBuffer);
-  let finalSl = rawSl;
-  let finalTp = rawTp;
+  let finalSl = Number.isFinite(rawSl) ? rawSl : (direction === "BUY" ? currentPrice - minStopDist : currentPrice + minStopDist);
+  let finalTp = Number.isFinite(rawTp) ? rawTp : 0;
 
   if (direction === "BUY") {
     if (currentPrice - finalSl < minStopDist) {
@@ -403,8 +403,8 @@ export function calculateStopsLevelSafePrices(
   }
 
   return {
-    pSl: Number(finalSl.toFixed(digits)),
-    pTp: Number(finalTp.toFixed(digits)),
+    pSl: Number.isFinite(finalSl) && finalSl > 0 ? Number(finalSl.toFixed(digits)) : 0,
+    pTp: Number.isFinite(finalTp) && finalTp > 0 ? Number(finalTp.toFixed(digits)) : 0,
   };
 }
 

@@ -1,6 +1,7 @@
 import {
   clearAllSharedConnections,
   clearSharedConnectionForProfile,
+  isBrokerPriceOrStopsError,
 } from "../trading/broker/metaApiHandler.js";
 
 // ============================================================
@@ -172,7 +173,13 @@ export async function enqueueMetaApiRequest<T>(
           }
         }
 
-        const isHardReject = isStopsError || isInvalidPrice || isNotEnoughMoney || isTradeDisabled || isNotFound;
+        const isHardReject =
+          isBrokerPriceOrStopsError(err) ||
+          isStopsError ||
+          isInvalidPrice ||
+          isNotEnoughMoney ||
+          isTradeDisabled ||
+          isNotFound;
 
         if (attempt > maxRetries || isHardReject) {
           console.error(

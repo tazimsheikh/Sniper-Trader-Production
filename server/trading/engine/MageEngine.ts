@@ -959,11 +959,33 @@ async function placeMageLimitOrder(orch: any, symbol: string, state: any, c: any
         const executeAsMarket = pullbackPct === 0 || isWithinProximity;
 
         if (executeAsMarket) {
-          logger.info(`[MageEngine] ⚡ Executing direct MARKET ${os.breakoutDir} on ${brokerSymbol} (Proximity: ${(distFromEntry / pipSize).toFixed(1)} pips <= ${(proximityThreshold / pipSize).toFixed(1)} threshold, Target: ${pEntry}, Live: ${currentPrice})`);
+          const hitSl = isBuy ? (currentPrice <= pSl) : (currentPrice >= pSl);
+          const hitTp = isBuy ? (currentPrice >= pTp) : (currentPrice <= pTp);
+          if (hitSl || hitTp) {
+            logger.info(`[MageEngine] 🛑 Direct Market Order Aborted: Live price (${currentPrice}) already hit ${hitSl ? 'Stop Loss' : 'Take Profit'}!`);
+            globalTradeGate.release(orch.profileId, preRegKey);
+            return;
+          }
+
+          const staticSpec = getSymbolSpec(brokerSymbol);
+          const stopsLevelPts = liveSpec?.stopsLevel || (staticSpec as any).stopsLevel || 0;
+          const safePrices = calculateStopsLevelSafePrices(
+            os.breakoutDir as "BUY" | "SELL",
+            currentPrice,
+            pSl,
+            pTp,
+            stopsLevelPts,
+            liveSpec?.tickSize || staticSpec.tickSize || 0.00001,
+            liveSpec?.digits ?? staticSpec.digits ?? 5
+          );
+          const roundedSafeSl = roundPrice(safePrices.pSl, brokerSymbol);
+          const roundedSafeTp = roundPrice(safePrices.pTp, brokerSymbol);
+
+          logger.info(`[MageEngine] ⚡ Executing direct MARKET ${os.breakoutDir} on ${brokerSymbol} (Proximity: ${(distFromEntry / pipSize).toFixed(1)} pips <= ${(proximityThreshold / pipSize).toFixed(1)} threshold, Target: ${pEntry}, Live: ${currentPrice}, SL: ${roundedSafeSl}, TP: ${roundedSafeTp})`);
           if (os.breakoutDir === "BUY") {
-            res = await conn.createMarketBuyOrder(brokerSymbol, calculatedVolume, pSl, pTp, { clientId: shortClientId, limitPrice: pEntry });
+            res = await conn.createMarketBuyOrder(brokerSymbol, calculatedVolume, roundedSafeSl, roundedSafeTp, { clientId: shortClientId, limitPrice: pEntry });
           } else {
-            res = await conn.createMarketSellOrder(brokerSymbol, calculatedVolume, pSl, pTp, { clientId: shortClientId, limitPrice: pEntry });
+            res = await conn.createMarketSellOrder(brokerSymbol, calculatedVolume, roundedSafeSl, roundedSafeTp, { clientId: shortClientId, limitPrice: pEntry });
           }
         } else {
           try {
@@ -1537,7 +1559,6 @@ export async function evaluateMageTrailingOnTick(
       if (currentR >= tTrig && (isBuy ? trade.slPrice < trade.entryPrice : trade.slPrice > trade.entryPrice)) {
         mageNewSl = trade.entryPrice;
         mageShouldUpdate = true;
-        clog(`[DEBUG MAGE TRAIL TRIGGERED 999] newSl=${mageNewSl}`);
       }
     } else if (isBuy) {
       if (currentR >= tTrig && trade.slPrice < trade.entryPrice) {
