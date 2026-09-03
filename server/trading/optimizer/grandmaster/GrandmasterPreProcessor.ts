@@ -142,7 +142,13 @@ function getMageTriggers(
   const startM = cfg.orbStartMin ?? 0;
   const orbMins = cfg.orbMinutes ?? 15;
   const actMins = cfg.actionMinutes ?? 5;
-  const key = `${symbol}_${session}_${startH}_${startM}_${orbMins}_${actMins}`;
+  const minBody = cfg.minBodyPips ?? 0;
+  const minBodyRatio = cfg.minBodyRatio;
+  const minCloseLoc = cfg.minCloseLoc;
+  const htfTrend = cfg.htfTrendFilter ?? cfg.useHtfEma;
+  const useSar = cfg.useHtfSar ?? cfg.useHtfSarFilter;
+
+  const key = `${symbol}_${session}_${startH}_${startM}_${orbMins}_${actMins}_${minBody}_${minBodyRatio}_${minCloseLoc}_${htfTrend}_${useSar}`;
   if (!mageTriggerCache.has(key)) {
     const triggers = preComputeMageTriggers(
       data.m5Candles,
@@ -155,7 +161,13 @@ function getMageTriggers(
       startH,
       startM,
       orbMins,
-      actMins
+      actMins,
+      minBody,
+      minBodyRatio,
+      minCloseLoc,
+      htfTrend,
+      useSar,
+      cfg
     );
     mageTriggerCache.set(key, triggers);
   }
@@ -407,6 +419,7 @@ interface AuditCacheEntry {
   oneYearWinRate?: number;
   regimeConsistency: number;
   threeYearMaxDrawdown?: number;
+  oneYearMaxDrawdown?: number;
   threeYearProfitFactor?: number;
   hasConsecutivePriorYearLoss?: boolean;
   dailyReturns?: Record<string, number>;
@@ -460,10 +473,23 @@ export function getEliteComponents(
       const dd = c.threeYearMaxDrawdown || c.monteCarloDrawdown99 || c.maxDrawdown || 1;
       const marRatio = dd > 0 ? threeYrR / dd : threeYrR;
       const expectancy = threeYrTrades > 0 ? threeYrR / threeYrTrades : 0;
-      const calmar = (c.threeYearMaxDrawdown || c.maxDrawdown || 0) > 0 ? threeYrR / (c.threeYearMaxDrawdown || c.maxDrawdown || 1) : threeYrR;
+      const maxAllowedDd = c.threeYearMaxDrawdown || c.maxDrawdown || 0;
+      const calmar = maxAllowedDd > 0 ? threeYrR / maxAllowedDd : threeYrR;
+      const oneYrDd = (c as any).oneYearMaxDrawdown || 0;
+      const r1Yr = (c as any).r1Year || 0;
+      const oneYrCalmar = oneYrDd > 0 ? r1Yr / oneYrDd : r1Yr;
 
-      // Must meet Elite 3-Year Institutional Quality Standards
-      if (threeYrR < 5.0 || threeYrTrades < 10 || expectancy < 0.04 || calmar < 0.75 || marRatio < 0.75) {
+      // Must meet Elite 3-Year Institutional Quality Standards: Max DD <= 10R & Calmar >= 2.0 across both 3Y & 1Y
+      if (
+        threeYrR < 5.0 ||
+        threeYrTrades < 10 ||
+        expectancy < 0.04 ||
+        calmar < 2.0 ||
+        marRatio < 2.0 ||
+        maxAllowedDd > 10.0 ||
+        oneYrDd > 10.0 ||
+        oneYrCalmar < 2.0
+      ) {
         return false;
       }
 
@@ -589,12 +615,21 @@ export async function preProcessData(
     // A. Asset-session whitelist
     if (!isSessionValidForAsset(symbol, setupStr)) return;
 
-    // B. Min SL Volatility floor
+    // B. Production Exit Mode Filtering: Mage must be TRAILING only. Sage must be TRAILING, MIDPOINT, or OPPOSITE_BOUNDARY.
+    if (botType === "Mage") {
+      if (setupStr.includes("ExitADTEL") || !setupStr.includes("ExitTRAILING")) return;
+    } else if (botType === "Sage") {
+      if (setupStr.includes("ExitADTEL")) return;
+      const validSageExit = ["ExitTRAILING", "ExitMIDPOINT", "ExitOPPOSITE_BOUNDARY"].some(em => setupStr.includes(em));
+      if (!validSageExit) return;
+    }
+
+    // C. Min SL Volatility floor
     const minSlMatch = setupStr.match(/MinSL([\d\.]+)/i);
     const minSlVal = minSlMatch ? parseFloat(minSlMatch[1]) : 999;
     if (minSlVal < minAllowedSl) return;
 
-    // C. Basic dump health (Strict Out-Of-Sample minimum > 0R)
+    // D. Basic dump health (Strict Out-Of-Sample minimum > 0R)
     const oosVal = state.oosNetR !== undefined ? state.oosNetR : state.totalNetR;
     if ((oosVal || 0) <= 0) return;
     if (state.totalNetR !== undefined && state.totalNetR <= 0) return;
@@ -769,7 +804,14 @@ export async function preProcessData(
             const priorNextR = monthlyNetR[priorNextMonthKey] ?? 0;
             const hasConsecutivePriorYearLoss = (priorSameR < 0 || priorNextR < 0);
 
-            // Compute max drawdown and profit factor from trade records
+            // Chronological sort for 100% exact drawdown calculation
+            traded.sort((a, b) => {
+              const timeA = a.timestamp || (a.entryTimeMs ?? new Date(a.exitTime || a.entryTime || a.date || a.time).getTime());
+              const timeB = b.timestamp || (b.entryTimeMs ?? new Date(b.exitTime || b.entryTime || b.date || b.time).getTime());
+              return timeA - timeB;
+            });
+
+            // Compute 3-year max drawdown and profit factor from chronologically sorted trade records
             let peak = 0;
             let running = 0;
             let maxDd = 0;
@@ -786,6 +828,23 @@ export async function preProcessData(
             }
             const pf = grossLoss > 0 ? grossProfit / grossLoss : (grossProfit > 0 ? 5.0 : 1.0);
 
+            // Compute 1-year max drawdown on recent 12 months (chronologically sorted)
+            recentOneYearTrades.sort((a, b) => {
+              const timeA = a.timestamp || (a.entryTimeMs ?? new Date(a.exitTime || a.entryTime || a.date || a.time).getTime());
+              const timeB = b.timestamp || (b.entryTimeMs ?? new Date(b.exitTime || b.entryTime || b.date || b.time).getTime());
+              return timeA - timeB;
+            });
+            let peak1Yr = 0;
+            let running1Yr = 0;
+            let oneYearMaxDd = 0;
+            for (const r of recentOneYearTrades) {
+              const val = (r.rMultiple || 0);
+              running1Yr += val;
+              if (running1Yr > peak1Yr) peak1Yr = running1Yr;
+              const dd = peak1Yr - running1Yr;
+              if (dd > oneYearMaxDd) oneYearMaxDd = dd;
+            }
+
             auditResult = {
               threeYearNetR: totalNetR,
               threeYearTrades: trades,
@@ -793,6 +852,7 @@ export async function preProcessData(
               oneYearWinRate: oneYearWinRate,
               regimeConsistency: consistency,
               threeYearMaxDrawdown: maxDd,
+              oneYearMaxDrawdown: oneYearMaxDd,
               threeYearProfitFactor: pf,
               hasConsecutivePriorYearLoss,
               dailyReturns,
@@ -825,6 +885,7 @@ export async function preProcessData(
         p.threeYearWinRate = auditResult.threeYearWinRate;
         p.threeYearMaxDrawdown = auditResult.threeYearMaxDrawdown ?? 1.0;
         p.maxDrawdown = p.threeYearMaxDrawdown;
+        (p as any).oneYearMaxDrawdown = auditResult.oneYearMaxDrawdown ?? 1.0;
         p.threeYearProfitFactor = auditResult.threeYearProfitFactor ?? 1.5;
         p.profitFactor = p.threeYearProfitFactor;
         p.recoveryFactor = p.maxDrawdown > 0 ? p.threeYearNetR / p.maxDrawdown : p.threeYearNetR * 2.0;
@@ -854,6 +915,8 @@ export async function preProcessData(
 
         const expectancy = p.threeYearTrades > 0 ? p.threeYearNetR / p.threeYearTrades : 0;
         const calmar = p.threeYearMaxDrawdown > 0 ? p.threeYearNetR / p.threeYearMaxDrawdown : p.threeYearNetR;
+        const oneYrMaxDd = (p as any).oneYearMaxDrawdown || 0;
+        const oneYrCalmar = oneYrMaxDd > 0 ? r1Year / oneYrMaxDd : r1Year;
         const effectiveOneYearWR = auditResult.oneYearWinRate ?? auditResult.threeYearWinRate;
 
         // Dynamic Pristine Champion Gates: Ensure pristine alpha, high calmar, and extreme monthly consistency
@@ -877,13 +940,17 @@ export async function preProcessData(
         const slope = (nMonths * sumXY - sumX * sumY) / (nMonths * sumXX - sumX * sumX);
 
         const marRatio = p.threeYearMaxDrawdown > 0 ? p.threeYearNetR / p.threeYearMaxDrawdown : p.threeYearNetR;
+        const actualMaxDd = p.threeYearMaxDrawdown || p.maxDrawdown || 0;
 
         if (
           p.threeYearNetR < 5.0 ||
           p.threeYearTrades < 10 ||
           expectancy < 0.04 ||
-          calmar < 0.75 ||
-          marRatio < 0.75 || // Hard MAR Gate
+          calmar < 2.0 ||
+          marRatio < 2.0 || // Hard MAR Gate
+          actualMaxDd > 10.0 || // Hard 3-Year Max Drawdown Gate (<= 10R)
+          oneYrMaxDd > 10.0 || // Hard 1-Year Max Drawdown Gate (<= 10R)
+          oneYrCalmar < 2.0 || // Hard 1-Year Calmar Gate (>= 2.0)
           (p.threeYearProfitFactor && p.threeYearProfitFactor < 1.15) || // Profit factor floor
           r1Year < 2.0 || // Rolling 12M must be positive (> +2R)
           rRecent6M < 0.5 || // Recent 6 months must be positive (> +0.5R)
@@ -901,6 +968,8 @@ export async function preProcessData(
         (p as any).recentQuarter = rRecentQuarter;
         (p as any).slope = slope;
         (p as any).calmar = calmar;
+        (p as any).oneYearMaxDrawdown = oneYrMaxDd;
+        (p as any).oneYearCalmar = oneYrCalmar;
         (p as any).losingMonths = losingMonths13;
       } else {
         validComponents.splice(i, 1);

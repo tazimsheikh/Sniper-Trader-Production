@@ -37,7 +37,7 @@ function safeWriteFileSync(filePath: string, content: string) {
 }
 
 const MIN_TRADES = 3;
-const MAX_DRAWDOWN = 70;
+const MAX_DRAWDOWN = 10.0;
 
 async function runSynthesis() {
   console.log(`=======================================================`);
@@ -274,8 +274,24 @@ async function runSynthesis() {
 
   const MAX_MC_DD_ALLOWED = 32.0;
   const beforePoolCount = rawNormalPool.length;
-  rawNormalPool = rawNormalPool.filter(p => (p.monteCarloDrawdown99 ?? 0) <= MAX_MC_DD_ALLOWED);
-  console.log(`[PRUNING] Removed ${beforePoolCount - rawNormalPool.length} candidates with > ${MAX_MC_DD_ALLOWED}R tail risk.`);
+  rawNormalPool = rawNormalPool.filter(p => {
+    const dd = p.threeYearMaxDrawdown || p.maxDrawdown || 0;
+    const r = p.threeYearNetR !== undefined ? p.threeYearNetR : (p.totalTotalR || 0);
+    const calmar = dd > 0 ? r / dd : r;
+    const oneYrDd = (p as any).oneYearMaxDrawdown || 0;
+    const r1Yr = (p as any).r1Year || 0;
+    const oneYrCalmar = oneYrDd > 0 ? r1Yr / oneYrDd : r1Yr;
+    const mcDd = p.monteCarloDrawdown99 ?? 0;
+    if (dd > 10.0 || calmar < 2.0 || oneYrDd > 10.0 || oneYrCalmar < 2.0 || mcDd > MAX_MC_DD_ALLOWED) {
+      return false;
+    }
+    // Hard rejection for unsupported Mage exits
+    if (p.botType === "Mage" && (p.setup.includes("ExitADTEL") || !p.setup.includes("ExitTRAILING"))) {
+      return false;
+    }
+    return true;
+  });
+  console.log(`[PRUNING] Removed ${beforePoolCount - rawNormalPool.length} candidates failing Max DD <= 10R, Calmar >= 2.0, or MC tail risk.`);
 
   // --- DYNAMIC PAIR PRUNING ---
   console.log(`\n⚙️ [PRUNING] Dynamic Pair-Level Drag Elimination`);

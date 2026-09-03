@@ -95,7 +95,13 @@ function isDST(timestamp: number): boolean {
 // ── Main shadow backtest runner ──
 import { ShadowResult, ShadowOptions } from '../config/types.js';
 
-export async function runShadowBacktest(pair: string, startDate?: string, endDate?: string, options: ShadowOptions = { enableMage: true, enableSage: true }): Promise<ShadowResult> {
+export async function runShadowBacktest(
+  pair: string,
+  startDate?: string,
+  endDate?: string,
+  options: ShadowOptions = { enableMage: true, enableSage: true },
+  customConfigs?: any[]
+): Promise<ShadowResult> {
   console.log(`\n🔮 [SHADOW] Starting OrchestratorShadowBacktester for ${pair}`);
 
   if (!startDate || !endDate) {
@@ -150,6 +156,18 @@ export async function runShadowBacktest(pair: string, startDate?: string, endDat
   if (options.enableSage) orch.activeBots.add('sage');
   if (options.enableSeer) orch.activeBots.add('seer');
   else orch.activeBots.delete('seer');
+
+  if (customConfigs && customConfigs.length > 0) {
+    if (options.enableMage) {
+      (orch as any).__CUSTOM_MAGE_CONFIGS__ = customConfigs;
+    }
+    if (options.enableSage) {
+      (orch as any).__CUSTOM_SAGE_CONFIGS__ = customConfigs;
+    }
+    if (options.enableSeer) {
+      (orch as any).__CUSTOM_SEER_CONFIGS__ = customConfigs;
+    }
+  }
 
   // Ensure pair state has bots enabled
   const basePair = PairConfigManager.getBaseSymbol(pair);

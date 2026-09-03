@@ -75,7 +75,7 @@ export async function runSageBot(orch, sessionPair, state, c) {
 
   if (!state) return;
 
-  const sageConfigs = PairConfigManager.getSageConfigs(sessionPair);
+  const sageConfigs = (orch as any).__CUSTOM_SAGE_CONFIGS__ || PairConfigManager.getSageConfigs(sessionPair);
   if (!sageConfigs || sageConfigs.length === 0) {
     return;
   }
@@ -872,9 +872,11 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
 
     const penetrationPct = sageCfg.entryPenetrationPct ?? 0;
     const optCfg = PairConfigManager.getRepresentativeConfig(symbol);
+    const spreadPts = (optCfg?.spread || 0) * pipSize;
     const proximityThreshold = Math.max(2.5 * pipSize, (optCfg?.spread || 1) * 2.5 * pipSize, 0.10 * Math.abs(pEntry - pSl));
-    const distFromEntry = ss.direction === "BUY" ? (c.close - pEntry) : (pEntry - c.close);
-    const isWithinProximity = Math.abs(distFromEntry) <= proximityThreshold || (ss.direction === "BUY" ? c.close <= pEntry : c.close >= pEntry);
+    const currentPrice = ss.direction === "BUY" ? roundPrice(c.open + spreadPts, brokerSymbol) : roundPrice(c.open, brokerSymbol);
+    const distFromEntry = ss.direction === "BUY" ? (currentPrice - pEntry) : (pEntry - currentPrice);
+    const isWithinProximity = lte(Math.abs(distFromEntry), proximityThreshold) || (ss.direction === "BUY" ? lte(currentPrice, pEntry) : gte(currentPrice, pEntry));
 
     const executeAsMarket = penetrationPct === 0 || isWithinProximity;
 
@@ -903,7 +905,7 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
     try {
       if (executeAsMarket) {
         const isBuy = ss.direction === "BUY";
-        const latestPrice = roundPrice(c.close, brokerSymbol);
+        const latestPrice = currentPrice;
         const hitSl = isBuy ? (latestPrice <= pSl) : (latestPrice >= pSl);
         const hitTp = isBuy ? (latestPrice >= pTp) : (latestPrice <= pTp);
         if (hitSl || hitTp) {
@@ -935,14 +937,14 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
                   lots,
                   roundedSafeSl,
                   roundedSafeTp || undefined,
-                  { magic, clientId: shortClientId },
+                  { magic, clientId: shortClientId, entryPrice: latestPrice },
                 )
               : conn.createMarketSellOrder(
                   brokerSymbol,
                   lots,
                   roundedSafeSl,
                   roundedSafeTp || undefined,
-                  { magic, clientId: shortClientId },
+                  { magic, clientId: shortClientId, entryPrice: latestPrice },
                 ),
           `CreateSageMarketOrder:${brokerSymbol}`,
         );
@@ -1015,8 +1017,8 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
         const roundedSafeTp = roundPrice(safePrices.pTp, brokerSymbol);
         logger.info(`[SageEngine] 🛡️ Smart Market Fallback Prices: Entry=${latestPrice}, SL=${roundedSafeSl}, TP=${roundedSafeTp} (stopsLevel=${stopsLevelPts}pts)`);
         orderRes = isBuy
-          ? await conn.createMarketBuyOrder(brokerSymbol, lots, roundedSafeSl, roundedSafeTp || undefined, { magic, clientId: shortClientId })
-          : await conn.createMarketSellOrder(brokerSymbol, lots, roundedSafeSl, roundedSafeTp || undefined, { magic, clientId: shortClientId });
+          ? await conn.createMarketBuyOrder(brokerSymbol, lots, roundedSafeSl, roundedSafeTp || undefined, { magic, clientId: shortClientId, entryPrice: latestPrice })
+          : await conn.createMarketSellOrder(brokerSymbol, lots, roundedSafeSl, roundedSafeTp || undefined, { magic, clientId: shortClientId, entryPrice: latestPrice });
       } else {
         globalTradeGate.release(orch.profileId, preRegKey);
         throw err;
@@ -1117,7 +1119,7 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
       if (state.sageTradeTakenToday) state.sageTradeTakenToday[sig] = false;
       ss.isPlacing = false;
       globalTradeGate.release(orch.profileId, preRegKey);
-      db.prepare("UPDATE bot_trade_states SET status = 'FAILED' WHERE client_id = ? AND status = 'PLACING'").run(shortClientId).catch(() => {});
+      try { db.prepare("UPDATE bot_trade_states SET status = 'FAILED' WHERE client_id = ? AND status = 'PLACING'").run(shortClientId); } catch(e) {}
       logger.error(`[PLACE_LIMIT] FAILED order placement: ${JSON.stringify(orderRes)}`);
       addBotLog(orch.profileId, botId, baseSymbol, "ERROR", `Failed to place limit: ${JSON.stringify(orderRes)}`);
     }
@@ -1126,7 +1128,7 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
     if (state.sageTradeTakenToday) state.sageTradeTakenToday[sig] = false;
     ss.isPlacing = false;
     globalTradeGate.release(orch.profileId, preRegKey);
-    db.prepare("UPDATE bot_trade_states SET status = 'FAILED' WHERE client_id = ? AND status = 'PLACING'").run(shortClientId).catch(() => {});
+    try { db.prepare("UPDATE bot_trade_states SET status = 'FAILED' WHERE client_id = ? AND status = 'PLACING'").run(shortClientId); } catch(e) {}
     logger.error(`[PLACE_LIMIT] ERROR:`, err);
     addBotLog(orch.profileId, botId, baseSymbol, "ERROR", `Error in place stop: ${err.message}`);
   }
@@ -1196,8 +1198,8 @@ export async function evaluateSageTrailingOnTick(
   for (const trade of state.activeTrades) {
     const tBotId = trade.botId?.toUpperCase() || "";
     const baseSymbol = PairConfigManager.getBaseSymbol(sessionPair);
-    const sageConfigs = PairConfigManager.getSageConfigs(sessionPair);
-    const mageConfigs = PairConfigManager.getMageConfigs(sessionPair);
+    const sageConfigs = (orch as any).__CUSTOM_SAGE_CONFIGS__ || PairConfigManager.getSageConfigs(sessionPair);
+    const mageConfigs = (orch as any).__CUSTOM_MAGE_CONFIGS__ || PairConfigManager.getMageConfigs(sessionPair);
     const isSagePairOnly = sageConfigs.length > 0 && mageConfigs.length === 0;
 
     if (tBotId !== targetBotId.toUpperCase() && !isSagePairOnly) continue;
@@ -1462,8 +1464,8 @@ export async function checkSageLimitFill(orch, sessionPair, state, c, targetBotI
           ss.fired_fill_check = true;
           logger.info(`[DiscretionaryTrader] ⚠️ SAGE Fallback Poller detected missed OrderFill for ${baseSymbol}!`,);
 
-          const sageConfigs = PairConfigManager.getSageConfigs(sessionPair);
-          const sageCfg = sageConfigs.find(c => c.signature === sig) || sageConfigs[0] || state.config;
+          const sageConfigs = (orch as any).__CUSTOM_SAGE_CONFIGS__ || PairConfigManager.getSageConfigs(sessionPair);
+          const sageCfg = sageConfigs.find((c: any) => c.signature === sig) || sageConfigs[0] || state.config;
           const pipSize = sageCfg?.pipSize || PairConfigManager.getRepresentativeConfig(sessionPair)?.pipSize || getDynamicPipSize(baseSymbol);
           const intendedLimit = ss.limitPrice || pos.openPrice;
           const riskPips = Math.abs(intendedLimit - ss.slPrice) / pipSize;

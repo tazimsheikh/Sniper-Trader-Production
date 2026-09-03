@@ -530,8 +530,9 @@ export class MockBrokerAccount {
           });
           
           const sageSig = this.resolveSageKey(orchestratorState, order.clientId);
-          if (sageSig && orchestratorState) {
+          if (sageSig && orchestratorState?.sageStates?.[sageSig]) {
             orchestratorState.sageStates[sageSig].fired_fill_check = true;
+            orchestratorState.sageStates[sageSig].limitOrderId = null;
           }
           continue;
         }
@@ -569,7 +570,35 @@ export class MockBrokerAccount {
           const sageSig = this.resolveSageKey(targetState, order.clientId);
             
           if (sageSig) {
-            // let SageEngine handle its own activeTrades injection in checkSageLimitFill
+            const targetSs = targetState.sageStates?.[sageSig];
+            if (targetSs) {
+              targetSs.fired = true;
+              targetSs.fired_fill_check = true;
+              targetSs.limitOrderId = null;
+            }
+            if (!targetState.activeTrades) targetState.activeTrades = [];
+            if (!targetState.activeTrades.some((t: any) => String(t.metaOrderId) === String(orderId))) {
+              targetState.activeTrades.push({
+                id: orderId,
+                dbId: 1,
+                metaOrderId: orderId,
+                clientId: sageSig,
+                botId: 'SAGE',
+                magic: order.magic,
+                symbol: this.symbol,
+                direction: isBuy ? 'BUY' : 'SELL',
+                entryPrice: pos.openPrice,
+                intendedEntryPrice: originalLimitPrice || pos.intendedEntryPrice || pos.openPrice,
+                slPrice: pos.sl,
+                originalSl: pos.originalSl || pos.sl,
+                tpPrice: pos.tp,
+                riskPips: Math.abs(pos.openPrice - pos.sl) / (this.pipSize || 0.0001),
+                highestPrice: pos.openPrice,
+                lowestPrice: pos.openPrice,
+                openTime: this.currentCandle?.timestamp || Date.now(),
+                timestamp: this.currentCandle?.timestamp || Date.now(),
+              });
+            }
           } else {
             const mageSig = this.resolveMageKey(targetState, order.clientId) || order.clientId;
             const baseSig = mageSig ? mageSig.split('_').slice(0, -1).join('_') : '';

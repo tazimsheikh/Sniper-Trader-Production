@@ -44,6 +44,7 @@ export default function GlobalSettings({ onClose, onLogout }: GlobalSettingsProp
   const [creatingProfile, setCreatingProfile] = useState(false);
   const [isSyncingSymbols, setIsSyncingSymbols] = useState(false);
   const [liveBalance, setLiveBalance] = useState<number | null>(null);
+  const [liveEquity, setLiveEquity] = useState<number | null>(null);
   const [isBalanceLoading, setIsBalanceLoading] = useState(false);
   
   const handleProfileChange = (pId: number) => {
@@ -52,6 +53,7 @@ export default function GlobalSettings({ onClose, onLogout }: GlobalSettingsProp
     
     // Clear live balance immediately to prevent cross-profile state bleed while fetching
     setLiveBalance(null);
+    setLiveEquity(null);
     setIsBalanceLoading(true);
     
     // Sync risk state to the newly selected profile
@@ -355,16 +357,20 @@ export default function GlobalSettings({ onClose, onLogout }: GlobalSettingsProp
       const data = await res.json();
       if (data.success) {
         setStatus(data.status);
-        if (data.account && data.account.balance !== undefined && data.account.balance !== null) {
-          setLiveBalance(data.account.balance);
+        if (data.account && (data.account.balance !== undefined || data.account.equity !== undefined)) {
+          setLiveBalance(data.account.balance ?? data.account.equity);
+          setLiveEquity(data.account.equity ?? data.account.balance);
         } else {
           setLiveBalance(null);
+          setLiveEquity(null);
         }
       } else {
         setLiveBalance(null);
+        setLiveEquity(null);
       }
     } catch (e) {
       setLiveBalance(null);
+      setLiveEquity(null);
     } finally {
       setIsTesting(false);
       setIsBalanceLoading(false);
@@ -661,9 +667,9 @@ export default function GlobalSettings({ onClose, onLogout }: GlobalSettingsProp
                                 const todayEstDate = getBrokerTradingDayStr(new Date());
 
                                 const isToday = institutionalDailyDate === todayEstDate;
-                                const startBal = (isToday && institutionalStartBalance && institutionalStartBalance > 0) ? institutionalStartBalance : liveBalance;
-                                const currentBal = liveBalance;
-                                const diff = currentBal - startBal;
+                                const effectiveCurrent = liveEquity ?? liveBalance;
+                                const startBal = (isToday && institutionalStartBalance && institutionalStartBalance > 0) ? institutionalStartBalance : effectiveCurrent;
+                                const diff = effectiveCurrent - startBal;
                                 const pct = startBal > 0 ? (diff / startBal) * 100 : 0;
                                 const isPositive = pct >= 0;
                                 return (
@@ -673,6 +679,11 @@ export default function GlobalSettings({ onClose, onLogout }: GlobalSettingsProp
                                     </span>
                                     <span className="text-slate-500 font-mono text-[10px]">
                                       (Base: ${startBal.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})})
+                                      {liveEquity !== null && Math.abs(liveEquity - (liveBalance || 0)) >= 0.01 && (
+                                        <span className="text-emerald-300 ml-1">
+                                          • Eq: ${liveEquity.toFixed(2)}
+                                        </span>
+                                      )}
                                     </span>
                                   </div>
                                 );

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { Play, Square, Eye, Activity, Settings, X, Trash2, ChevronDown, ChevronRight, Terminal, TrendingUp, BarChart2, DollarSign, TrendingDown, Database, Shield, RefreshCw } from 'lucide-react';
+import { Play, Square, Eye, Activity, Settings, X, Trash2, ChevronDown, ChevronRight, Terminal, TrendingUp, BarChart2, DollarSign, TrendingDown, Database, Shield, RefreshCw, AlertTriangle } from 'lucide-react';
 import { useWebSocket } from '../context/WebSocketContext';
 import { useSound } from '../hooks/useSound';
 import TradeAnalytics from './TradeAnalytics';
@@ -129,6 +129,21 @@ export default function BotDashboard({ bot }: { bot: any }) {
   const [botBalance, setBotBalance] = useState<number | null>(null);
   const [botCurrency, setBotCurrency] = useState<string>('USD');
   const [safetyStatus, setSafetyStatus] = useState<any>(null);
+  const [brokerMetrics, setBrokerMetrics] = useState<{
+    balance: number;
+    equity: number;
+    currency: string;
+    dailyStartBalance: number;
+    dailyPnlDollars: number;
+    dailyPnlPct: number;
+    peakBalance: number;
+    drawdownPct: number;
+    circuitBreakerActive: boolean;
+    circuitBreakerReason: string;
+    institutionalEnabled: boolean;
+    institutionalDailyCap: number;
+    institutionalPeakToDraw: number;
+  } | null>(null);
   const [isResetting, setIsResetting] = useState(false);
   const [expandedCategories, setExpandedCategories] = useState<Record<string, boolean>>({
     'Indices': true,
@@ -138,15 +153,18 @@ export default function BotDashboard({ bot }: { bot: any }) {
     'Forex Crosses': false,
   });
 
-  
   const toggleCategory = (cat: string) => {
     setExpandedCategories(prev => ({ ...prev, [cat]: !prev[cat] }));
   };
 
-  
   const [botDailyPl, setBotDailyPl] = useState<number>(0);
   
   useEffect(() => {
+    // 🛡️ Live Broker Metrics take 100% precedence over local DB estimates
+    if (brokerMetrics && brokerMetrics.dailyPnlPct !== undefined) {
+      setBotDailyPl(brokerMetrics.dailyPnlPct);
+      return;
+    }
     if (!botBalance || diary.length === 0) {
       setBotDailyPl(0);
       return;
@@ -181,7 +199,7 @@ export default function BotDashboard({ bot }: { bot: any }) {
     const startingBalance = botBalance - dailyProfit; // rough estimate of start of day balance
     const pct = startingBalance > 0 ? (dailyProfit / startingBalance) * 100 : 0;
     setBotDailyPl(pct);
-  }, [diary, botBalance, bot?.id]);
+  }, [diary, botBalance, bot?.id, brokerMetrics]);
 
   const categorizePair = (pair: string) => {
     const p = pair.split('.')[0].toUpperCase();
@@ -269,15 +287,21 @@ export default function BotDashboard({ bot }: { bot: any }) {
       })
       .catch(() => {});
 
-    // Fetch account analytics for Live Balance
+    // Fetch account analytics for Live Balance and Broker Metrics
     fetch(`/api/auth/profiles/${profileId}/metaapi/analytics`, { credentials: 'same-origin' })
       .then(res => res.json())
       .then(data => {
-        if (data.success && data.account) {
-          setAnalyticsData(data);
-          if (data.account.balance) {
-            setBotBalance(data.account.balance);
-            setBotCurrency(data.account.currency || 'USD');
+        if (data.success) {
+          if (data.brokerMetrics) {
+            setBrokerMetrics(data.brokerMetrics);
+            if (data.brokerMetrics.dailyPnlPct !== undefined) setBotDailyPl(data.brokerMetrics.dailyPnlPct);
+          }
+          if (data.account) {
+            setAnalyticsData(data);
+            if (data.account.balance) {
+              setBotBalance(data.account.balance);
+              setBotCurrency(data.account.currency || 'USD');
+            }
           }
         }
       })
@@ -305,11 +329,17 @@ export default function BotDashboard({ bot }: { bot: any }) {
           return false;
         }));
       }
-      if (analyticsRes.status === 'fulfilled' && analyticsRes.value?.success && analyticsRes.value?.account) {
-        setAnalyticsData(analyticsRes.value);
-        if (analyticsRes.value.account.balance) {
-          setBotBalance(analyticsRes.value.account.balance);
-          setBotCurrency(analyticsRes.value.account.currency || 'USD');
+      if (analyticsRes.status === 'fulfilled' && analyticsRes.value?.success) {
+        if (analyticsRes.value.brokerMetrics) {
+          setBrokerMetrics(analyticsRes.value.brokerMetrics);
+          if (analyticsRes.value.brokerMetrics.dailyPnlPct !== undefined) setBotDailyPl(analyticsRes.value.brokerMetrics.dailyPnlPct);
+        }
+        if (analyticsRes.value.account) {
+          setAnalyticsData(analyticsRes.value);
+          if (analyticsRes.value.account.balance) {
+            setBotBalance(analyticsRes.value.account.balance);
+            setBotCurrency(analyticsRes.value.account.currency || 'USD');
+          }
         }
       }
     } finally {
@@ -404,6 +434,13 @@ export default function BotDashboard({ bot }: { bot: any }) {
       if (data.currency) setBotCurrency(data.currency);
     };
 
+    const handleBrokerMetrics = (data: any) => {
+      setBrokerMetrics(data);
+      if (data.balance !== undefined) setBotBalance(data.balance);
+      if (data.currency) setBotCurrency(data.currency);
+      if (data.dailyPnlPct !== undefined) setBotDailyPl(data.dailyPnlPct);
+    };
+
     const handleError = (data: any) => {
       setStatusMsg(`Error: ${data.message}`);
       playError();
@@ -432,6 +469,7 @@ export default function BotDashboard({ bot }: { bot: any }) {
     socket.on(`${eventPrefix}:eye_feed`, handleEyeFeed);
     socket.on(`${eventPrefix}:system_log`, handleSystemLog);
     socket.on(`${eventPrefix}:balance_update`, handleBalanceUpdate);
+    socket.on(`${eventPrefix}:broker_metrics_update`, handleBrokerMetrics);
     socket.on(`${eventPrefix}:error`, handleError);
 
     return () => {
@@ -442,6 +480,7 @@ export default function BotDashboard({ bot }: { bot: any }) {
       socket.off(`${eventPrefix}:eye_feed`, handleEyeFeed);
       socket.off(`${eventPrefix}:system_log`, handleSystemLog);
       socket.off(`${eventPrefix}:balance_update`, handleBalanceUpdate);
+      socket.off(`${eventPrefix}:broker_metrics_update`, handleBrokerMetrics);
       socket.off(`${eventPrefix}:error`, handleError);
     };
   }, [socket, profileId, bot?.id]);
@@ -583,35 +622,64 @@ export default function BotDashboard({ bot }: { bot: any }) {
         {/* Right: Balance & Live Safety Metrics */}
         <div className="flex flex-wrap items-center gap-3 justify-end">
           
-          {safetyStatus && (
-            <>
-              <div className="flex items-center gap-2 bg-black/50 border border-white/10 rounded-2xl px-4 py-2 shadow-inner">
-                <TrendingDown size={14} className={safetyStatus.drawdownPct > 10 ? 'text-rose-400' : 'text-emerald-400'} />
-                <div className="flex flex-col">
-                  <span className={`font-display font-bold text-sm leading-none ${safetyStatus.drawdownPct > 10 ? 'text-rose-400' : 'text-emerald-400'}`}>{safetyStatus.drawdownPct?.toFixed(2)}%</span>
-                  <span className="text-slate-500 font-mono text-[8px] uppercase tracking-widest mt-0.5">Live DD</span>
-                </div>
-              </div>
-              <div className="flex items-center gap-2 bg-black/50 border border-white/10 rounded-2xl px-4 py-2 shadow-inner">
-                <Activity size={14} className={botDailyPl >= 0 ? 'text-emerald-400' : 'text-rose-400'} />
-                <div className="flex flex-col">
-                  <span className={`font-display font-bold text-sm leading-none ${botDailyPl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{botDailyPl >= 0 ? '+' : ''}{botDailyPl.toFixed(2)}%</span>
-                  <span className="text-slate-500 font-mono text-[8px] uppercase tracking-widest mt-0.5">Daily P/L</span>
-                </div>
-              </div>
-            </>
-          )}
+          <div className="flex items-center gap-2 bg-black/50 border border-white/10 rounded-2xl px-4 py-2 shadow-inner">
+            <TrendingDown size={14} className={(brokerMetrics?.drawdownPct ?? safetyStatus?.drawdownPct ?? 0) > (brokerMetrics?.institutionalPeakToDraw || 5.5) ? 'text-rose-400' : 'text-emerald-400'} />
+            <div className="flex flex-col">
+              <span className={`font-display font-bold text-sm leading-none ${(brokerMetrics?.drawdownPct ?? safetyStatus?.drawdownPct ?? 0) > (brokerMetrics?.institutionalPeakToDraw || 5.5) ? 'text-rose-400' : 'text-emerald-400'}`}>
+                {(brokerMetrics?.drawdownPct ?? safetyStatus?.drawdownPct ?? 0).toFixed(2)}%
+              </span>
+              <span className="text-slate-500 font-mono text-[8px] uppercase tracking-widest mt-0.5">Live DD</span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 bg-black/50 border border-white/10 rounded-2xl px-4 py-2 shadow-inner">
+            <Activity size={14} className={botDailyPl >= 0 ? 'text-emerald-400' : 'text-rose-400'} />
+            <div className="flex flex-col">
+              <span className={`font-display font-bold text-sm leading-none ${botDailyPl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                {botDailyPl >= 0 ? '+' : ''}{botDailyPl.toFixed(2)}%
+                {brokerMetrics?.dailyPnlDollars !== undefined && (
+                  <span className="text-[10px] font-mono ml-1 opacity-80">
+                    ({brokerMetrics.dailyPnlDollars >= 0 ? '+' : ''}${brokerMetrics.dailyPnlDollars.toFixed(2)})
+                  </span>
+                )}
+              </span>
+              <span className="text-slate-500 font-mono text-[8px] uppercase tracking-widest mt-0.5">Live Daily P/L</span>
+            </div>
+          </div>
+
           {botBalance !== null && (
             <div className="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl px-5 py-3 shadow-[0_0_20px_rgba(16,185,129,0.1)]">
               <DollarSign size={16} className="text-emerald-400" />
               <div className="flex flex-col">
-                <span className="text-emerald-400 font-display font-bold text-lg leading-none">{botCurrency} {botBalance.toFixed(2)}</span>
-                <span className="text-slate-500 font-mono text-[9px] uppercase tracking-widest mt-0.5">Live Balance</span>
+                <span className="text-emerald-400 font-display font-bold text-lg leading-none">
+                  {botCurrency} {botBalance.toFixed(2)}
+                  {brokerMetrics?.equity !== undefined && Math.abs(brokerMetrics.equity - botBalance) >= 0.01 && (
+                    <span className="text-xs text-emerald-300/80 font-mono ml-2">
+                      (Eq: ${brokerMetrics.equity.toFixed(2)})
+                    </span>
+                  )}
+                </span>
+                <span className="text-slate-500 font-mono text-[9px] uppercase tracking-widest mt-0.5">Live Broker Balance</span>
               </div>
             </div>
           )}
         </div>
       </div>
+
+      {/* 🛑 Circuit Breaker Alert Banner */}
+      {brokerMetrics?.circuitBreakerActive && (
+        <div className="bg-rose-950/80 border border-rose-500/50 rounded-2xl p-4 mb-6 flex items-center gap-3 shadow-[0_0_30px_rgba(244,63,94,0.3)] animate-pulse">
+          <AlertTriangle className="text-rose-400 shrink-0" size={24} />
+          <div className="flex flex-col">
+            <span className="font-display font-bold text-sm text-rose-200">
+              INSTITUTIONAL CIRCUIT BREAKER ACTIVE — ALL TRADING HALTED
+            </span>
+            <span className="text-xs font-mono text-rose-300">
+              {brokerMetrics.circuitBreakerReason || 'Institutional risk limit breached on broker live equity'}
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Header & Controls */}
       <div className="bg-black/50 border border-fuchsia-900/40 rounded-3xl p-6 shadow-2xl relative overflow-hidden group">

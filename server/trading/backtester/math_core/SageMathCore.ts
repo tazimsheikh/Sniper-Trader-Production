@@ -332,16 +332,16 @@ export function evaluateExits(
     const maxSweepBuffer = activeSweepBuffer * maxSweepMultiplier;
 
     // Minimum Sweep Filter (Crucial for Super-Set Caching where triggers might only have 0-pip sweeps)
-    if (direction === "BUY" && t.actionCandleLow !== undefined && t.actionCandleLow > t.orLow - activeSweepBuffer) continue;
-    if (direction === "SELL" && t.actionCandleHigh !== undefined && t.actionCandleHigh < t.orHigh + activeSweepBuffer) continue;
+    if (direction === "BUY" && t.actionCandleLow !== undefined && !lte(t.actionCandleLow, t.orLow - activeSweepBuffer)) continue;
+    if (direction === "SELL" && t.actionCandleHigh !== undefined && !gte(t.actionCandleHigh, t.orHigh + activeSweepBuffer)) continue;
 
     // Maximum Sweep Filter
-    if (direction === "BUY" && t.actionCandleLow !== undefined && t.actionCandleLow < t.orLow - maxSweepBuffer) continue;
-    if (direction === "SELL" && t.actionCandleHigh !== undefined && t.actionCandleHigh > t.orHigh + maxSweepBuffer) continue;
+    if (direction === "BUY" && t.actionCandleLow !== undefined && !gte(t.actionCandleLow, t.orLow - maxSweepBuffer)) continue;
+    if (direction === "SELL" && t.actionCandleHigh !== undefined && !lte(t.actionCandleHigh, t.orHigh + maxSweepBuffer)) continue;
 
     if ((config as any).requireCloseInside && t.actionCandleClose !== undefined) {
-      if (direction === "BUY" && t.actionCandleClose < t.orLow) continue;
-      if (direction === "SELL" && t.actionCandleClose > t.orHigh) continue;
+      if (direction === "BUY" && !gte(t.actionCandleClose, t.orLow)) continue;
+      if (direction === "SELL" && !lte(t.actionCandleClose, t.orHigh)) continue;
     }
 
     // Reversal Entry Thresholds
@@ -491,12 +491,12 @@ export function evaluateExits(
         }
 
         const pEntry = direction === "BUY" ? limitBuyPrice : limitSellPrice;
-        const proximityThreshold = Math.max(1.5 * pipSize, (optCfg?.spread || 1) * 2.5 * pipSize, 0.10 * Math.abs(pEntry - proposedSl));
+        const proximityThreshold = Math.max(2.5 * pipSize, (optCfg?.spread || 1) * 2.5 * pipSize, 0.10 * Math.abs(pEntry - proposedSl));
         const currentPrice = direction === "BUY" ? m1.open[j] + spreadPts : m1.open[j];
         const distFromEntry = direction === "BUY" ? (currentPrice - pEntry) : (pEntry - currentPrice);
-        const isWithinProximity = Math.abs(distFromEntry) <= proximityThreshold || (direction === "BUY" ? currentPrice <= pEntry : currentPrice >= pEntry);
+        const isWithinProximity = lte(Math.abs(distFromEntry), proximityThreshold) || (direction === "BUY" ? lte(currentPrice, pEntry) : gte(currentPrice, pEntry));
 
-        if (pct === 0 || isWithinProximity) {
+        if (pct === 0 || (j === startM1Idx && isWithinProximity)) {
           tradeActive = true;
           entryTimeMs = m1.timestamp[j];
           actualEntryPrice = roundPrice(direction === "BUY" ? m1.open[j] + spreadPts : m1.open[j], pair);

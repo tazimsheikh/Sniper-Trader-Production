@@ -73,6 +73,10 @@ class GlobalTradeGate {
     direction: "BUY" | "SELL",
     traderType: TraderType,
   ): { approved: boolean; reason?: string } {
+    if ((global as any).isSimulator || process.env.SIMULATION_MODE === "true") {
+      return { approved: true };
+    }
+
     const active = this.getProfileMap(profileId);
 
     // Rule 1: Max Concurrent

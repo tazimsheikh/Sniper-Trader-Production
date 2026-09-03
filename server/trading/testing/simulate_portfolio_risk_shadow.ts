@@ -19,11 +19,113 @@ import { clearMageBacktestCache } from "../backtester/MageMathBacktester.js";
 import { clearSageBacktestCache } from "../backtester/SageMathBacktester.js";
 import { clearSeerBacktestCache } from "../backtester/SeerMathBacktester.js";
 import { PairConfigManager, MAGE_PAIR_CONFIG, SAGE_PAIR_CONFIG, SEER_PAIR_CONFIG } from "../config/PairConfig.js";
+import { OPTIMIZER_CONFIG } from "../config/OptimizerPairConfig.js";
 import { generateMagicNumber } from "../../utils/magicNumber.js";
 import { getFixedEstDate } from "../engine/LiveOrchestrator.js";
+import parseSeerSetupToConfig from "../optimizer/grandmaster/utils/seer_params_parser.js";
 
 process.env.SIMULATION_MODE = "true";
 (global as any).isSimulator = true;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Setup Parser Utility (Mirrors Math Simulator)
+// ─────────────────────────────────────────────────────────────────────────────
+function parseSetupToConfig(setupStr: string, symbol: string, isSage: boolean): any {
+  const parts = setupStr.split("_");
+  let session = parts[0];
+  if (parts[0] === "NY") session = `NY_${parts[1]}`;
+
+  const findNum = (prefix: string, isSuffix = false): number | undefined => {
+    const p = isSuffix
+      ? parts.find((item) => item.endsWith(prefix))
+      : parts.find((item) => item.startsWith(prefix));
+    if (!p) return undefined;
+    const raw = isSuffix ? p.slice(0, -prefix.length) : p.slice(prefix.length);
+    const num = parseFloat(raw);
+    return isNaN(num) ? undefined : num;
+  };
+
+  const findStr = (prefix: string): string | undefined => {
+    const p = parts.find((item) => item.startsWith(prefix));
+    return p ? p.slice(prefix.length) : undefined;
+  };
+
+  const baseSym = symbol.split('.')[0].toUpperCase();
+  const baseProps = OPTIMIZER_CONFIG[baseSym] || { tickSize: 0.00001, pipSize: 0.0001, spread: 2.0 };
+
+  const parsedPct = findNum("%", true) ?? 0;
+  const minSl = findNum("MinSL") ?? 10;
+  const maxSl = findNum("MaxSl") ?? findNum("MaxSL") ?? 100;
+
+  if (isSage) {
+    const sweep = findNum("Sweep") ?? 0;
+    const maxSwp = findNum("MaxSwp") ?? 3;
+    const reqCls = findStr("ReqCls") === "true";
+    const exitModeStr = findStr("Exit") ?? "TRAILING";
+    const trig = findNum("Trig") ?? 0;
+    const step = findNum("Step") ?? 0;
+    const fc = findNum("FC") ?? 8;
+    const startH = findNum("StartH") ?? 0;
+    const startM = findNum("StartM") ?? 0;
+    const orbMins = findNum("OrbMins") ?? 15;
+    const actMins = findNum("ActMins");
+
+    return {
+      tickSize: baseProps.tickSize,
+      pipSize: baseProps.pipSize,
+      spread: baseProps.spread,
+      session,
+      orbEnabled: true,
+      orbStartHour: startH,
+      orbStartMin: startM,
+      orbMinutes: orbMins,
+      actionMinutes: actMins,
+      minSlDist: minSl,
+      maxSlDist: maxSl,
+      entryPenetrationPct: parsedPct,
+      sweepPips: sweep,
+      maxSweepMultiplier: maxSwp,
+      requireCloseInside: reqCls,
+      exitMode: exitModeStr,
+      trailingSlTrigger: trig,
+      trailingSlStep: step,
+      forceCloseHours: fc,
+      htfAlignmentRequired: true,
+      maxH1EmaSlope: 20,
+    };
+  } else {
+    const fc = findNum("FC") ?? 24;
+    const exitModeStr = findStr("Exit") ?? "TRAILING";
+    const trig = findNum("Trig") ?? 0;
+    const step = findNum("Step") ?? 0;
+    const startH = findNum("StartH") ?? 0;
+    const startM = findNum("StartM") ?? 0;
+    const orbMins = findNum("OrbMins") ?? 10;
+    const actMins = findNum("ActMins") ?? 60;
+    const minBody = findNum("Body") ?? 0;
+
+    return {
+      tickSize: baseProps.tickSize,
+      pipSize: baseProps.pipSize,
+      spread: baseProps.spread,
+      session,
+      orbEnabled: true,
+      orbStartHour: startH,
+      orbStartMin: startM,
+      orbMinutes: orbMins,
+      actionMinutes: actMins,
+      minSlDist: minSl,
+      maxSlDist: maxSl,
+      minBodyPips: minBody,
+      exitMode: exitModeStr,
+      trailingSlTrigger: trig,
+      trailingSlStep: step,
+      forceCloseHours: fc,
+      htfAlignmentRequired: true,
+      maxH1EmaSlope: 20,
+    };
+  }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Universal Multi-Pair Live Shadow Trade Loader
@@ -31,79 +133,66 @@ process.env.SIMULATION_MODE = "true";
 async function loadUnifiedPortfolioShadowTrades(startDate: string, endDate: string, slippagePoints = 0): Promise<any[]> {
   process.stdout.write(`\n🔮 [PORTFOLIO SHADOW] Executing LiveOrchestrator Shadow Backtests (${startDate} → ${endDate})...\n`);
 
-  // Read Holy Grail portfolio weights if available
   const jsonPath = path.join(process.cwd(), "server", "trading", "optimizer", "grandmaster_holy_grail_portfolios.json");
   if (!fs.existsSync(jsonPath)) {
     throw new Error(`Holy Grail portfolio not found at ${jsonPath}`);
   }
 
   const portfolio: any[] = JSON.parse(fs.readFileSync(jsonPath, "utf-8"));
-
-  // Extract unique (cleanSym, botType) pairs to run cleanly
-  const runTasks = new Map<string, { cleanSym: string; botType: string; components: any[] }>();
-  for (const comp of portfolio) {
-    const cleanSym = comp.symbol.replace(/\.daily$/i, "");
-    const key = `${cleanSym}_${comp.botType.toUpperCase()}`;
-    if (!runTasks.has(key)) {
-      runTasks.set(key, { cleanSym, botType: comp.botType, components: [] });
-    }
-    runTasks.get(key)!.components.push(comp);
-  }
-
   let allTrades: any[] = [];
   const targetStartMs = new Date(startDate).getTime();
 
-  for (const [key, task] of runTasks.entries()) {
-    const { cleanSym, botType, components } = task;
+  for (const comp of portfolio) {
+    const cleanSym = comp.symbol.replace(/\.daily$/i, "");
+    const isMage = comp.botType.toUpperCase() === "MAGE";
+    const isSage = comp.botType.toUpperCase() === "SAGE";
+    const isSeer = comp.botType.toUpperCase() === "SEER";
+
     try {
-      const isMage = botType.toUpperCase() === "MAGE";
-      const isSage = botType.toUpperCase() === "SAGE";
-      const isSeer = botType.toUpperCase() === "SEER";
+      let cfg: any;
+      if (isSeer) {
+        const liveCfgs = PairConfigManager.getSeerConfigs(cleanSym);
+        const parsed = parseSeerSetupToConfig(comp.setup, cleanSym);
+        cfg = (liveCfgs && liveCfgs.length > 0) ? { ...liveCfgs[0] } : parsed;
+        if (!cfg.riskPct && comp.riskPct) cfg.riskPct = comp.riskPct;
+      } else {
+        const liveCfgs = isSage ? PairConfigManager.getSageConfigs(cleanSym) : PairConfigManager.getMageConfigs(cleanSym);
+        const parsed = parseSetupToConfig(comp.setup, cleanSym, isSage);
+        if (liveCfgs && liveCfgs.length > 0) {
+          const match = liveCfgs.find((c: any) =>
+            c.orbStartHour === parsed.orbStartHour &&
+            c.orbStartMin === parsed.orbStartMin &&
+            c.orbMinutes === parsed.orbMinutes
+          );
+          cfg = match ? { ...match } : parsed;
+          if (!cfg.toxicHours && liveCfgs[0]?.toxicHours) cfg.toxicHours = liveCfgs[0].toxicHours;
+          if (!cfg.toxicDays && liveCfgs[0]?.toxicDays) cfg.toxicDays = liveCfgs[0].toxicDays;
+        } else {
+          cfg = parsed;
+        }
+      }
 
       const res = await runShadowBacktest(cleanSym, startDate, endDate, {
         enableMage: isMage,
         enableSage: isSage,
         enableSeer: isSeer,
-      });
+      }, [cfg]);
 
       const records = res.tradeLog || [];
       const valid = records.filter((r: any) =>
         r.openTime >= targetStartMs &&
         r.outcome !== "SKIPPED" &&
         r.outcome !== "NO_TRADE" &&
-        (r.botId?.toUpperCase() === botType.toUpperCase() || (!r.botId && isMage))
+        (r.botId?.toUpperCase() === comp.botType.toUpperCase() || (!r.botId && isMage))
       );
 
-      // Get live configs for matching
-      let liveCfgs: any[] = [];
-      if (isSage) liveCfgs = PairConfigManager.getSageConfigs(cleanSym) || [];
-      else if (isSeer) liveCfgs = PairConfigManager.getSeerConfigs(cleanSym) || [];
-      else liveCfgs = PairConfigManager.getMageConfigs(cleanSym) || [];
-
       valid.forEach((r: any) => {
-        // Deterministic magic matching
-        let matchedCfg = liveCfgs.find((c: any) => generateMagicNumber(botType.toUpperCase() as any, c.signature!) === r.magic);
-        if (!matchedCfg && r.clientId) {
-          matchedCfg = liveCfgs.find((c: any) => c.signature && (c.signature === r.clientId || r.clientId.includes(c.signature)));
-        }
-        if (!matchedCfg && liveCfgs.length > 0) {
-          matchedCfg = liveCfgs[0];
-        }
-
-        // Match to portfolio component
-        let matchedComp = components.find((comp: any) => matchedCfg && comp.riskPct === matchedCfg.riskPct);
-        if (!matchedComp && components.length > 0) {
-          matchedComp = components[0];
-        }
-
-        const assignedRisk = matchedComp?.riskPct || matchedCfg?.riskPct || 0.0115;
-
         r.pair = cleanSym;
         r.symbol = cleanSym;
-        r.bot = botType.toUpperCase();
-        r.setup = matchedComp?.setup || matchedCfg?.signature || r.signature || "default";
+        r.bot = comp.botType.toUpperCase();
+        r.setup = comp.setup || (cfg.signature || "default");
         r.configKey = `${r.bot} | ${cleanSym} | ${r.setup}`;
-        r.riskMultiplier = assignedRisk;
+        r.riskMultiplier = comp.riskPct || cfg.riskPct || 1.0;
         r.entryTime = new Date(r.openTime).toISOString();
         r.exitTime = new Date(r.closeTime || r.openTime).toISOString();
       });
@@ -113,7 +202,7 @@ async function loadUnifiedPortfolioShadowTrades(startDate: string, endDate: stri
       if (isSage) clearSageBacktestCache(cleanSym);
       if (isSeer) clearSeerBacktestCache(cleanSym);
     } catch (e: any) {
-      console.error(`[SHADOW] Error running ${cleanSym} (${botType}):`, e.message);
+      console.error(`[SHADOW] Error running ${cleanSym} (${comp.botType}):`, e.message);
     }
   }
 

@@ -15,7 +15,12 @@
     "test:parity:quick": "npx tsx server/trading/testing/test_all_pairs_parity.ts",
     "backtest:modes": "npx tsx server/trading/testing/simulate_portfolio_risk_math.ts",
     "backtest:modes:shadow": "npx tsx server/trading/testing/simulate_portfolio_risk_shadow.ts",
-    "optimize:all": "npx tsx server/trading/optimizer/pipelines/master_pipeline.ts"
+    "optimize:all": "npx tsx server/trading/optimizer/pipelines/master_pipeline.ts",
+    "optimize:seer": "npx tsx server/trading/optimizer/seer/seer_optimizer.ts",
+    "synthesize:seer": "npx tsx server/trading/optimizer/seer/seer_synthesizer.ts",
+    "synthesize:seer:grandmaster": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs server/trading/optimizer/seer/seer_grandmaster_synthesizer.ts",
+    "inject:seer:grandmaster": "npx tsx server/trading/optimizer/seer/inject_seer_portfolio.ts",
+    "inject:seer:toxic": "npx tsx server/trading/optimizer/seer/inject_seer_toxic_hours.ts"
   },
   "dependencies": {
     "@google/genai": "^2.7.0",

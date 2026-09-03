@@ -33,7 +33,13 @@ import {
 } from "../config/PairConfig.js";
 import { OPTIMIZER_CONFIG, getDynamicPipSize } from "../config/OptimizerPairConfig.js";
 import { globalTradeGate as globalTradeGateOrig } from "../../utils/GlobalTradeGate.js";
-const globalTradeGate = global.__SIM_TRADE_GATE__ || globalTradeGateOrig;
+const globalTradeGate: any = new Proxy({}, {
+  get(_target, prop) {
+    const target = (global as any).__SIM_TRADE_GATE__ || globalTradeGateOrig;
+    const val = (target as any)[prop];
+    return typeof val === "function" ? val.bind(target) : val;
+  }
+});
 import {
   runMageBot,
   placeMageLimitOrder,
@@ -2130,7 +2136,7 @@ export class LiveOrchestrator {
 
     if (
       this.activeBots.has("sage") &&
-      PairConfigManager.getSageConfigs(sessionPair)?.length > 0
+      (((this as any).__CUSTOM_SAGE_CONFIGS__?.length > 0) || PairConfigManager.getSageConfigs(sessionPair)?.length > 0)
     ) {
       await cancelSagePendingOnNews(this, sessionPair, state, m1Candle).catch((e) =>
         logger.error(`Sage cancel on news error on ${sessionPair}:`, e),
@@ -2148,7 +2154,7 @@ export class LiveOrchestrator {
 
     if (
       this.activeBots.has("mage") &&
-      PairConfigManager.getMageConfigs(sessionPair)?.length > 0
+      (((this as any).__CUSTOM_MAGE_CONFIGS__?.length > 0) || PairConfigManager.getMageConfigs(sessionPair)?.length > 0)
     ) {
       await cancelMagePendingOnNews(this, sessionPair, state, m1Candle).catch((e) =>
         logger.error(`Mage cancel on news error on ${sessionPair}:`, e),
@@ -2284,7 +2290,7 @@ export class LiveOrchestrator {
     if (state.m5Buffer.length < 1) return;
     if (
       this.activeBots.has("mage") &&
-      PairConfigManager.getMageConfigs(state.config.pair)?.length > 0 &&
+      (((this as any).__CUSTOM_MAGE_CONFIGS__?.length > 0) || PairConfigManager.getMageConfigs(state.config.pair)?.length > 0) &&
       PairConfigManager.isOrbEnabled(state.config.pair)
     ) {
       await runMageBot(this, state.config.pair, state, c).catch((e) =>

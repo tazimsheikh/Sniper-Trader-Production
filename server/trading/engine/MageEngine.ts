@@ -60,7 +60,13 @@ import { isNewsBlackout as realNews } from '../../news/newsStore.js';
 const isNewsBlackout = (...args: any[]) =>
   ((global as any).__SIM_NEWS__?.isNewsBlackout || realNews)(...args);
 import { globalTradeGate as realGate } from "../../utils/GlobalTradeGate.js";
-const globalTradeGate = (global as any).__SIM_TRADE_GATE__ || realGate;
+const globalTradeGate: any = new Proxy({}, {
+  get(_target, prop) {
+    const target = (global as any).__SIM_TRADE_GATE__ || realGate;
+    const val = (target as any)[prop];
+    return typeof val === "function" ? val.bind(target) : val;
+  }
+});
 import { isTradeAllowed, isRolloverCircuitBreaker, isToxicDay } from "../market/MathFilters.js";
 import { HTFContextTracker } from "../market/HTFContextTracker.js";
 import { generateMagicNumber } from "../../utils/magicNumber.js";
@@ -83,7 +89,7 @@ function getFixedEstDate(date = /* @__PURE__ */ new Date()) {
   return new Date(t + offsetHours * 60 * 60 * 1000);
 }
 async function runMageBot(orch: any, symbol: string, state: any, c: any) {
-  const mageConfigs = PairConfigManager.getMageConfigs(symbol);
+  const mageConfigs = (orch as any).__CUSTOM_MAGE_CONFIGS__ || PairConfigManager.getMageConfigs(symbol);
   if (!mageConfigs || mageConfigs.length === 0) return;
 
   let cfgIdx = 0;
@@ -266,9 +272,12 @@ export async function _runMageBotForConfig(orch: any, symbol: string, state: any
   os.lastEstDateStr = dateStr;
   os.currentDateStr = dateStr;
   const magic = generateMagicNumber("MAGE", sig);
-  if (state.activeTrades && state.activeTrades.some((t: any) => t.magic === magic || t.clientId === sig)) {
-    os.fired = true;
-    os.mageTradeTakenToday = true;
+  const activeTrade = (state.activeTrades || []).find((t: any) => t.magic === magic || t.clientId === sig);
+  if (activeTrade) {
+    if (activeTrade.dateStr === dateStr || os.tradeTakenOnOrbDay === dateStr) {
+      os.fired = true;
+      os.mageTradeTakenToday = true;
+    }
     return;
   }
   if (os.mageTradeTakenToday) return;
@@ -1025,9 +1034,9 @@ async function placeMageLimitOrder(orch: any, symbol: string, state: any, c: any
 
           logger.info(`[MageEngine] ⚡ Executing direct MARKET ${os.breakoutDir} on ${brokerSymbol} (Proximity: ${(distFromEntry / pipSize).toFixed(1)} pips <= ${(proximityThreshold / pipSize).toFixed(1)} threshold, Target: ${pEntry}, Live: ${currentPrice}, SL: ${roundedSafeSl}, TP: ${roundedSafeTp})`);
           if (os.breakoutDir === "BUY") {
-            res = await conn.createMarketBuyOrder(brokerSymbol, calculatedVolume, roundedSafeSl, roundedSafeTp || undefined, { magic, clientId: shortClientId });
+            res = await conn.createMarketBuyOrder(brokerSymbol, calculatedVolume, roundedSafeSl, roundedSafeTp || undefined, { magic, clientId: shortClientId, entryPrice: currentPrice, limitPrice: pEntry });
           } else {
-            res = await conn.createMarketSellOrder(brokerSymbol, calculatedVolume, roundedSafeSl, roundedSafeTp || undefined, { magic, clientId: shortClientId });
+            res = await conn.createMarketSellOrder(brokerSymbol, calculatedVolume, roundedSafeSl, roundedSafeTp || undefined, { magic, clientId: shortClientId, entryPrice: currentPrice, limitPrice: pEntry });
           }
         } else {
           try {
@@ -1083,8 +1092,8 @@ async function placeMageLimitOrder(orch: any, symbol: string, state: any, c: any
               const roundedSafeTp = roundPrice(safePrices.pTp, brokerSymbol);
               logger.info(`[MageEngine] 🛡️ Smart Market Fallback Prices: Entry=${latestPrice}, SL=${roundedSafeSl}, TP=${roundedSafeTp} (stopsLevel=${stopsLevelPts}pts)`);
               res = os.breakoutDir === "BUY"
-                ? await conn.createMarketBuyOrder(brokerSymbol, calculatedVolume, roundedSafeSl, roundedSafeTp || undefined, { magic, clientId: shortClientId })
-                : await conn.createMarketSellOrder(brokerSymbol, calculatedVolume, roundedSafeSl, roundedSafeTp || undefined, { magic, clientId: shortClientId });
+                ? await conn.createMarketBuyOrder(brokerSymbol, calculatedVolume, roundedSafeSl, roundedSafeTp || undefined, { magic, clientId: shortClientId, entryPrice: latestPrice, limitPrice: pEntry })
+                : await conn.createMarketSellOrder(brokerSymbol, calculatedVolume, roundedSafeSl, roundedSafeTp || undefined, { magic, clientId: shortClientId, entryPrice: latestPrice, limitPrice: pEntry });
             } else {
               throw err;
             }
@@ -1273,7 +1282,7 @@ export async function checkMageLimitFill(orch: any, sessionPair: string, state: 
         );
         if (pos) {
           os.limitOrderId = null;
-          const mageConfigs = PairConfigManager.getMageConfigs(sessionPair);
+          const mageConfigs = (orch as any).__CUSTOM_MAGE_CONFIGS__ || PairConfigManager.getMageConfigs(sessionPair);
           const config = mageConfigs.find((c: any) => c.signature === sig) || mageConfigs[0] || state.config;
           const pipSize = config?.pipSize || PairConfigManager.getRepresentativeConfig(sessionPair)?.pipSize || getDynamicPipSize(baseSymbol);
           const intendedLimit = os.limitPrice || pos.openPrice;
@@ -1370,7 +1379,7 @@ export async function evaluateMageTrailingOnTick(
   c: any,
   targetBotId: string = "MAGE"
 ) {
-  const mageConfigs = PairConfigManager.getMageConfigs(sessionPair);
+  const mageConfigs = (orch as any).__CUSTOM_MAGE_CONFIGS__ || PairConfigManager.getMageConfigs(sessionPair);
 
   // M-4 PARITY: Check pending limit orders for TP sweeps on every tick to match MageMathCore
   if (state.orbStates) {
@@ -1395,7 +1404,7 @@ export async function evaluateMageTrailingOnTick(
           slSwept = true;
         }
 
-        const searchConfigs = PairConfigManager.getMageConfigs(sessionPair) || (state.config?.mageConfig ? [state.config.mageConfig] : []);
+        const searchConfigs = (orch as any).__CUSTOM_MAGE_CONFIGS__ || PairConfigManager.getMageConfigs(sessionPair) || (state.config?.mageConfig ? [state.config.mageConfig] : []);
         const sigCfg = searchConfigs.find((x: any) => x.signature === sig || (x.signature && sig.includes(x.signature))) || searchConfigs[0];
         const fcHours = sigCfg?.forceCloseHours;
         let isTimedOut = false;

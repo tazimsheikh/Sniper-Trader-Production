@@ -119,7 +119,7 @@ export async function runPreFlightFilter(
   prevDay: any,
   setupType: string,
 ) {
-  const seerConfigArray = PairConfigManager.getSeerConfigs(symbol);
+  const seerConfigArray = (orch as any).__CUSTOM_SEER_CONFIGS__ || PairConfigManager.getSeerConfigs(symbol);
   const seerConfig = (seerConfigArray && seerConfigArray.length > 0) ? seerConfigArray[0] : state.config;
   const botId = orch.getBotIdForSetup(setupType);
   if (!orch.activeBots.has(botId)) return;
@@ -1126,7 +1126,7 @@ export async function runSeerBot(
 
 export async function evaluateSeerTrailingOnTick(orch, symbol, state) {
 
-  const seerConfigArray = PairConfigManager.getSeerConfigs(symbol);
+  const seerConfigArray = (orch as any).__CUSTOM_SEER_CONFIGS__ || PairConfigManager.getSeerConfigs(symbol);
   const seerConfig = (seerConfigArray && seerConfigArray.length > 0) ? seerConfigArray[0] : state.config;
   if (state.activeTrade?.manuallyModified) return;
   const trade = state.activeTrade;

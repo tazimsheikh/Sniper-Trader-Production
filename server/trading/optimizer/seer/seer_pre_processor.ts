@@ -135,6 +135,23 @@ async function getOrLoadSymbolCandleData(symbol: string): Promise<SymbolCandleCa
   return cacheEntry;
 }
 
+export function extractSeerSetupSignature(setup: string): string {
+  const lower = setup.toLowerCase();
+  let session = "other";
+  if (lower.startsWith("london") || lower.includes("session=london")) session = "london";
+  else if (lower.startsWith("asia") || lower.includes("session=asia")) session = "asia";
+  else if (lower.startsWith("ny") || lower.startsWith("new_york") || lower.includes("session=ny")) session = "ny";
+
+  let mode = "trailing";
+  if (lower.includes("exitmidpoint") || lower.includes("exit=midpoint")) mode = "midpoint";
+  else if (lower.includes("exitopposite_boundary") || lower.includes("exit=opposite_boundary")) mode = "boundary";
+  else if (lower.includes("exittrailing") || lower.includes("exit=trailing")) mode = "trailing";
+  else if (lower.includes("liqfalsebreak")) mode = "falsebreak";
+  else if (lower.includes("liqhunt")) mode = "hunt";
+
+  return `${session}_${mode}`;
+}
+
 export function deduplicateConfigs(
   validComponents: IndependentSynthesisComponent[],
   botType: string,
@@ -144,12 +161,17 @@ export function deduplicateConfigs(
     const threeYrR = c.threeYearNetR !== undefined ? c.threeYearNetR : c.totalTotalR;
     const threeYrTrades = c.threeYearTrades !== undefined ? c.threeYearTrades : c.totalTrades;
     const threeYrWR = c.threeYearWinRate !== undefined ? c.threeYearWinRate : (c.winRate || 0);
-    const dd = c.threeYearMaxDrawdown || c.monteCarloDrawdown99 || c.maxDrawdown || 1;
+    const dd = c.threeYearMaxDrawdown || c.maxDrawdown || 0;
     const marRatio = dd > 0 ? threeYrR / dd : threeYrR;
     const expectancy = threeYrTrades > 0 ? threeYrR / threeYrTrades : 0;
-    const calmar = (c.threeYearMaxDrawdown || c.maxDrawdown || 0) > 0 ? threeYrR / (c.threeYearMaxDrawdown || c.maxDrawdown || 1) : threeYrR;
+    const calmar = dd > 0 ? threeYrR / dd : threeYrR;
 
     if (threeYrR < 1.0 || threeYrTrades < 3 || expectancy < 0.01) {
+      return false;
+    }
+
+    // Hard Max Drawdown & Calmar Gate: Max DD <= 10R & Calmar >= 2.0
+    if (dd > 10.0 || calmar < 2.0 || marRatio < 2.0) {
       return false;
     }
 
@@ -198,8 +220,24 @@ export function deduplicateConfigs(
     (a.setup || "").localeCompare(b.setup || "")
   );
 
-  // Return all passing Seer candidates without consensus clamping to maximize Seer pool
-  return sortedAll;
+  // Group candidates into distinct strategy archetypes (Session + Mode)
+  // to prevent multiple near-identical micro-variations (e.g. MinSL 100 vs 140 vs 180) of the same session setup.
+  const signatureGroups = new Map<string, IndependentSynthesisComponent[]>();
+  for (const comp of sortedAll) {
+    const sig = extractSeerSetupSignature(comp.setup);
+    if (!signatureGroups.has(sig)) signatureGroups.set(sig, []);
+    signatureGroups.get(sig)!.push(comp);
+  }
+
+  const consensusChampions: IndependentSynthesisComponent[] = [];
+  for (const [sig, candidates] of Array.from(signatureGroups.entries())) {
+    // Select the top consensus champion (highest stability and hedgeScore) for this distinct archetype
+    consensusChampions.push(candidates[0]);
+  }
+
+  // Sort distinct archetypes by hedgeScore descending, keeping up to 3 distinct session archetypes per symbol
+  consensusChampions.sort((a, b) => b.hedgeScore - a.hedgeScore);
+  return consensusChampions.slice(0, 3);
 }
 
 export async function preProcessData(
@@ -292,6 +330,13 @@ export async function preProcessData(
       const traded = records.filter((r: any) => r.outcome !== 'SKIPPED' && r.outcome !== 'NO_TRADE');
       if (traded.length < 3) continue;
 
+      // Chronological sort for 100% exact drawdown calculation
+      traded.sort((a: any, b: any) => {
+        const timeA = a.timestamp || (a.entryTimeMs ?? new Date(a.exitTime || a.entryTime || a.date || a.time).getTime());
+        const timeB = b.timestamp || (b.entryTimeMs ?? new Date(b.exitTime || b.entryTime || b.date || b.time).getTime());
+        return timeA - timeB;
+      });
+
       const dailyNetR: Record<string, number> = {};
       let peak = 0, runningR = 0, maxDD = 0;
       const yearlyNetR: Record<string, number> = {};
@@ -344,6 +389,9 @@ export async function preProcessData(
       comp.regimeConsistency = regimeConsistency;
 
       const calmar = maxDD > 0 ? res.totalNetR / maxDD : res.totalNetR;
+      // Hard Gate: Max DD <= 10R and Calmar >= 2.0
+      if (maxDD > 10.0 || calmar < 2.0) continue;
+
       const sortino = comp.sortinoRatio || 1.0;
       comp.hedgeScore = (calmar * 0.4) + (profitFactor * 0.3) + ((regimeConsistency / 100) * 0.3);
 
