@@ -75,9 +75,10 @@ export async function runMageMathBacktestExp(
     m1Rows = cached.m1Rows;
   } else {
     // Load data
+    const basePrefix = pair.split("_")[0].split(".")[0];
     const csvFiles = fs
       .readdirSync(path.join(process.cwd(), "data", "csv"))
-      .filter((f) => f.startsWith(pair.split("_")[0]) && f.endsWith(".csv"));
+      .filter((f) => (f.toLowerCase().startsWith(pair.split("_")[0].toLowerCase()) || f.toLowerCase().startsWith(basePrefix.toLowerCase())) && f.endsWith(".csv"));
     if (!csvFiles.length) throw new Error(`No CSV data found for ${pair}`);
 
     console.log(`🔱 Mage Math Backtest — ${pair}`);

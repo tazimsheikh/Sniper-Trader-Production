@@ -81,7 +81,7 @@ async function runSynthesis() {
   const symbolSet = new Set<string>();
   for (const f of [...allMageFiles, ...allSageFiles, ...allSeerFiles]) {
     const sym = extractSymbol(f);
-    if (sym && !sym.includes("BTC") && !sym.includes("ETH")) {
+    if (sym && !sym.includes("BTC") && !sym.includes("ETH") && !sym.includes("JPN225")) {
       symbolSet.add(sym);
     }
   }
@@ -278,11 +278,14 @@ async function runSynthesis() {
     const dd = p.threeYearMaxDrawdown || p.maxDrawdown || 0;
     const r = p.threeYearNetR !== undefined ? p.threeYearNetR : (p.totalTotalR || 0);
     const calmar = dd > 0 ? r / dd : r;
-    const oneYrDd = (p as any).oneYearMaxDrawdown || 0;
-    const r1Yr = (p as any).r1Year || 0;
+    const oneYrDd = (p as any).oneYearMaxDrawdown !== undefined ? (p as any).oneYearMaxDrawdown : dd;
+    const r1Yr = (p as any).r1Year !== undefined ? (p as any).r1Year : r;
     const oneYrCalmar = oneYrDd > 0 ? r1Yr / oneYrDd : r1Yr;
+    const oneYrCalmarFloor = (r >= 80.0 && r1Yr >= 15.0) ? 1.30 : 2.0;
     const mcDd = p.monteCarloDrawdown99 ?? 0;
-    if (dd > 10.0 || calmar < 2.0 || oneYrDd > 10.0 || oneYrCalmar < 2.0 || mcDd > MAX_MC_DD_ALLOWED) {
+    const maxDdCeiling = (p.botType === "Mage" || p.botType === "Seer") ? 14.0 : 10.0;
+    const maxMcDdAllowed = (p.botType === "Mage" || p.botType === "Seer") ? 50.0 : 32.0;
+    if (dd > maxDdCeiling || calmar < 2.0 || oneYrDd > maxDdCeiling || r1Yr < 2.0 || oneYrCalmar < oneYrCalmarFloor || mcDd > maxMcDdAllowed) {
       return false;
     }
     // Hard rejection for unsupported Mage exits
@@ -291,7 +294,7 @@ async function runSynthesis() {
     }
     return true;
   });
-  console.log(`[PRUNING] Removed ${beforePoolCount - rawNormalPool.length} candidates failing Max DD <= 10R, Calmar >= 2.0, or MC tail risk.`);
+  console.log(`[PRUNING] Removed ${beforePoolCount - rawNormalPool.length} candidates failing Max DD gate (<=14R Mage/Seer, <=10R Sage), 3Y Calmar >= 2.0, 1Y NetR >= 2.0R, 1Y Calmar >= 2.0, or MC tail risk.`);
 
   // --- DYNAMIC PAIR PRUNING ---
   console.log(`\n⚙️ [PRUNING] Dynamic Pair-Level Drag Elimination`);
@@ -355,7 +358,7 @@ function getCanonicalSession(setupStr: string): "asia" | "london" | "newyork" {
 }
 
   // Use organic adaptive thresholding to admit top distinct units (accommodating maximum Seer inclusion)
-  let selectedUnits = admitHedgingUnitsWithCorrelationPenalty(allUnits, globalDates, 18, 32);
+  let selectedUnits = admitHedgingUnitsWithCorrelationPenalty(allUnits, globalDates, 25, 45);
   console.log(`[HEDGING] Admitted ${selectedUnits.length} diverse Hedging Units`);
 
   let selectedNormal: IndependentSynthesisComponent[] = [];

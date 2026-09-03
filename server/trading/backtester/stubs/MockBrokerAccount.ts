@@ -251,34 +251,8 @@ export class MockBrokerAccount {
     let price = opts?.entryPrice !== undefined ? opts.entryPrice : ((this.currentCandle?.open || 0) + this.spreadPts);
     const c = this.currentCandle;
     const botId = this.deduceBotId(opts);
-    
-    // NATIVE PARITY CHECK: If it hits SL/TP in the exact candle it was placed
-    if (c) {
-      if (c.low <= sl) {
-        const exitPrice = Math.min(c.close, sl);
-        const rMultiple = (exitPrice - price) / (Math.abs(price - sl) || 0.0001);
-        this.tradeLog.push({
-          symbol: this.symbol, direction: 'BUY', entryPrice: price, exitPrice,
-          slPrice: sl, originalSl: sl, tpPrice: tp, outcome: 'SL', rMultiple,
-          openTime: c.timestamp, closeTime: c.timestamp, botId, clientId: opts?.clientId,
-          magic: opts?.magic, orHigh: opts?.orHigh, orLow: opts?.orLow, limitPlacedAt: opts?.placedAt,
-          trailLog: (global as any).__SIM_ENABLE_TRACE__ ? [] : undefined
-        });
-        return { orderId: id };
-      } else if (c.high >= tp) {
-        const rMultiple = (tp - price) / (Math.abs(price - sl) || 0.0001);
-        this.tradeLog.push({
-          symbol: this.symbol, direction: 'BUY', entryPrice: price, exitPrice: tp,
-          slPrice: sl, originalSl: sl, tpPrice: tp, outcome: 'TP', rMultiple,
-          openTime: c.timestamp, closeTime: c.timestamp, botId, clientId: opts?.clientId,
-          magic: opts?.magic, orHigh: opts?.orHigh, orLow: opts?.orLow, limitPlacedAt: opts?.placedAt,
-          trailLog: (global as any).__SIM_ENABLE_TRACE__ ? [] : undefined
-        });
-        return { orderId: id };
-      }
-    }
-
     const intendedEntry = opts?.limitPrice !== undefined ? opts.limitPrice : price;
+
     this.positions.set(id, { id, symbol, type: 'POSITION_TYPE_BUY', openPrice: price, intendedEntryPrice: intendedEntry, sl, originalSl: sl, tp, volume: lots, time: this.simulatedTime.toISOString(), botId, clientId: opts?.clientId, magic: opts?.magic, orHigh: opts?.orHigh, orLow: opts?.orLow, trailLog: (global as any).__SIM_ENABLE_TRACE__ ? [] : undefined });
     const orchState = (global as any).__SIM_ORCH_STATE__ || (opts?.orchState);
     if (orchState) {
@@ -312,34 +286,8 @@ export class MockBrokerAccount {
     let price = opts?.entryPrice !== undefined ? opts.entryPrice : (this.currentCandle?.open || 0);
     const c = this.currentCandle;
     const botId = this.deduceBotId(opts);
-
-    // NATIVE PARITY CHECK: If it hits SL/TP in the exact candle it was placed
-    if (c) {
-      if (c.high + this.spreadPts >= sl) {
-        const exitPrice = Math.max(c.open + this.spreadPts, sl);
-        const rMultiple = (price - exitPrice) / (Math.abs(price - sl) || 0.0001);
-        this.tradeLog.push({
-          symbol: this.symbol, direction: 'SELL', entryPrice: price, exitPrice,
-          slPrice: sl, originalSl: sl, tpPrice: tp, outcome: 'SL', rMultiple,
-          openTime: c.timestamp, closeTime: c.timestamp, botId, clientId: opts?.clientId,
-          magic: opts?.magic, orHigh: opts?.orHigh, orLow: opts?.orLow, limitPlacedAt: opts?.placedAt,
-          trailLog: (global as any).__SIM_ENABLE_TRACE__ ? [] : undefined
-        });
-        return { orderId: id };
-      } else if (c.low + this.spreadPts <= tp) {
-        const rMultiple = (price - tp) / (Math.abs(price - sl) || 0.0001);
-        this.tradeLog.push({
-          symbol: this.symbol, direction: 'SELL', entryPrice: price, exitPrice: tp,
-          slPrice: sl, originalSl: sl, tpPrice: tp, outcome: 'TP', rMultiple,
-          openTime: c.timestamp, closeTime: c.timestamp, botId, clientId: opts?.clientId,
-          magic: opts?.magic, orHigh: opts?.orHigh, orLow: opts?.orLow, limitPlacedAt: opts?.placedAt,
-          trailLog: (global as any).__SIM_ENABLE_TRACE__ ? [] : undefined
-        });
-        return { orderId: id };
-      }
-    }
-
     const intendedEntry = opts?.limitPrice !== undefined ? opts.limitPrice : price;
+
     this.positions.set(id, { id, symbol, type: 'POSITION_TYPE_SELL', openPrice: price, intendedEntryPrice: intendedEntry, sl, originalSl: sl, tp, volume: lots, time: this.simulatedTime.toISOString(), botId, clientId: opts?.clientId, magic: opts?.magic, orHigh: opts?.orHigh, orLow: opts?.orLow, trailLog: (global as any).__SIM_ENABLE_TRACE__ ? [] : undefined });
     const orchState = (global as any).__SIM_ORCH_STATE__ || (opts?.orchState);
     if (orchState) {

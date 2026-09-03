@@ -27,8 +27,9 @@ async function main() {
     if (!startDate || !endDate || startDate === "DYNAMIC" || endDate === "DYNAMIC") {
         const fs = await import('fs');
         const path = await import('path');
-        const csvDir = path.join(process.cwd(), "data", "csv");
-        const csvFiles = fs.readdirSync(csvDir).filter((f) => f.startsWith(`${pair.split("_")[0]}`) && f.endsWith(".csv"));
+        const basePrefix = pair.split('_')[0].split('.')[0].toLowerCase();
+        const pairPrefix = pair.split('_')[0].toLowerCase();
+        const csvFiles = fs.readdirSync(csvDir).filter((f) => (f.toLowerCase().startsWith(pairPrefix) || f.toLowerCase().startsWith(basePrefix)) && f.endsWith(".csv"));
         if (csvFiles.length > 0) {
             const { getLatestDate } = await import("../backtester/loadCsv.js");
             const latestDate = getLatestDate(path.join(csvDir, csvFiles[0]));

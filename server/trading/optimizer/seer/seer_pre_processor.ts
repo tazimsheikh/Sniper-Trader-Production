@@ -170,8 +170,15 @@ export function deduplicateConfigs(
       return false;
     }
 
-    // Hard Max Drawdown & Calmar Gate: Max DD <= 10R & Calmar >= 2.0
-    if (dd > 10.0 || calmar < 2.0 || marRatio < 2.0) {
+    // Hard Max Drawdown & Calmar Gate: Max DD <= 14R & Calmar >= 2.0
+    if (dd > 14.0 || calmar < 2.0 || marRatio < 2.0) {
+      return false;
+    }
+
+    const oneYrDd = (c as any).oneYearMaxDrawdown || 0;
+    const r1Yr = (c as any).r1Year || 0;
+    const oneYrCalmar = oneYrDd > 0 ? r1Yr / oneYrDd : r1Yr;
+    if (r1Yr < 2.0 || oneYrCalmar < 2.0 || oneYrDd > 14.0) {
       return false;
     }
 
@@ -190,14 +197,14 @@ export function deduplicateConfigs(
 
     return (
       c.botType === botType &&
-      c.totalTrades >= 3 &&
-      c.totalTotalR >= 1.0
+      threeYrTrades >= 3 &&
+      threeYrR >= 1.0
     );
   });
 
   if (pool.length === 0) return [];
 
-  const MAX_MC_DD_ALLOWED = 32.0;
+  const MAX_MC_DD_ALLOWED = 50.0;
   pool = pool.filter((c) => {
     const mcDd = c.monteCarloDrawdown99 ?? 0;
     if (mcDd > MAX_MC_DD_ALLOWED) {
@@ -389,8 +396,33 @@ export async function preProcessData(
       comp.regimeConsistency = regimeConsistency;
 
       const calmar = maxDD > 0 ? res.totalNetR / maxDD : res.totalNetR;
-      // Hard Gate: Max DD <= 10R and Calmar >= 2.0
-      if (maxDD > 10.0 || calmar < 2.0) continue;
+      // Hard Gate: Max DD <= 14R and Calmar >= 2.0
+      if (maxDD > 14.0 || calmar < 2.0) continue;
+
+      // 1-year window calculations
+      const lastGlobalDate = globalDates.length > 0 ? new Date(globalDates[globalDates.length - 1]) : new Date();
+      const oneYearCutoff = new Date(lastGlobalDate);
+      oneYearCutoff.setFullYear(oneYearCutoff.getFullYear() - 1);
+      const oneYearCutoffStr = oneYearCutoff.toISOString().split('T')[0];
+
+      let running1Yr = 0, peak1Yr = 0, oneYearMaxDd = 0, r1Year = 0;
+      for (const r of traded) {
+        const d = (r as any).date || ((r as any).timestamp ? new Date((r as any).timestamp).toISOString().split('T')[0] : null);
+        if (d && d >= oneYearCutoffStr) {
+          const val = r.rMultiple || 0;
+          r1Year += val;
+          running1Yr += val;
+          if (running1Yr > peak1Yr) peak1Yr = running1Yr;
+          const dd = peak1Yr - running1Yr;
+          if (dd > oneYearMaxDd) oneYearMaxDd = dd;
+        }
+      }
+
+      const oneYearCalmar = oneYearMaxDd > 0 ? r1Year / oneYearMaxDd : r1Year;
+      if (oneYearMaxDd > 14.0 || r1Year < 2.0 || oneYearCalmar < 2.0) continue;
+
+      (comp as any).oneYearMaxDrawdown = oneYearMaxDd;
+      (comp as any).r1Year = r1Year;
 
       const sortino = comp.sortinoRatio || 1.0;
       comp.hedgeScore = (calmar * 0.4) + (profitFactor * 0.3) + ((regimeConsistency / 100) * 0.3);

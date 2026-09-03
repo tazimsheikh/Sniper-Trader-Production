@@ -117,7 +117,7 @@ export async function runMathBacktest(
     rsiArr = cached.rsiArr;
   } else {
     const csvFiles = fs.readdirSync(path.join(process.cwd(), 'data', 'csv'))
-      .filter(f => f.startsWith(baseSymbol) && f.endsWith('.csv'));
+      .filter(f => f.toLowerCase().startsWith(baseSymbol.toLowerCase()) && f.endsWith('.csv'));
     if (!csvFiles.length) throw new Error(`No CSV data found for ${pair}`);
 
     console.log(`🔱 Vision AI Backtest — ${pair}`);

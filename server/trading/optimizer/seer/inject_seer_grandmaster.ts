@@ -49,7 +49,7 @@ const groupedConfigs: Record<string, PairConfig[]> = {};
 
 for (const item of portfolioData) {
   if (item.botType && item.botType !== "Seer") continue;
-  const symbol = item.symbol.replace(/\.daily$/i, "");
+  const symbol = item.symbol;
   const baseConfig = paramsToConfig(item.setup, item.symbol);
   
   const finalConfig: PairConfig = {

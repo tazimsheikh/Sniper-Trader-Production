@@ -475,20 +475,23 @@ export function getEliteComponents(
       const expectancy = threeYrTrades > 0 ? threeYrR / threeYrTrades : 0;
       const maxAllowedDd = c.threeYearMaxDrawdown || c.maxDrawdown || 0;
       const calmar = maxAllowedDd > 0 ? threeYrR / maxAllowedDd : threeYrR;
-      const oneYrDd = (c as any).oneYearMaxDrawdown || 0;
-      const r1Yr = (c as any).r1Year || 0;
-      const oneYrCalmar = oneYrDd > 0 ? r1Yr / oneYrDd : r1Yr;
+      const oneYrDd = (c as any).oneYearMaxDrawdown !== undefined ? (c as any).oneYearMaxDrawdown : maxAllowedDd;
+      const r1Yr = (c as any).r1Year !== undefined ? (c as any).r1Year : threeYrR;
 
-      // Must meet Elite 3-Year Institutional Quality Standards: Max DD <= 10R & Calmar >= 2.0 across both 3Y & 1Y
+      // Bot-specific DD ceiling: 14R for Mage and Seer, 10R for Sage
+      const maxDdCeiling = (botType === "Mage" || botType === "Seer") ? 14.0 : 10.0;
+      const oneYrCalmar = oneYrDd > 0 ? r1Yr / oneYrDd : r1Yr;
+      const oneYrCalmarFloor = (threeYrR >= 80.0 && r1Yr >= 15.0) ? 1.30 : 2.0;
       if (
         threeYrR < 5.0 ||
         threeYrTrades < 10 ||
         expectancy < 0.04 ||
         calmar < 2.0 ||
         marRatio < 2.0 ||
-        maxAllowedDd > 10.0 ||
-        oneYrDd > 10.0 ||
-        oneYrCalmar < 2.0
+        maxAllowedDd > maxDdCeiling ||
+        oneYrDd > maxDdCeiling ||
+        r1Yr < 2.0 ||
+        oneYrCalmar < oneYrCalmarFloor
       ) {
         return false;
       }
@@ -510,17 +513,17 @@ export function getEliteComponents(
 
       return (
         c.botType === botType &&
-        c.totalTrades >= 3 &&
-        c.totalTotalR >= 1.0
+        threeYrTrades >= 3 &&
+        threeYrR >= 1.0
       );
     }
   );
   if (pool.length === 0) return [];
 
-  const MAX_MC_DD_ALLOWED = 32.0;
+  const maxMcDdAllowed = (botType === "Mage" || botType === "Seer") ? 50.0 : 32.0;
   pool = pool.filter(c => {
     const mcDd = c.monteCarloDrawdown99 ?? 0;
-    if (mcDd > MAX_MC_DD_ALLOWED) {
+    if (mcDd > maxMcDdAllowed) {
       return false;
     }
     return true;
@@ -882,6 +885,8 @@ export async function preProcessData(
       if (auditResult) {
         p.threeYearNetR = auditResult.threeYearNetR;
         p.threeYearTrades = auditResult.threeYearTrades;
+        p.totalTotalR = auditResult.threeYearNetR;
+        p.totalTrades = auditResult.threeYearTrades;
         p.threeYearWinRate = auditResult.threeYearWinRate;
         p.threeYearMaxDrawdown = auditResult.threeYearMaxDrawdown ?? 1.0;
         p.maxDrawdown = p.threeYearMaxDrawdown;
@@ -942,17 +947,19 @@ export async function preProcessData(
         const marRatio = p.threeYearMaxDrawdown > 0 ? p.threeYearNetR / p.threeYearMaxDrawdown : p.threeYearNetR;
         const actualMaxDd = p.threeYearMaxDrawdown || p.maxDrawdown || 0;
 
+        const maxDdCeiling = (p.botType === "Mage" || p.botType === "Seer") ? 14.0 : 10.0;
+        const oneYrCalmarFloor = (p.threeYearNetR >= 80.0 && r1Year >= 15.0) ? 1.30 : 2.0;
         if (
           p.threeYearNetR < 5.0 ||
           p.threeYearTrades < 10 ||
           expectancy < 0.04 ||
           calmar < 2.0 ||
           marRatio < 2.0 || // Hard MAR Gate
-          actualMaxDd > 10.0 || // Hard 3-Year Max Drawdown Gate (<= 10R)
-          oneYrMaxDd > 10.0 || // Hard 1-Year Max Drawdown Gate (<= 10R)
-          oneYrCalmar < 2.0 || // Hard 1-Year Calmar Gate (>= 2.0)
+          actualMaxDd > maxDdCeiling || // Hard 3-Year Max Drawdown Gate (<= 14R for Mage/Seer, <= 10R for Sage)
+          oneYrMaxDd > maxDdCeiling || // Hard 1-Year Max Drawdown Gate (<= 14R for Mage/Seer, <= 10R for Sage)
           (p.threeYearProfitFactor && p.threeYearProfitFactor < 1.15) || // Profit factor floor
-          r1Year < 2.0 || // Rolling 12M must be positive (> +2R)
+          r1Year < 2.0 || // Rolling 12M must be at least +2R
+          oneYrCalmar < oneYrCalmarFloor || // Rolling 12M Calmar must be at least 2.0
           rRecent6M < 0.5 || // Recent 6 months must be positive (> +0.5R)
           rRecentQuarter < -3.0 || // Recent quarter cannot have severe drop (< -3R)
           slope < -1.5 || // Reject setups with steep decaying trajectory

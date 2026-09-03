@@ -109,7 +109,6 @@ export function preComputeTriggers(
       orBuilt &&
       currentMins >= startMins &&
       currentMins < startMins + orbMinutes + (actionMinutes || 180) &&
-      !mageTradeTaken &&
       prevC
     ) {
       // 🚫 Prop Firm Compliance: Blackout Windows 🚫
@@ -218,8 +217,6 @@ export function preComputeTriggers(
         }
       }
 
-      mageTradeTaken = true;
-
       const rOrHigh = roundPrice(orHigh, pair);
       const rOrLow  = roundPrice(orLow, pair);
       const boxSize = roundPrice(Math.abs(rOrHigh - rOrLow), pair);
@@ -278,8 +275,13 @@ export function evaluateExits(
   const isCrypto = pair.includes("BTC") || pair.includes("ETH");
   let lastTradeExitMs = 0;
   let lastTradeCloseTimeMs = 0;
+  let lastTradedSessionTimestamp = -1;
 
   for (const t of triggers) {
+    if (t.orStartTimestamp === lastTradedSessionTimestamp) continue;
+    const triggerTs = m5Candles[t.m5Index].timestamp;
+    if (triggerTs < lastTradeCloseTimeMs) continue;
+
     if (!config.slMode && config.minBodyPips !== undefined && t.cBodyPips < config.minBodyPips)
       continue;
 
@@ -344,6 +346,8 @@ export function evaluateExits(
     if (initialRisk <= 0 || (config.maxSlDist !== undefined && initialRisk > (config.maxSlDist + 0.001) * pipSize)) {
       continue;
     }
+
+    lastTradedSessionTimestamp = t.orStartTimestamp;
 
     let tpPrice = roundPrice(
       direction === "BUY" ? entryPrice + 50.0 * initialRisk : entryPrice - 50.0 * initialRisk,

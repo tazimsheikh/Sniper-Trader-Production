@@ -74,7 +74,7 @@ async function runSynthesis() {
   const symbolSet = new Set<string>();
   for (const f of [...allMageFiles, ...allSageFiles]) {
     const sym = extractSymbol(f);
-    if (sym && sym !== "BTCUSD" && sym !== "ETHUSD") symbolSet.add(sym);
+    if (sym && sym !== "BTCUSD" && sym !== "ETHUSD" && !sym.includes("JPN225")) symbolSet.add(sym);
   }
   const allSymbols = Array.from(symbolSet).sort();
 

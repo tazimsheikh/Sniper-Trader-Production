@@ -106,7 +106,9 @@ export async function runShadowBacktest(
 
   if (!startDate || !endDate) {
     const csvDir = path.join(process.cwd(), 'data', 'csv');
-    const csvFiles = fs.readdirSync(csvDir).filter(f => f.startsWith(pair.split('_')[0]) && f.endsWith('.csv'));
+    const basePrefix = pair.split('_')[0].split('.')[0].toLowerCase();
+    const pairPrefix = pair.split('_')[0].toLowerCase();
+    const csvFiles = fs.readdirSync(csvDir).filter(f => (f.toLowerCase().startsWith(pairPrefix) || f.toLowerCase().startsWith(basePrefix)) && f.endsWith('.csv'));
     if (csvFiles.length === 0) throw new Error(`No CSV found for ${pair}`);
     const { getLatestDate } = await import('./loadCsv.js');
     const latestDate = getLatestDate(path.join(csvDir, csvFiles[0]));
@@ -179,18 +181,26 @@ export async function runShadowBacktest(
     throw new Error(`Pair ${pair} not found in orchestrator states. Check MAGE_PAIR_CONFIG or SAGE_PAIR_CONFIG.`);
   }
 
+  let seerAssigned = false;
   for (const sessionPair of sessionPairs) {
     const state = orch.states.get(sessionPair);
     if (state) {
       state.botConfigs.set('mage', { enabled: !!options.enableMage, risk: 10 });
       state.botConfigs.set('sage', { enabled: !!options.enableSage, risk: 10 });
-      state.botConfigs.set('seer', { enabled: !!options.enableSeer, risk: 10 });
+      if (options.enableSeer && !seerAssigned) {
+        state.botConfigs.set('seer', { enabled: true, risk: 10 });
+        seerAssigned = true;
+      } else {
+        state.botConfigs.set('seer', { enabled: false, risk: 10 });
+      }
     }
   }
 
   // Load CSV data
   const csvDir = path.join(process.cwd(), 'data', 'csv');
-  const csvFiles = fs.readdirSync(csvDir).filter(f => f.startsWith(pair.split('_')[0]) && f.endsWith('.csv'));
+  const basePrefix = pair.split('_')[0].split('.')[0].toLowerCase();
+  const pairPrefix = pair.split('_')[0].toLowerCase();
+  const csvFiles = fs.readdirSync(csvDir).filter(f => (f.toLowerCase().startsWith(pairPrefix) || f.toLowerCase().startsWith(basePrefix)) && f.endsWith('.csv'));
   if (csvFiles.length === 0) throw new Error(`No CSV found for ${pair}`);
 
   const csvPath = path.join(csvDir, csvFiles[0]);

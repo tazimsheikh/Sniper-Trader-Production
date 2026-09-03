@@ -196,8 +196,8 @@ export async function runSeerToxicFilterInjection() {
     const configs = PairConfigManager.getSeerConfigs(pair);
     if (!configs || configs.length === 0) continue;
 
-    const baseSym = pair.replace(".Daily", "").split("_")[0];
-    const csvFiles = fs.readdirSync(csvDir).filter(f => f.startsWith(baseSym) && f.endsWith(".csv"));
+    const baseSym = pair.replace(/\.daily$/i, "").split("_")[0];
+    const csvFiles = fs.readdirSync(csvDir).filter(f => (f.toLowerCase().startsWith(pair.toLowerCase()) || f.toLowerCase().startsWith(baseSym.toLowerCase())) && f.endsWith(".csv"));
     if (csvFiles.length === 0) {
       console.warn(`  ⚠️  No CSV found for ${pair} — skipping toxic analysis`);
       continue;
