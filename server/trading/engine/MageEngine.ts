@@ -613,9 +613,6 @@ export async function _runMageBotForConfig(orch: any, symbol: string, state: any
           return;
         }
       }
-      os.breakoutDir = direction;
-      os.mageTradeTakenToday = true;
-      os.tradeTakenOnOrbDay = os.currentOrbDateStr;
       os.triggerCandleHigh = actionCandle.high;
       os.triggerCandleLow = actionCandle.low;
       orch.addEyeFeedEvent({
@@ -637,7 +634,7 @@ export async function _runMageBotForConfig(orch: any, symbol: string, state: any
         return;
       }
       const pullbackPct = _mCfg.orbPullbackPct ?? 0;
-      const breakoutPrice = direction === "BUY" ? c.close + spreadPts : c.close;
+      const breakoutPrice = direction === "BUY" ? actionCandle.close + spreadPts : actionCandle.close;
       const entryPriceRaw =
         pullbackPct > 0
           ? (direction === "BUY" ? rOrHigh - boxSize * pullbackPct : rOrLow + boxSize * pullbackPct)
@@ -677,7 +674,6 @@ export async function _runMageBotForConfig(orch: any, symbol: string, state: any
             reasoning: `Mage aborted on ${symbol} at ${new Date(_ts).toISOString()}: SL risk (${slDist.toFixed(1)} pips) < minSlDist (${_mCfg.minSlDist}).`,
           }
         });
-        os.fired = true;
         return;
       }
       if (_mCfg.maxSlDist !== void 0 && slDist > _mCfg.maxSlDist + 0.001) {
@@ -691,7 +687,6 @@ export async function _runMageBotForConfig(orch: any, symbol: string, state: any
             reasoning: `Mage aborted on ${symbol} at ${new Date(_ts).toISOString()}: SL risk (${slDist.toFixed(1)} pips) > maxSlDist (${_mCfg.maxSlDist}).`,
           }
         });
-        os.fired = true;
         return;
       }
 
@@ -710,6 +705,9 @@ export async function _runMageBotForConfig(orch: any, symbol: string, state: any
           PairConfigManager.getBaseSymbol(symbol)
         );
       }
+      os.breakoutDir = direction;
+      os.mageTradeTakenToday = true;
+      os.tradeTakenOnOrbDay = os.currentOrbDateStr;
       os.visionApproved = true;
       await placeMageLimitOrder(orch, symbol, state, c, sig, config, botId).catch((e) => {
         console.error("[MAGE LIMIT ORDER EXCEPTION]", e);
@@ -1036,10 +1034,14 @@ async function placeMageLimitOrder(orch: any, symbol: string, state: any, c: any
           const roundedSafeTp = roundPrice(safePrices.pTp, brokerSymbol);
 
           logger.info(`[MageEngine] ⚡ Executing direct MARKET ${os.breakoutDir} on ${brokerSymbol} (Proximity: ${(distFromEntry / pipSize).toFixed(1)} pips <= ${(proximityThreshold / pipSize).toFixed(1)} threshold, Target: ${pEntry}, Live: ${currentPrice}, SL: ${roundedSafeSl}, TP: ${roundedSafeTp})`);
+          const isSim = (global as any).isSimulator || (global as any).__SIM_MOCK_ACCOUNT__;
+          const marketOpts = isSim
+            ? { magic, clientId: shortClientId, entryPrice: currentPrice, limitPrice: pEntry }
+            : { magic, clientId: shortClientId };
           if (os.breakoutDir === "BUY") {
-            res = await conn.createMarketBuyOrder(brokerSymbol, calculatedVolume, roundedSafeSl, roundedSafeTp || undefined, { magic, clientId: shortClientId, entryPrice: currentPrice, limitPrice: pEntry });
+            res = await conn.createMarketBuyOrder(brokerSymbol, calculatedVolume, roundedSafeSl, roundedSafeTp || undefined, marketOpts);
           } else {
-            res = await conn.createMarketSellOrder(brokerSymbol, calculatedVolume, roundedSafeSl, roundedSafeTp || undefined, { magic, clientId: shortClientId, entryPrice: currentPrice, limitPrice: pEntry });
+            res = await conn.createMarketSellOrder(brokerSymbol, calculatedVolume, roundedSafeSl, roundedSafeTp || undefined, marketOpts);
           }
         } else {
           try {
@@ -1094,9 +1096,13 @@ async function placeMageLimitOrder(orch: any, symbol: string, state: any, c: any
               const roundedSafeSl = roundPrice(safePrices.pSl, brokerSymbol);
               const roundedSafeTp = roundPrice(safePrices.pTp, brokerSymbol);
               logger.info(`[MageEngine] 🛡️ Smart Market Fallback Prices: Entry=${latestPrice}, SL=${roundedSafeSl}, TP=${roundedSafeTp} (stopsLevel=${stopsLevelPts}pts)`);
+              const isSim = (global as any).isSimulator || (global as any).__SIM_MOCK_ACCOUNT__;
+              const fallbackOpts = isSim
+                ? { magic, clientId: shortClientId, entryPrice: latestPrice, limitPrice: pEntry }
+                : { magic, clientId: shortClientId };
               res = os.breakoutDir === "BUY"
-                ? await conn.createMarketBuyOrder(brokerSymbol, calculatedVolume, roundedSafeSl, roundedSafeTp || undefined, { magic, clientId: shortClientId, entryPrice: latestPrice, limitPrice: pEntry })
-                : await conn.createMarketSellOrder(brokerSymbol, calculatedVolume, roundedSafeSl, roundedSafeTp || undefined, { magic, clientId: shortClientId, entryPrice: latestPrice, limitPrice: pEntry });
+                ? await conn.createMarketBuyOrder(brokerSymbol, calculatedVolume, roundedSafeSl, roundedSafeTp || undefined, fallbackOpts)
+                : await conn.createMarketSellOrder(brokerSymbol, calculatedVolume, roundedSafeSl, roundedSafeTp || undefined, fallbackOpts);
             } else {
               throw err;
             }
@@ -1136,6 +1142,15 @@ async function placeMageLimitOrder(orch: any, symbol: string, state: any, c: any
 
         // Immediate Trailing & Active Trade Attachment for Direct Market Orders
         if (executeAsMarket && res && res.orderId) {
+          try {
+            const currentPositions = await conn.getPositions();
+            const stillOpen = currentPositions.some((p: any) => String(p.id) === String(res.orderId));
+            if (!stillOpen) {
+              logger.info(`[MageEngine] ⚡ Market Order ${res.orderId} was already closed by broker on entry candle.`);
+              return;
+            }
+          } catch (_e) {}
+
           const openPrice = isBuy ? (c.close + spreadPts) : c.close;
           const openTimeMs = c.timestamp || Date.now();
           try {

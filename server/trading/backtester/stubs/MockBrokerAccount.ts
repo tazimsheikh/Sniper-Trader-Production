@@ -209,12 +209,16 @@ export class MockBrokerAccount {
     const id = `SIM_${this.orderId++}`;
     
     this.pendingOrders.set(id, { id, symbol, direction: 'BUY', orderType: 'LIMIT', limitPrice: price, sl, tp, volume: lots, placedAt: this.currentCandle?.timestamp || 0, clientId: opts?.clientId, botId: this.deduceBotId(opts), magic: opts?.magic, orHigh: opts?.orHigh, orLow: opts?.orLow });
+    const orchState = this.getOrchState(opts);
+    if (orchState) this.checkPendingOrderFills(orchState, id);
     return { orderId: id };
   }
 
   async createLimitSellOrder(symbol: string, lots: number, price: number, sl: number, tp: number, opts?: any) {
     const id = `SIM_${this.orderId++}`;
     this.pendingOrders.set(id, { id, symbol, direction: 'SELL', orderType: 'LIMIT', limitPrice: price, sl, tp, volume: lots, placedAt: this.currentCandle?.timestamp || 0, clientId: opts?.clientId, botId: this.deduceBotId(opts), magic: opts?.magic, orHigh: opts?.orHigh, orLow: opts?.orLow });
+    const orchState = this.getOrchState(opts);
+    if (orchState) this.checkPendingOrderFills(orchState, id);
     return { orderId: id };
   }
 
@@ -278,6 +282,55 @@ export class MockBrokerAccount {
       });
       }
     }
+
+    if (c) {
+      const fillRiskPips = Math.abs((intendedEntry || price) - sl) / this.pipSize;
+      if (c.low <= sl) {
+        const exitPrice = Math.min(c.open, sl);
+        const rMultiple = fillRiskPips > 0 ? (exitPrice - price) / this.pipSize / fillRiskPips : -1;
+        this.tradeLog.push({
+          symbol: this.symbol, direction: 'BUY', entryPrice: price,
+          exitPrice, slPrice: sl, originalSl: sl, tpPrice: tp, outcome: 'SL',
+          rMultiple, openTime: c.timestamp, closeTime: c.timestamp,
+          botId, clientId: opts?.clientId, magic: opts?.magic,
+          orHigh: opts?.orHigh, orLow: opts?.orLow, limitPlacedAt: c.timestamp,
+          trailLog: (global as any).__SIM_ENABLE_TRACE__ ? [] : undefined
+        });
+        this.positions.delete(id);
+        const orch = (global as any).__SIM_ORCH__;
+        if (orch && typeof orch.onBrokerPositionClosed === "function") {
+          orch.onBrokerPositionClosed(id);
+        }
+        if (orchState) {
+          orchState.activeTrades = (orchState.activeTrades || []).filter((t: any) => String(t.metaOrderId) !== String(id));
+          if (String(orchState.activeTrade?.metaOrderId) === String(id)) {
+            delete orchState.activeTrade;
+          }
+        }
+      } else if (c.high >= tp) {
+        const rMultiple = fillRiskPips > 0 ? (tp - price) / this.pipSize / fillRiskPips : 0;
+        this.tradeLog.push({
+          symbol: this.symbol, direction: 'BUY', entryPrice: price,
+          exitPrice: tp, slPrice: sl, originalSl: sl, tpPrice: tp, outcome: 'TP',
+          rMultiple, openTime: c.timestamp, closeTime: c.timestamp,
+          botId, clientId: opts?.clientId, magic: opts?.magic,
+          orHigh: opts?.orHigh, orLow: opts?.orLow, limitPlacedAt: c.timestamp,
+          trailLog: (global as any).__SIM_ENABLE_TRACE__ ? [] : undefined
+        });
+        this.positions.delete(id);
+        const orch = (global as any).__SIM_ORCH__;
+        if (orch && typeof orch.onBrokerPositionClosed === "function") {
+          orch.onBrokerPositionClosed(id);
+        }
+        if (orchState) {
+          orchState.activeTrades = (orchState.activeTrades || []).filter((t: any) => String(t.metaOrderId) !== String(id));
+          if (String(orchState.activeTrade?.metaOrderId) === String(id)) {
+            delete orchState.activeTrade;
+          }
+        }
+      }
+    }
+
     return { orderId: id };
   }
 
@@ -313,6 +366,55 @@ export class MockBrokerAccount {
         });
       }
     }
+
+    if (c) {
+      const fillRiskPips = Math.abs((intendedEntry || price) - sl) / this.pipSize;
+      if (c.high + this.spreadPts >= sl) {
+        const exitPrice = Math.max(c.open + this.spreadPts, sl);
+        const rMultiple = fillRiskPips > 0 ? (price - exitPrice) / this.pipSize / fillRiskPips : -1;
+        this.tradeLog.push({
+          symbol: this.symbol, direction: 'SELL', entryPrice: price,
+          exitPrice, slPrice: sl, originalSl: sl, tpPrice: tp, outcome: 'SL',
+          rMultiple, openTime: c.timestamp, closeTime: c.timestamp,
+          botId, clientId: opts?.clientId, magic: opts?.magic,
+          orHigh: opts?.orHigh, orLow: opts?.orLow, limitPlacedAt: c.timestamp,
+          trailLog: (global as any).__SIM_ENABLE_TRACE__ ? [] : undefined
+        });
+        this.positions.delete(id);
+        const orch = (global as any).__SIM_ORCH__;
+        if (orch && typeof orch.onBrokerPositionClosed === "function") {
+          orch.onBrokerPositionClosed(id);
+        }
+        if (orchState) {
+          orchState.activeTrades = (orchState.activeTrades || []).filter((t: any) => String(t.metaOrderId) !== String(id));
+          if (String(orchState.activeTrade?.metaOrderId) === String(id)) {
+            delete orchState.activeTrade;
+          }
+        }
+      } else if (c.low + this.spreadPts <= tp) {
+        const rMultiple = fillRiskPips > 0 ? (price - tp) / this.pipSize / fillRiskPips : 0;
+        this.tradeLog.push({
+          symbol: this.symbol, direction: 'SELL', entryPrice: price,
+          exitPrice: tp, slPrice: sl, originalSl: sl, tpPrice: tp, outcome: 'TP',
+          rMultiple, openTime: c.timestamp, closeTime: c.timestamp,
+          botId, clientId: opts?.clientId, magic: opts?.magic,
+          orHigh: opts?.orHigh, orLow: opts?.orLow, limitPlacedAt: c.timestamp,
+          trailLog: (global as any).__SIM_ENABLE_TRACE__ ? [] : undefined
+        });
+        this.positions.delete(id);
+        const orch = (global as any).__SIM_ORCH__;
+        if (orch && typeof orch.onBrokerPositionClosed === "function") {
+          orch.onBrokerPositionClosed(id);
+        }
+        if (orchState) {
+          orchState.activeTrades = (orchState.activeTrades || []).filter((t: any) => String(t.metaOrderId) !== String(id));
+          if (String(orchState.activeTrade?.metaOrderId) === String(id)) {
+            delete orchState.activeTrade;
+          }
+        }
+      }
+    }
+
     return { orderId: id };
   }
 

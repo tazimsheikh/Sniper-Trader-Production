@@ -848,12 +848,14 @@ export async function runPreFlightFilter(
                     rawToken,
                     profile.metaapi_account_id,
                   );
+                  const isSim = (global as any).isSimulator || (global as any).__SIM_MOCK_ACCOUNT__;
+                  const orderOpts = isSim ? { clientId, magic, entryPrice: freshEntry } : { clientId, magic };
                   return freshConn.createMarketBuyOrder(
                     brokerSymbol,
                     safeLots,
                     cleanSl,
                     cleanTp || undefined,
-                    { clientId, magic, entryPrice: freshEntry },
+                    orderOpts,
                   );
                 },
                 `MarketBuy:${symbol}`,
@@ -878,12 +880,14 @@ export async function runPreFlightFilter(
                     rawToken,
                     profile.metaapi_account_id,
                   );
+                  const isSim = (global as any).isSimulator || (global as any).__SIM_MOCK_ACCOUNT__;
+                  const orderOpts = isSim ? { clientId, magic, entryPrice: freshEntry } : { clientId, magic };
                   return freshConn.createMarketSellOrder(
                     brokerSymbol,
                     safeLots,
                     cleanSl,
                     cleanTp || undefined,
-                    { clientId, magic, entryPrice: freshEntry },
+                    orderOpts,
                   );
                 },
                 `MarketSell:${symbol}`,

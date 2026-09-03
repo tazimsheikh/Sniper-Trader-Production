@@ -29,7 +29,7 @@ This document serves as the canonical chronological trade schedule for all **27 
 | **01:46 PM IST** | `london` | `GER40.DAILY` | Mage | ORB Breakout | 10 Mins | 120 Mins | 50 – 140 pips | **1.2%** | None | None | None |
 | **01:46 PM IST** | `london` | `GER40.DAILY` | Sage | Liquidity Sweep | 60 Mins | 5 Mins | 10 – 200 pips | **2.9%** | None | None | None |
 | **03:01 PM IST** | `london` | `EURNZD` | Sage | Liquidity Sweep | 120 Mins | 60 Mins | 70 – 100 pips | **4.3%** | None | None | None |
-| **05:30 PM IST** | `ny` | `GER40` | Seer | Liquidity Hunt (Pin Bar) | 0 Mins | 240 Mins | 50 – 60 pips | **4.3%** | 08:30 PM IST | Wednesday | None |
+| **05:30 PM IST** | `ny` | `GER40.DAILY` | Seer | Liquidity Hunt (Pin Bar) | 0 Mins | 240 Mins | 50 – 60 pips | **4.3%** | 08:30 PM IST | Wednesday | None |
 | **06:46 PM IST** | `NY_Forex` | `USDCHF` | Sage | Liquidity Sweep | 15 Mins | 15 Mins | 25 – 80 pips | **1.2%** | None | None | None |
 | **07:01 PM IST** | `NY_Forex` | `USDCAD` | Sage | Liquidity Sweep | 60 Mins | 30 Mins | 20 – 35 pips | **2.4%** | None | None | None |
 | **07:31 PM IST** | `NY_Forex` | `EURCAD` | Sage | Liquidity Sweep | 15 Mins | 15 Mins | 40 – 100 pips | **2.3%** | None | None | None |
@@ -49,4 +49,4 @@ This document serves as the canonical chronological trade schedule for all **27 
    - AUDJPY (Sage) - 12:01 PM IST, NAS100.DAILY (Sage) - 12:46 PM IST, CHFJPY (Sage) - 12:46 PM IST, NZDUSD (Sage) - 01:16 PM IST, GER40.DAILY (Mage) - 01:46 PM IST, GER40.DAILY (Sage) - 01:46 PM IST, EURNZD (Sage) - 03:01 PM IST
 
 3. **New York Pre-Market & Open Trade Cluster**
-   - GER40 (Seer) - 05:30 PM IST, USDCHF (Sage) - 06:46 PM IST, USDCAD (Sage) - 07:01 PM IST, EURCAD (Sage) - 07:31 PM IST, GBPJPY (Mage) - 07:46 PM IST, SPX500.DAILY (Mage) - 07:46 PM IST, SPX500.DAILY (Sage) - 07:46 PM IST, XAUUSD (Sage) - 08:01 PM IST
+   - GER40.DAILY (Seer) - 05:30 PM IST, USDCHF (Sage) - 06:46 PM IST, USDCAD (Sage) - 07:01 PM IST, EURCAD (Sage) - 07:31 PM IST, GBPJPY (Mage) - 07:46 PM IST, SPX500.DAILY (Mage) - 07:46 PM IST, SPX500.DAILY (Sage) - 07:46 PM IST, XAUUSD (Sage) - 08:01 PM IST

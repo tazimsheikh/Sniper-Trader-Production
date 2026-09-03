@@ -818,6 +818,33 @@ export async function getLiveAccountBalance(
 }
 
 
+function wrapRpcConnectionForSafety(connection: any): any {
+  if (!connection || connection.__safety_wrapped__) return connection;
+  try {
+    connection.__safety_wrapped__ = true;
+    function sanitizeMarketOptions(options?: any) {
+      if (!options || typeof options !== "object") return options;
+      const { entryPrice, limitPrice, orHigh, orLow, orchState, ...cleanOpts } = options;
+      return cleanOpts;
+    }
+    if (typeof connection.createMarketBuyOrder === "function") {
+      const origBuy = connection.createMarketBuyOrder.bind(connection);
+      connection.createMarketBuyOrder = (symbol: string, volume: number, sl?: number, tp?: number, options?: any) => {
+        return origBuy(symbol, volume, sl, tp, sanitizeMarketOptions(options));
+      };
+    }
+    if (typeof connection.createMarketSellOrder === "function") {
+      const origSell = connection.createMarketSellOrder.bind(connection);
+      connection.createMarketSellOrder = (symbol: string, volume: number, sl?: number, tp?: number, options?: any) => {
+        return origSell(symbol, volume, sl, tp, sanitizeMarketOptions(options));
+      };
+    }
+  } catch (err: any) {
+    console.warn(`[MetaAPI] Failed to wrap RPC connection for safety:`, err.message);
+  }
+  return connection;
+}
+
 export async function getSharedConnection(
   token: string,
   accountId: string,
@@ -843,7 +870,7 @@ export async function getSharedConnection(
       // Deleting the cache causes memory leaks and API spam.
     }
     if (onMetaApiConnected) onMetaApiConnected();
-    return cached;
+    return wrapRpcConnectionForSafety(cached);
   }
 
   if (background) {
@@ -918,6 +945,7 @@ export async function getSharedConnection(
     } catch (syncErr: any) {
       console.warn(`[MetaAPI] ⚠️ RPC waitSynchronized for ${accountId} timed out: ${syncErr.message}. Connection cached, continuing in background.`);
     }
+    wrapRpcConnectionForSafety(connection);
     connectionCache.set(key, connection);
     return connection;
   }

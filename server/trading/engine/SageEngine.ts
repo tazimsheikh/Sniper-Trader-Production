@@ -952,6 +952,10 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
         const roundedSafeTp = roundPrice(safePrices.pTp, brokerSymbol);
 
         logger.info(`[SageEngine] ⚡ Executing direct MARKET ${ss.direction} on ${brokerSymbol} (Proximity: ${(distFromEntry / pipSize).toFixed(1)} pips <= ${(proximityThreshold / pipSize).toFixed(1)} threshold, Target: ${pEntry}, Live: ${latestPrice}, SL: ${roundedSafeSl}, TP: ${roundedSafeTp})`);
+        const isSim = (global as any).isSimulator || (global as any).__SIM_MOCK_ACCOUNT__;
+        const marketOpts = isSim
+          ? { magic, clientId: shortClientId, entryPrice: latestPrice }
+          : { magic, clientId: shortClientId };
         orderRes = await enqueueMetaApiRequest(
           async () =>
             isBuy
@@ -960,14 +964,14 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
                   lots,
                   roundedSafeSl,
                   roundedSafeTp || undefined,
-                  { magic, clientId: shortClientId, entryPrice: latestPrice },
+                  marketOpts,
                 )
               : conn.createMarketSellOrder(
                   brokerSymbol,
                   lots,
                   roundedSafeSl,
                   roundedSafeTp || undefined,
-                  { magic, clientId: shortClientId, entryPrice: latestPrice },
+                  marketOpts,
                 ),
           `CreateSageMarketOrder:${brokerSymbol}`,
         );
@@ -1039,9 +1043,13 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
         const roundedSafeSl = roundPrice(safePrices.pSl, brokerSymbol);
         const roundedSafeTp = roundPrice(safePrices.pTp, brokerSymbol);
         logger.info(`[SageEngine] 🛡️ Smart Market Fallback Prices: Entry=${latestPrice}, SL=${roundedSafeSl}, TP=${roundedSafeTp} (stopsLevel=${stopsLevelPts}pts)`);
+        const isSim = (global as any).isSimulator || (global as any).__SIM_MOCK_ACCOUNT__;
+        const fallbackOpts = isSim
+          ? { magic, clientId: shortClientId, entryPrice: latestPrice }
+          : { magic, clientId: shortClientId };
         orderRes = isBuy
-          ? await conn.createMarketBuyOrder(brokerSymbol, lots, roundedSafeSl, roundedSafeTp || undefined, { magic, clientId: shortClientId, entryPrice: latestPrice })
-          : await conn.createMarketSellOrder(brokerSymbol, lots, roundedSafeSl, roundedSafeTp || undefined, { magic, clientId: shortClientId, entryPrice: latestPrice });
+          ? await conn.createMarketBuyOrder(brokerSymbol, lots, roundedSafeSl, roundedSafeTp || undefined, fallbackOpts)
+          : await conn.createMarketSellOrder(brokerSymbol, lots, roundedSafeSl, roundedSafeTp || undefined, fallbackOpts);
       } else {
         globalTradeGate.release(orch.profileId, preRegKey);
         throw err;
@@ -1175,9 +1183,9 @@ export async function evaluateSageTrailingOnTick(
         let slSwept = false;
         const c = tick; // Tick object acts as M1 candle in TickFeed
 
-        // TP Sweep using extremes
-        if (ss.direction === "SELL" && c.low <= ss.tpPrice) tpSwept = true;
-        else if (ss.direction === "BUY" && c.high >= ss.tpPrice) tpSwept = true;
+        // TP Sweep: SageMathCore does NOT cancel pending limit orders on TP touch before fill (matches AGENTS.md)
+        // if (ss.direction === "SELL" && c.low <= ss.tpPrice) tpSwept = true;
+        // else if (ss.direction === "BUY" && c.high >= ss.tpPrice) tpSwept = true;
 
         // SL Sweep using live ticks (c.close)
         if (ss.direction === "SELL" && c.close >= ss.slPrice) slSwept = true;
