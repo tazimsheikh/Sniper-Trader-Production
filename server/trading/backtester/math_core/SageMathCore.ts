@@ -545,10 +545,12 @@ export function evaluateExits(
             // Use clampedSl fixed at order placement, penalizing gap-fills correctly.
             actualSlPrice = roundPrice(proposedSl, pair);
             currentSL = actualSlPrice;
-            const limitPrice = direction === "BUY" ? limitBuyPrice : limitSellPrice;
-            const initialRisk = (!config.entryPenetrationPct || config.entryPenetrationPct === 0)
-              ? Math.abs(actualEntryPrice - proposedSl)
-              : Math.abs(limitPrice - proposedSl);
+            // PARITY FIX: Always use |actualEntryPrice - proposedSl| for risk, matching SageEngine
+            // which computes actualRisk = Math.abs(trade.entryPrice - trade.originalSl).
+            // When entryPenetrationPct > 0 and price gaps past the limit at open, the actual fill
+            // may differ from limitPrice. Using limitPrice as denominator (old behavior) causes
+            // T1 currentR to diverge from T2 whenever a gap-fill occurs.
+            const initialRisk = Math.abs(actualEntryPrice - proposedSl);
 
             if (config.exitMode === "MIDPOINT") {
               actualTpPrice = preCalcTpPrice;

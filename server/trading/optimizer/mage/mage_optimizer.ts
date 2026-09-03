@@ -35,7 +35,7 @@ export function parseMageConfig(setupStr: string): { session: string; config: Pa
   if (!m) return null;
   const [, sSession, sPb, sMinSL, sMaxSL, sBody, sTrig, sStep, sFC, sH, sM, sOrb, sAct, sExit] = m;
   const stepVal = parseFloat(sStep);
-  if (stepVal < 1.0) return null;
+  if (stepVal <= 0) return null;
 
   return {
     session: sSession === "NY_Forex" ? "ny" : sSession,
@@ -60,15 +60,15 @@ export function parseMageConfig(setupStr: string): { session: string; config: Pa
 // Define the grids
 const MIN_SL_VALS = [1.5, 2.5, 5, 7.5, 10, 15, 20];
 const MAX_SL_VALS = [25, 30, 40, 50, 60, 80, 100, 150, 200];
-const MIN_BODY_VALS = [5, 6, 7.5, 10, 15, 20]; // Removed 3-pip (doji): minimum meaningful breakout body
-const TRAILING_TRIGGERS = [0.5, 1.0, 1.5, 2.0]; // Clean active trailing triggers
-const TRAILING_STEPS = [1.0, 1.5, 2.0]; // Removed 0.5R
-const FORCE_CLOSE_HOURS = [8, 12, 16, 24]; // Added sub-24h options to discover same-session exits
-const EXIT_MODES = ["TRAILING", "ADTEL_MODERATE"];
-const PULLBACK_PERCENTAGES = [0.0, 0.15, 0.3]; // Breakout constraints
-const ORB_MINUTES_GRID = [10, 15];
-const ACTION_MINUTES_GRID = [60, 120, 180]; // Capped at 180 min: beyond this bleeds pre-market data into trigger
-const SIM_YEARS = 3.0; // Dynamic 3-year lookback from latest date
+const MIN_BODY_VALS = [4, 5, 6, 7.5, 8, 10, 12, 15, 20, 24, 30, 40];
+const TRAILING_TRIGGERS = [0.5, 1.0, 1.5, 2.0, 3.0];
+const TRAILING_STEPS = [0.5, 1.0, 1.5, 2.0];
+const FORCE_CLOSE_HOURS = [4, 8, 12, 16, 24];
+const EXIT_MODES = ["TRAILING", "ADTEL_MODERATE", "ADTEL_CONSERVATIVE", "ADTEL_AGGRESSIVE"];
+const PULLBACK_PERCENTAGES = [0.0, 0.15, 0.3, 0.6];
+const ORB_MINUTES_GRID = [10, 15, 30, 45, 60];
+const ACTION_MINUTES_GRID = [60, 120, 180];
+const SIM_YEARS = 3.0;
 
 function findClosestIndex(value: any, grid: any[]): number {
   const exact = grid.indexOf(value);
@@ -247,38 +247,43 @@ if (isMainThread && process.argv[1] === currentFile) {
     if (MAJORS.includes(symbol)) {
       minSlGrid = [5, 7.5, 10, 12.5, 15]; // Pruned unfillable micro-SLs <5.0 pips; retained empirical wins
       maxSlGrid = [20, 30, 40, 50, 60, 80];
-      minBodyGrid = [5, 8, 10, 12, 15, 20];
-      trailingTriggersGrid = [0.5, 1.0, 1.5, 2.0];
-      forceCloseHoursGrid = [4, 8, 12, 16];
+      minBodyGrid = [4, 5, 8, 10, 12, 15, 20];
+      trailingTriggersGrid = [0.5, 1.0, 1.5, 2.0, 3.0];
+      forceCloseHoursGrid = [4, 8, 12, 16, 24];
     } else if (JPY_CROSSES.includes(symbol)) {
       minSlGrid = [15, 20, 25, 30, 40]; // Pruned micro-SLs <15 pips (stopped out by spread); retained empirical wins
       maxSlGrid = [30, 40, 50, 60, 70, 80, 100, 150];
       minBodyGrid = [4, 5, 6, 8, 10, 12, 15, 20];
       trailingTriggersGrid = [0.5, 1.0, 1.5, 2.0, 3.0];
+      forceCloseHoursGrid = [4, 8, 12, 16, 24];
     } else if (VOLATILE_CROSSES.includes(symbol)) {
-      minSlGrid = [15, 20, 25]; // Prevent overlap
+      minSlGrid = [15, 20, 25, 30, 40];
       maxSlGrid = [30, 40, 50, 60, 70, 80, 100, 150];
       minBodyGrid = [4, 5, 6, 7.5, 10, 12, 15];
-      trailingTriggersGrid = [0.5, 1.0, 1.5, 2.0]; 
+      trailingTriggersGrid = [0.5, 1.0, 1.5, 2.0, 3.0];
+      forceCloseHoursGrid = [4, 8, 12, 16, 24];
     } else if (MINOR_PAIRS.includes(symbol)) {
       minSlGrid = [8, 10, 12.5, 15, 20]; // Pruned micro-SLs <8.0 pips
       maxSlGrid = [15, 20, 25, 30, 40, 50, 70, 100, 120];
       minBodyGrid = [4, 5, 8, 10, 12];
-      trailingTriggersGrid = [0.5, 1.0, 1.5, 2.0]; 
-      forceCloseHoursGrid = [4, 8, 12, 16];
+      trailingTriggersGrid = [0.5, 1.0, 1.5, 2.0, 3.0]; 
+      forceCloseHoursGrid = [4, 8, 12, 16, 24];
     } else if (symbol.includes("BTC")) {
       minSlGrid = [20, 25, 30, 40, 50]; // Pruned unfillable micro-SLs <20 pips ($20.00)
       maxSlGrid = [100, 150, 200, 300];
       minBodyGrid = [30, 40, 50, 60];
+      forceCloseHoursGrid = [4, 8, 12, 16, 24];
     } else if (symbol.includes("ETH")) {
       minSlGrid = [20, 25, 30, 40, 50]; // Aligned to BTC floor: ETH has equivalent volatility
       maxSlGrid = [80, 100, 150, 250];
       minBodyGrid = [15, 20, 30, 40];
+      forceCloseHoursGrid = [4, 8, 12, 16, 24];
     } else if (symbol.includes("JPN")) {
       minSlGrid = [30, 40, 60, 80, 120, 150];
       maxSlGrid = [120, 140, 160, 200, 250, 350];
       minBodyGrid = [10, 15, 20, 30, 40, 60];
       trailingTriggersGrid = [1.0, 2.0, 3.0];
+      forceCloseHoursGrid = [4, 8, 12, 16, 24];
     } else if (
       symbol.includes("US30") ||
       symbol.includes("NAS") ||
@@ -288,20 +293,19 @@ if (isMainThread && process.argv[1] === currentFile) {
       maxSlGrid = [60, 80, 100, 140, 180, 200, 250, 350];
       minBodyGrid = [10, 12, 15, 20, 30, 40];
       trailingTriggersGrid = [0.5, 1.0, 1.5, 2.0, 3.0];
+      forceCloseHoursGrid = [4, 8, 12, 16, 24];
     } else if (symbol.includes("SPX")) {
       minSlGrid = [5, 7, 10, 15, 20, 30, 40]; // Pruned micro-SLs <5.0 pips
       maxSlGrid = [40, 80, 120, 150, 200];
       minBodyGrid = [5, 10, 15, 20, 25, 30];
       trailingTriggersGrid = [1.0, 2.0, 3.0];
+      forceCloseHoursGrid = [4, 8, 12, 16, 24];
     } else if (symbol.includes("XAU") || symbol.includes("XTI")) {
       minSlGrid = [10, 12, 15, 20, 30, 40]; // 10 pips = $1.00 on Gold; exact dump match
       maxSlGrid = [40, 60, 80, 120, 150, 200];
       minBodyGrid = [15, 20, 24, 35, 50];
       trailingTriggersGrid = [1.0, 1.5, 2.0, 3.0];
-    }
-
-    if (symbol === "USDCHF" || symbol.includes("XAU")) {
-      orbMinutesGrid = [10, 15, 30, 45];
+      forceCloseHoursGrid = [4, 8, 12, 16, 24];
     }
 
     const sessions = ["asia", "london", "ny"];

@@ -44,6 +44,7 @@ export interface SessionLeadTrade {
   dateStr: string;
   sig: string;
   leadProfileId: number;
+  isFilled?: boolean;
 }
 
 export type TradeOutcome = "TP" | "SL" | "EOD" | "EOD_CLOSE" | "SKIPPED" | "EXPIRED" | "NEWS_CLOSE" | null;
@@ -223,6 +224,8 @@ export interface PairConfig {
   orbStartMin?: number;
   orbEndHour?: number;
   orbEndMin?: number;
+  bbStdDev?: number;
+  rsiThreshold?: number;
   orbMinutes?: number;
   orbPullbackPct?: number;
   rangeFilterPct?: number;
@@ -550,7 +553,7 @@ export interface GrandmasterOptimizerState {
 
 export interface IndependentSynthesisComponent {
   symbol: string;
-  botType: "Mage" | "Sage";
+  botType: "Mage" | "Sage" | "Seer";
   setup: string;
   totalTrades: number;
   totalTotalR: number;

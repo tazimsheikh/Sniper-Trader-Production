@@ -4,6 +4,8 @@
  * to evaluate portfolio drawdown distributions and ruin probability.
  */
 
+import { createMulberry32 } from "./utils/GrandmasterMath.js";
+
 export interface MonteCarloResult {
   medianReturn: number;
   pct5Return: number;
@@ -16,7 +18,8 @@ export function validateMonteCarlo(
   dailyReturns: number[],
   numSimulations: number = 10000,
   maxAllowedDrawdown: number = 15.0,
-  maxRuinProbThreshold: number = 0.05
+  maxRuinProbThreshold: number = 0.05,
+  seed: number = 0x1337BEEF
 ): MonteCarloResult {
   if (!dailyReturns || dailyReturns.length === 0) {
     return {
@@ -32,6 +35,7 @@ export function validateMonteCarlo(
   const terminalReturns: number[] = [];
   const maxDrawdowns: number[] = [];
   let ruinCount = 0;
+  const rng = createMulberry32(seed);
 
   for (let sim = 0; sim < numSimulations; sim++) {
     let cumReturn = 0;
@@ -40,7 +44,7 @@ export function validateMonteCarlo(
 
     for (let day = 0; day < n; day++) {
       // Bootstrap resample with replacement
-      const randomIdx = Math.floor(Math.random() * n);
+      const randomIdx = Math.floor(rng() * n);
       const ret = dailyReturns[randomIdx];
       cumReturn += ret;
 

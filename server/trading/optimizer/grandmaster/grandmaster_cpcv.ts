@@ -249,7 +249,14 @@ export function runCPCV(
     }
     const isDays = extractDaysFromWindows(windows, isWindows, 'IS', oosDaysSet);
     
-    // Greedy IS selection
+    // Greedy IS selection (CPCV structural generalization test):
+    // NOTE: This loop greedily selects a SUBSET of the grandmasters pool that maximizes
+    // IS score for each combinatorial path independently. This means each CPCV path
+    // evaluates a potentially DIFFERENT sub-portfolio. This is standard CPCV methodology
+    // per López de Prado (2018) — it tests whether ANY combination of the candidate pool
+    // generalizes out-of-sample, NOT whether the specific deployed portfolio does.
+    // This is a structural overfitting detection test. For exact deployed portfolio OOS
+    // validation, use test_single_pair_parity.ts.
     let currentPortfolio: IndependentSynthesisComponent[] = [];
     let currentScore = -Infinity;
     

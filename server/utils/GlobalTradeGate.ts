@@ -6,7 +6,7 @@ import { logger } from "./logger.js";
 // Both TheWitch and DiscretionaryTrader check here before
 // placing any trade, ensuring these rules hold system-wide:
 //
-//   1. Max 10 concurrent open trades total (across all bots)
+//   1. Max 50 concurrent open trades total (across all bots)
 //   2. Max 2 trades from the same correlated-pair group
 //   3. Discretionary Trader has priority over Algo Trader:
 //      if Disc has an open OR evaluating trade on a pair,
@@ -21,7 +21,7 @@ import { logger } from "./logger.js";
 //   globalTradeGate.release(profileId, tradeId);
 // ============================================================
 
-export const MAX_CONCURRENT_TRADES = 10;
+export const MAX_CONCURRENT_TRADES = 50;
 
 import { TraderType, ActiveEntry, TradeDirection, SessionLeadTrade } from "../trading/config/types.js";
 import { PairConfigManager } from "../trading/config/PairConfig.js";
@@ -68,11 +68,43 @@ class GlobalTradeGate {
    * @param traderType 'ALGO' | 'DISC'
    */
   canTrade(
-    _profileId: number,
-    _pair: string,
-    _direction: "BUY" | "SELL",
-    _traderType: TraderType,
+    profileId: number,
+    pair: string,
+    direction: "BUY" | "SELL",
+    traderType: TraderType,
   ): { approved: boolean; reason?: string } {
+    const active = this.getProfileMap(profileId);
+
+    // Rule 1: Max Concurrent
+    if (active.size >= MAX_CONCURRENT_TRADES) {
+      return {
+        approved: false,
+        reason: `Global limit reached: ${MAX_CONCURRENT_TRADES} trades open.`,
+      };
+    }
+
+    // Rule 2: Discretionary priority
+    if (traderType === "ALGO") {
+      const evaluating = this.getEvalSet(profileId);
+      if (evaluating.has(pair)) {
+        return {
+          approved: false,
+          reason: `Disc Trader is evaluating ${pair}. ALGO blocked.`,
+        };
+      }
+
+      // Check for ALREADY active trades on this exact pair
+      // This prevents 11 identical configurations from launching 11 concurrent duplicated trades
+      for (const [id, entry] of active.entries()) {
+        if (entry.pair === pair) {
+          return {
+            approved: false,
+            reason: `Duplicate Engine Execution: Pair ${pair} already has an active trade (ID: ${id}, Bot: ${entry.traderType}). Concurrent overlapping executions are strictly blocked.`,
+          };
+        }
+      }
+    }
+
     return { approved: true };
   }
 
@@ -271,13 +303,13 @@ class GlobalTradeGate {
       if (direct) return direct;
     }
 
-    // 2. Pair-level active trade fallback (covers cross-day holds & restarts)
+    // 2. Pair-level active trade fallback (covers cross-day holds & restarts, session-gated)
     const pairFallback = this.sessionDirectionLocks.get(`${cleanBot}_${cleanPair}`);
-    if (pairFallback) return pairFallback;
+    if (pairFallback && (!session || pairFallback.session === session)) return pairFallback;
 
-    // 3. Scan all active locks starting with bot and pair
+    // 3. Scan all active locks starting with bot and pair (session-gated)
     for (const [key, lock] of this.sessionDirectionLocks.entries()) {
-      if (key.startsWith(`${cleanBot}_${cleanPair}`)) {
+      if (key.startsWith(`${cleanBot}_${cleanPair}`) && (!session || lock.session === session)) {
         return lock;
       }
     }

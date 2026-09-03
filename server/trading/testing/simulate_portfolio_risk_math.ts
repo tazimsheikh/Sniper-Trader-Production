@@ -15,9 +15,11 @@ import * as fs from "fs";
 import * as path from "path";
 import { runMathBacktest as runMageMathBacktest, clearMageBacktestCache } from "../backtester/MageMathBacktester.js";
 import { runSageMathBacktest, clearSageBacktestCache } from "../backtester/SageMathBacktester.js";
-import { PairConfigManager, MAGE_PAIR_CONFIG, SAGE_PAIR_CONFIG } from "../config/PairConfig.js";
+import { runSeerMathBacktest, clearSeerBacktestCache } from "../backtester/SeerMathBacktester.js";
+import { PairConfigManager, MAGE_PAIR_CONFIG, SAGE_PAIR_CONFIG, SEER_PAIR_CONFIG } from "../config/PairConfig.js";
 import { OPTIMIZER_CONFIG } from "../config/OptimizerPairConfig.js";
 import { getFixedEstDate } from "../engine/LiveOrchestrator.js";
+import parseSeerSetupToConfig from "../optimizer/grandmaster/utils/seer_params_parser.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Setup Parser Utility
@@ -122,52 +124,82 @@ function parseSetupToConfig(setupStr: string, symbol: string, isSage: boolean): 
 // ─────────────────────────────────────────────────────────────────────────────
 // Universal Trade Loader
 // ─────────────────────────────────────────────────────────────────────────────
-async function loadPortfolioTrades(startDate: string, endDate: string): Promise<any[]> {
+export async function loadPortfolioTrades(startDate: string, endDate: string): Promise<any[]> {
   const jsonPath = path.join(process.cwd(), "server", "trading", "optimizer", "grandmaster_holy_grail_portfolios.json");
   let allTrades: any[] = [];
 
   if (fs.existsSync(jsonPath)) {
     const portfolio: any[] = JSON.parse(fs.readFileSync(jsonPath, "utf-8"));
     for (const comp of portfolio) {
+      const cleanSym = comp.symbol.replace(/\.daily$/i, "");
       const isSage = comp.botType === "Sage";
-      const liveCfgs = isSage ? PairConfigManager.getSageConfigs(comp.symbol) : PairConfigManager.getMageConfigs(comp.symbol);
-      const parsed = parseSetupToConfig(comp.setup, comp.symbol, isSage);
-      let cfg: any;
-      if (liveCfgs && liveCfgs.length > 0) {
-        const match = liveCfgs.find((c: any) =>
-          c.orbStartHour === parsed.orbStartHour &&
-          c.orbStartMin === parsed.orbStartMin &&
-          c.orbMinutes === parsed.orbMinutes
-        );
-        cfg = match ? { ...match } : parsed;
-        if (!cfg.toxicHours && liveCfgs[0]?.toxicHours) cfg.toxicHours = liveCfgs[0].toxicHours;
-        if (!cfg.toxicDays && liveCfgs[0]?.toxicDays) cfg.toxicDays = liveCfgs[0].toxicDays;
+      const isSeer = comp.botType === "Seer";
+
+      if (isSeer) {
+        const liveCfgs = PairConfigManager.getSeerConfigs(cleanSym);
+        const parsed = parseSeerSetupToConfig(comp.setup, cleanSym);
+        let cfg: any = (liveCfgs && liveCfgs.length > 0) ? { ...liveCfgs[0] } : parsed;
+        if (!cfg.riskPct && comp.riskPct) cfg.riskPct = comp.riskPct;
+        try {
+          const res = await runSeerMathBacktest(cleanSym, startDate, endDate, false, {}, [cfg], false);
+          const records = res.records || (Array.isArray(res) ? res : []);
+          const valid = records.filter((r: any) => r.outcome !== "SKIPPED" && r.outcome !== "NO_TRADE");
+          valid.forEach((r: any) => {
+            r.symbol = cleanSym;
+            r.pair = cleanSym;
+            r.bot = "SEER";
+            r.setup = comp.setup || (cfg.signature || "default");
+            r.configKey = `${r.bot} | ${cleanSym} | ${r.setup}`;
+            r.riskMultiplier = comp.riskPct || cfg.riskPct || 1.0;
+          });
+          allTrades = allTrades.concat(valid);
+          clearSeerBacktestCache(cleanSym);
+        } catch (e: any) {
+          console.error(`[Loader] Error on ${cleanSym} (SEER):`, e.message);
+        }
       } else {
-        cfg = parsed;
-      }
-      try {
-        const res = isSage
-          ? await runSageMathBacktest(comp.symbol, startDate, endDate, false, {}, [cfg])
-          : await runMageMathBacktest(comp.symbol, startDate, endDate, false, undefined, undefined, null, [cfg]);
-        const records = res.records || (Array.isArray(res) ? res : []);
-        const valid = records.filter((r: any) => r.outcome !== "SKIPPED" && r.outcome !== "NO_TRADE");
-        valid.forEach((r: any) => {
-          r.symbol = comp.symbol;
-          r.pair = comp.symbol;
-          r.bot = comp.botType;
-          r.riskMultiplier = comp.riskPct || 1.0;
-        });
-        allTrades = allTrades.concat(valid);
-        clearMageBacktestCache(comp.symbol);
-        clearSageBacktestCache(comp.symbol);
-      } catch (e: any) {
-        console.error(`[Loader] Error on ${comp.symbol}:`, e.message);
+        const liveCfgs = isSage ? PairConfigManager.getSageConfigs(cleanSym) : PairConfigManager.getMageConfigs(cleanSym);
+        const parsed = parseSetupToConfig(comp.setup, cleanSym, isSage);
+        let cfg: any;
+        if (liveCfgs && liveCfgs.length > 0) {
+          const match = liveCfgs.find((c: any) =>
+            c.orbStartHour === parsed.orbStartHour &&
+            c.orbStartMin === parsed.orbStartMin &&
+            c.orbMinutes === parsed.orbMinutes
+          );
+          cfg = match ? { ...match } : parsed;
+          if (!cfg.toxicHours && liveCfgs[0]?.toxicHours) cfg.toxicHours = liveCfgs[0].toxicHours;
+          if (!cfg.toxicDays && liveCfgs[0]?.toxicDays) cfg.toxicDays = liveCfgs[0].toxicDays;
+        } else {
+          cfg = parsed;
+        }
+        try {
+          const res = isSage
+            ? await runSageMathBacktest(cleanSym, startDate, endDate, false, {}, [cfg])
+            : await runMageMathBacktest(cleanSym, startDate, endDate, false, undefined, undefined, null, [cfg]);
+          const records = res.records || (Array.isArray(res) ? res : []);
+          const valid = records.filter((r: any) => r.outcome !== "SKIPPED" && r.outcome !== "NO_TRADE");
+          valid.forEach((r: any) => {
+            r.symbol = cleanSym;
+            r.pair = cleanSym;
+            r.bot = comp.botType.toUpperCase();
+            r.setup = comp.setup || (cfg.signature || "default");
+            r.configKey = `${r.bot} | ${cleanSym} | ${r.setup}`;
+            r.riskMultiplier = comp.riskPct || 1.0;
+          });
+          allTrades = allTrades.concat(valid);
+          if (isSage) clearSageBacktestCache(cleanSym);
+          else clearMageBacktestCache(cleanSym);
+        } catch (e: any) {
+          console.error(`[Loader] Error on ${cleanSym} (${comp.botType}):`, e.message);
+        }
       }
     }
   } else {
     const botPairs = [
       { bot: "MAGE", pairs: Object.keys(MAGE_PAIR_CONFIG) },
       { bot: "SAGE", pairs: Object.keys(SAGE_PAIR_CONFIG || {}) },
+      { bot: "SEER", pairs: Object.keys(SEER_PAIR_CONFIG || {}) },
     ];
     for (const group of botPairs) {
       const { bot, pairs } = group;
@@ -185,6 +217,14 @@ async function loadPortfolioTrades(startDate: string, endDate: string): Promise<
             const configs = PairConfigManager.getSageConfigs(pair);
             for (const c of configs) {
               const res = await runSageMathBacktest(pair, startDate, endDate, false, {}, [c], false);
+              const valid = res.records.filter((r: any) => r.outcome !== "SKIPPED" && r.outcome !== "NO_TRADE");
+              valid.forEach((r: any) => { r.bot = bot; r.pair = pair; r.symbol = pair; r.riskMultiplier = c.riskPct || 1.0; });
+              allTrades = allTrades.concat(valid);
+            }
+          } else if (bot === "SEER") {
+            const configs = PairConfigManager.getSeerConfigs(pair);
+            for (const c of configs) {
+              const res = await runSeerMathBacktest(pair, startDate, endDate, false, {}, [c], false);
               const valid = res.records.filter((r: any) => r.outcome !== "SKIPPED" && r.outcome !== "NO_TRADE");
               valid.forEach((r: any) => { r.bot = bot; r.pair = pair; r.symbol = pair; r.riskMultiplier = c.riskPct || 1.0; });
               allTrades = allTrades.concat(valid);
@@ -509,30 +549,75 @@ async function runPerPairMonthlyMatrixModule(trades: any[]) {
   console.log(` ${currentYear} YR | ${finalYrSummary} | ${finalYrTotStr.padStart(8)}`);
   console.log(`====================================================================================================`);
 
-  const grandPairTotals: Record<string, { r: number; trades: number; wins: number }> = {};
-  for (const s of symbols) grandPairTotals[s] = { r: 0, trades: 0, wins: 0 };
-  for (const s of symbols) {
-    for (const m of months) {
-      grandPairTotals[s].r += matrix[s][m].r;
-      grandPairTotals[s].trades += matrix[s][m].trades;
-      grandPairTotals[s].wins += matrix[s][m].wins;
+  // ─────────────────────────────────────────────────────────
+  // Per-Config Performance Audit (Net R & Max Drawdown in R)
+  // ─────────────────────────────────────────────────────────
+  console.log(`\n🏆 ALL-TIME PER-CONFIG PERFORMANCE & DRAWDOWN AUDIT:`);
+  
+  const configGroups = new Map<string, {
+    bot: string;
+    symbol: string;
+    setup: string;
+    trades: any[];
+  }>();
+
+  for (const t of trades) {
+    const key = t.configKey || `${t.bot || "BOT"} | ${t.symbol || t.pair} | ${t.setup || "default"}`;
+    if (!configGroups.has(key)) {
+      configGroups.set(key, {
+        bot: t.bot || "BOT",
+        symbol: t.symbol || t.pair,
+        setup: t.setup || "default",
+        trades: [],
+      });
     }
+    configGroups.get(key)!.trades.push(t);
   }
 
-  console.log(`\n🏆 ALL-TIME PAIR TOTALS (3-Year Aggregated):`);
-  const pairSummaryTable = symbols.map(s => {
-    const d = grandPairTotals[s];
-    const winPct = d.trades > 0 ? ((d.wins / d.trades) * 100).toFixed(1) + "%" : "0.0%";
-    return {
-      Symbol: s,
-      Trades: d.trades,
-      Wins: d.wins,
+  const configSummaryTable: any[] = [];
+
+  for (const [key, grp] of configGroups.entries()) {
+    // Chronological sort for accurate drawdown calculation
+    grp.trades.sort((a, b) => {
+      const timeA = new Date(a.exitTime || a.entryTime || a.date || a.time || a.openTime).getTime();
+      const timeB = new Date(b.exitTime || b.entryTime || b.date || b.time || b.openTime).getTime();
+      return timeA - timeB;
+    });
+
+    let totalR = 0;
+    let wins = 0;
+    let peakR = 0;
+    let maxDd = 0;
+
+    for (const t of grp.trades) {
+      const r = t.rMultiple || 0;
+      totalR += r;
+      if (r > 0.0001) wins++;
+
+      if (totalR > peakR) peakR = totalR;
+      const dd = peakR - totalR;
+      if (dd > maxDd) maxDd = dd;
+    }
+
+    const tradeCount = grp.trades.length;
+    const winPct = tradeCount > 0 ? ((wins / tradeCount) * 100).toFixed(1) + "%" : "0.0%";
+    const avgR = tradeCount > 0 ? (totalR / tradeCount).toFixed(2) + " R" : "0.00 R";
+
+    configSummaryTable.push({
+      Bot: grp.bot,
+      Symbol: grp.symbol,
+      Setup: grp.setup,
+      Trades: tradeCount,
+      Wins: wins,
       "Win %": winPct,
-      "Total Net R": (d.r >= 0 ? "+" : "") + d.r.toFixed(2) + " R",
-      "Avg R / Trade": d.trades > 0 ? (d.r / d.trades).toFixed(2) + " R" : "0.00 R",
-    };
-  });
-  console.table(pairSummaryTable);
+      "Net R": (totalR >= 0 ? "+" : "") + totalR.toFixed(2) + " R",
+      "Max DD (R)": maxDd.toFixed(2) + " R",
+      "Avg R": avgR,
+    });
+  }
+
+  configSummaryTable.sort((a, b) => parseFloat(b["Net R"]) - parseFloat(a["Net R"]));
+  console.table(configSummaryTable);
   console.log("====================================================================================================\n");
 }
 

@@ -87,12 +87,7 @@ async function main() {
         const dStr = getFixedEstDate(new Date(t.openTime)).toISOString().split("T")[0];
         if (dStr < startDate || dStr > endDate) return false;
         const cid = t.clientId?.toUpperCase() || "";
-        const isBot = t.botId?.toUpperCase() === bot || 
-                      cid.startsWith(`${bot}_`) || 
-                      cid.includes(`_${bot}_`) ||
-                      (bot === "SAGE" && (cid.startsWith("S_") || cid.includes("_S_") || cid.includes("_SAGE_"))) ||
-                      (bot === "MAGE" && (cid.startsWith("M_") || cid.includes("_M_") || cid.includes("_MAGE_"))) ||
-                      (bot === "SEER" && (cid.startsWith("SRC_") || cid.includes("_SRC_") || cid.startsWith("SEER_") || cid.includes("_SEER_")));
+        const isBot = t.botId?.toUpperCase() === bot;
         return isBot;
     });
 
@@ -133,8 +128,18 @@ async function main() {
 
     let microMatch = true;
     if (countMatch && t1Count > 0) {
-        const sortedT1 = [...t1Taken].sort((a,b) => (a.entryTimeMs || a.timestamp || a.openTime || 0) - (b.entryTimeMs || b.timestamp || b.openTime || 0));
-        const sortedT2 = [...t2Taken].sort((a,b) => (a.openTime || a.timestamp || 0) - (b.openTime || b.timestamp || 0));
+        const sortedT1 = [...t1Taken].sort((a,b) => {
+          const tDiff = (a.entryTimeMs || a.timestamp || a.openTime || 0) - (b.entryTimeMs || b.timestamp || b.openTime || 0);
+          if (tDiff !== 0) return tDiff;
+          // Tiebreaker: sort by SL to ensure deterministic pairing of simultaneous config fires
+          return (a.stopLoss || a.slPrice || 0) - (b.stopLoss || b.slPrice || 0);
+        });
+        const sortedT2 = [...t2Taken].sort((a,b) => {
+          const tDiff = (a.openTime || a.timestamp || 0) - (b.openTime || b.timestamp || 0);
+          if (tDiff !== 0) return tDiff;
+          // Tiebreaker: sort by SL
+          return (a.slPrice || a.originalSl || 0) - (b.slPrice || b.originalSl || 0);
+        });
         
         for (let i = 0; i < sortedT1.length; i++) {
             const t1 = sortedT1[i];
@@ -158,9 +163,11 @@ async function main() {
             
             const exit1 = Number(t1.exitPrice || 0);
             const exit2 = Number(t2.closePrice || 0);
-
             const eDiff = Math.abs(e1 - e2);
-            const slDiff = Math.abs(sl1 - sl2);
+            const slDiff = Math.min(
+                Math.abs(sl1 - Number(t2.originalSl || t2.slPrice)),
+                Math.abs(sl1 - Number(t2.slPrice || t2.originalSl))
+            );
             const tpDiff = Math.abs(tp1 - tp2);
 
             // Realistic tolerance based on price magnitude (e.g. 0.005 for forex, higher for indices/gold)

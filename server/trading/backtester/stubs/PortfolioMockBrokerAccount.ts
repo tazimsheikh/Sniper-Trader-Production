@@ -130,7 +130,7 @@ export class PortfolioMockBrokerAccount {
     
     const parts = clientId.split('_');
     for (const part of parts) {
-      if (part === "P0" || part === "Psimulator" || (part.startsWith("P") && part.length <= 4) || part === "S" || part === "M" || part === "SRC") continue;
+      if (part === "P0" || part === "Psimulator" || (part.startsWith("P") && part.length <= 4) || part === "S" || part === "M" || part === "SRC" || part === "SAGE" || part === "MAGE" || part === "SEER") continue;
       for (const key of Object.keys(orchestratorState.sageStates)) {
         if (getShortHash(key) === part || key.includes(part)) {
           return key;
@@ -264,6 +264,7 @@ export class PortfolioMockBrokerAccount {
         metaOrderId: id,
         clientId: opts?.clientId || botId,
         botId,
+        magic: opts?.magic,
         symbol,
         direction: 'BUY',
         entryPrice: price,
@@ -339,6 +340,7 @@ export class PortfolioMockBrokerAccount {
           metaOrderId: id,
           clientId: opts?.clientId || botId,
           botId,
+          magic: opts?.magic,
           symbol,
           direction: 'SELL',
           entryPrice: price,
@@ -567,6 +569,7 @@ export class PortfolioMockBrokerAccount {
             metaOrderId: orderId,
             clientId: sageSig || null,
             botId: order.botId || this.deduceBotId(order),
+            magic: order.magic,
             direction: direction,
             entryPrice: filledPrice,
             slPrice: order.sl,

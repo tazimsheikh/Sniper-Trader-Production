@@ -153,6 +153,21 @@ export class TickFeed {
       }
     }
 
+    // Ensure streaming connection is synchronized so terminalState has symbol specifications
+    if (conn && !conn.synchronized) {
+      try {
+        logger.info(`[TickFeed] Streaming connection synchronizing for profile ${this.profileId}...`);
+        const waitPromise = conn.waitSynchronized();
+        waitPromise.catch(() => {});
+        await Promise.race([
+          waitPromise,
+          new Promise((_, r) => setTimeout(() => r(new Error("waitSynchronized timeout (20s)")), 20000)),
+        ]);
+      } catch (syncErr: any) {
+        logger.warn(`[TickFeed] Initial sync wait ended: ${syncErr.message}. Continuing with symbol resolution.`);
+      }
+    }
+
     // ── Use broker_symbol_map from the DB ───────────────────────────
     this.baseToBrokerMap.clear();
     this.brokerToBaseMap.clear();
@@ -179,7 +194,7 @@ export class TickFeed {
       }
     }
 
-    const SUFFIX_CANDIDATES = ['', '.m', '.a', '.ecn', '.pro', '.raw', '.p', 'c', 'x', '_m', '.cash', '.Daily', '.std', '.s', '.stp', '+', '#', '_'];
+    const SUFFIX_CANDIDATES = ['', '.m', '.a', '.ecn', '.pro', '.raw', '.p', 'c', 'x', '_m', '.cash', '.Daily', '.std', '.s', '.stp', '+', '#', '_', '.r', '.i', '-', '.sb', 'm', 'pro', 'raw'];
     const INDEX_ALIASES: Record<string, string[]> = {
       GER40: ["GER40", "DAX40", "DE40", "GER30", "DE30", "GDAXI", "DAX", "DAX30", ".DE40", ".GER40"],
       US30: ["US30", "DJ30", "WS30", "DOW30", "DOWJONES", ".US30"],
@@ -207,21 +222,100 @@ export class TickFeed {
     }
 
     let mapUpdated = false;
-    for (const [base, brokerSym] of this.baseToBrokerMap.entries()) {
-      let subscribed = false;
+    let cachedBrokerSymbols: string[] = [];
+
+    const getBrokerSymbolsList = async (): Promise<string[]> => {
+      if (cachedBrokerSymbols.length > 0) return cachedBrokerSymbols;
+      
+      // 1. Check local terminalState in-memory specifications (0 CPU credits, instant)
       try {
-        await conn.subscribeToMarketData(brokerSym);
-        logger.info(`[TickFeed] Subscribed to market data for ${brokerSym} (base: ${base})`);
-        subscribed = true;
-      } catch (e: any) {
-        logger.warn(`[TickFeed] Primary subscribeToMarketData failed for ${brokerSym} (${base}): ${e.message}. Attempting candidate fallbacks...`);
+        const specs = conn?.terminalState?.specifications;
+        if (Array.isArray(specs) && specs.length > 0) {
+          cachedBrokerSymbols = specs.map((s: any) => s.symbol).filter(Boolean);
+          logger.info(`[TickFeed] ✅ Loaded ${cachedBrokerSymbols.length} broker symbols from local terminalState memory.`);
+          return cachedBrokerSymbols;
+        }
+      } catch (err: any) {
+        // terminalState not yet filled
       }
 
-      if (!subscribed) {
+      // 2. Query broker getSymbols() once as fallback
+      try {
+        let symbolsRaw: any[] = [];
+        if (typeof (conn as any).getSymbols === 'function') {
+          symbolsRaw = await (conn as any).getSymbols();
+        } else {
+          const rpcConn = await getSharedConnection(this.token, this.accountId, true);
+          if (rpcConn && typeof rpcConn.getSymbols === 'function') {
+            symbolsRaw = await rpcConn.getSymbols();
+          }
+        }
+        cachedBrokerSymbols = (symbolsRaw || []).map((s: any) => typeof s === 'string' ? s : s.symbol).filter(Boolean);
+        if (cachedBrokerSymbols.length > 0) {
+          logger.info(`[TickFeed] ✅ Loaded ${cachedBrokerSymbols.length} broker symbols via getSymbols().`);
+        }
+        return cachedBrokerSymbols;
+      } catch (err: any) {
+        logger.warn(`[TickFeed] Dynamic getSymbols discovery skipped: ${err.message}`);
+        return [];
+      }
+    };
+
+    const brokerSymbols = await getBrokerSymbolsList();
+    const brokerSymbolsSet = new Set<string>(brokerSymbols);
+
+    for (const [base, brokerSym] of this.baseToBrokerMap.entries()) {
+      let subscribed = false;
+      let targetSym = brokerSym;
+
+      // If we have the broker symbol list and brokerSym doesn't exist in it, resolve match first in-memory
+      if (brokerSymbolsSet.size > 0 && !brokerSymbolsSet.has(brokerSym)) {
         const cleanBase = PairConfigManager.getBaseSymbol(base);
         const fallbacks = getFallbackCandidates(base);
+        const inMemoryMatch = fallbacks.find((c) => brokerSymbolsSet.has(c));
+        if (inMemoryMatch) {
+          targetSym = inMemoryMatch;
+        } else {
+          const patternMap: Record<string, RegExp> = {
+            GER40: /^(GER|DAX|DE|GDAXI)[34]?0?/i,
+            US30: /^(US|DJ|WS|DOW)[34]?0?/i,
+            NAS100: /^(NAS|US100|USTEC|NDX|NQ)/i,
+            SPX500: /^(US500|SP500|SPX|S&P)/i,
+            JPN225: /^(JPN|JP|NIKKEI)225/i,
+            UK100: /^(UK|FTSE)100/i,
+            XAUUSD: /^(XAUUSD|GOLD)/i,
+            XTIUSD: /^(XTIUSD|USOIL|WTI|OIL)/i,
+            BTCUSD: /^(BTCUSD|BITCOIN)/i,
+            ETHUSD: /^(ETHUSD|ETHEREUM)/i,
+          };
+          const pat = patternMap[cleanBase] || patternMap[base] || 
+            (cleanBase.length === 6 ? new RegExp(`^${cleanBase}[^a-zA-Z0-9]?.*$`, 'i') : null);
+          if (pat) {
+            const match = brokerSymbols.find((s: string) => pat.test(s));
+            if (match) targetSym = match;
+          }
+        }
+      }
+
+      try {
+        await conn.subscribeToMarketData(targetSym);
+        logger.info(`[TickFeed] Subscribed to market data for ${targetSym} (base: ${base})`);
+        subscribed = true;
+        if (targetSym !== brokerSym) {
+          this.baseToBrokerMap.set(base, targetSym);
+          this.brokerToBaseMap.set(targetSym, base);
+          customMap[base] = targetSym;
+          mapUpdated = true;
+        }
+      } catch (e: any) {
+        logger.warn(`[TickFeed] Primary subscribeToMarketData failed for ${targetSym} (${base}): ${e.message}`);
+      }
+
+      // If initial subscription failed and brokerSymbolsSet was empty, try top 5 fallbacks
+      if (!subscribed && brokerSymbolsSet.size === 0) {
+        const fallbacks = getFallbackCandidates(base).slice(0, 6);
         for (const candidate of fallbacks) {
-          if (candidate === brokerSym) continue;
+          if (candidate === targetSym) continue;
           try {
             await conn.subscribeToMarketData(candidate);
             logger.info(`[TickFeed] ✅ Successfully auto-recovered symbol mapping for ${base} -> ${candidate}`);
@@ -231,65 +325,14 @@ export class TickFeed {
             mapUpdated = true;
             subscribed = true;
             break;
-          } catch (e: any) {
+          } catch {
             // Try next candidate
           }
         }
+      }
 
-        // If static fallbacks fail, perform dynamic live symbol discovery via RPC getSymbols()
-        if (!subscribed) {
-          try {
-            logger.info(`[TickFeed] Querying broker getSymbols() for dynamic pattern discovery on ${base} (clean: ${cleanBase})...`);
-            let symbolsRaw: any[] = [];
-            if (typeof (conn as any).getSymbols === 'function') {
-              symbolsRaw = await (conn as any).getSymbols();
-            } else {
-              const rpcConn = await getSharedConnection(this.token, this.accountId, true);
-              if (rpcConn && typeof rpcConn.getSymbols === 'function') {
-                symbolsRaw = await rpcConn.getSymbols();
-              }
-            }
-            const symbols = (symbolsRaw || []).map((s: any) => typeof s === 'string' ? s : s.symbol);
-            const patternMap: Record<string, RegExp> = {
-              GER40: /^(GER|DAX|DE|GDAXI)[34]?0?/i,
-              US30: /^(US|DJ|WS|DOW)[34]?0?/i,
-              NAS100: /^(NAS|US100|USTEC|NDX|NQ)/i,
-              SPX500: /^(US500|SP500|SPX|S&P)/i,
-              JPN225: /^(JPN|JP|NIKKEI)225/i,
-              UK100: /^(UK|FTSE)100/i,
-              XAUUSD: /^(XAUUSD|GOLD)/i,
-              XTIUSD: /^(XTIUSD|USOIL|WTI|OIL)/i,
-              BTCUSD: /^(BTCUSD|BITCOIN)/i,
-              ETHUSD: /^(ETHUSD|ETHEREUM)/i,
-            };
-            const pat = patternMap[cleanBase] || patternMap[base] || 
-              (cleanBase.length === 6 ? new RegExp(`^${cleanBase}[^a-zA-Z0-9]?.*$`, 'i') : null);
-            if (pat) {
-              const matches = symbols.filter((s: string) => pat.test(s));
-              for (const match of matches) {
-                if (match === brokerSym) continue;
-                try {
-                  await conn.subscribeToMarketData(match);
-                  logger.info(`[TickFeed] ✅ Dynamically discovered & subscribed symbol for ${base} -> ${match}`);
-                  this.baseToBrokerMap.set(base, match);
-                  this.brokerToBaseMap.set(match, base);
-                  customMap[base] = match;
-                  mapUpdated = true;
-                  subscribed = true;
-                  break;
-                } catch {
-                  // Try next match
-                }
-              }
-            }
-          } catch (discErr: any) {
-            logger.warn(`[TickFeed] Dynamic getSymbols discovery failed for ${base}: ${discErr.message}`);
-          }
-        }
-
-        if (!subscribed) {
-          logger.error(`[TickFeed] ❌ All candidate subscriptions failed for ${base} (attempted ${brokerSym}, ${fallbacks.slice(0, 10).join(', ')}...)`);
-        }
+      if (!subscribed) {
+        logger.error(`[TickFeed] ❌ Subscription failed for ${base} (attempted ${targetSym})`);
       }
     }
 

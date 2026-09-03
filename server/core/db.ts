@@ -44,7 +44,7 @@ class DbStatement {
       const startMs = Date.now();
       const res = await fn();
       const elapsed = Date.now() - startMs;
-      if (elapsed > 500) {
+      if (elapsed > 3500) {
         const cleanSql = this.sql.length > 100 ? `${this.sql.substring(0, 100)}...` : this.sql;
         logger.warn(`[SLOW QUERY] ${elapsed}ms for query: ${cleanSql}`);
       }

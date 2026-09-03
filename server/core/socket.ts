@@ -3,10 +3,60 @@ import { Server as HttpServer } from "http";
 import jwt from "jsonwebtoken";
 import { decrypt, isEncrypted } from "./crypto.js";
 import { getSharedConnection } from "../trading/broker/metaApiHandler.js";
+import { processAndCacheBrokerMetrics, getCachedBrokerMetrics } from "../utils/BrokerMetricsEngine.js";
 
 let io: SocketIOServer | null = null;
 const algoBalanceIntervals = new Map<number, NodeJS.Timeout>();
 const discBalanceIntervals = new Map<number, NodeJS.Timeout>();
+
+export async function pollBrokerMetricsForProfile(profileId: number, tokenToUse: string, metaapiAccountId: string) {
+  try {
+    const conn = await getSharedConnection(tokenToUse, metaapiAccountId);
+    if (conn) {
+      const updated = await conn.getAccountInformation();
+      if (updated) {
+        const metrics = await processAndCacheBrokerMetrics(profileId, updated);
+        const { LiveOrchestrator } = await import("../trading/index.js");
+        const currentOrch = LiveOrchestrator.getInstance(profileId);
+        if (currentOrch) {
+          currentOrch.cachedBrokerMetrics = metrics;
+          currentOrch.cachedEquity = updated.equity;
+        }
+
+        io?.to(`profile_${profileId}`).emit(
+          "discretionary_trader:broker_metrics_update",
+          metrics
+        );
+        io?.to(`profile_${profileId}`).emit(
+          "discretionary_trader:balance_update",
+          {
+            balance: updated.balance,
+            equity: updated.equity,
+            currency: updated.currency,
+          }
+        );
+      }
+    }
+  } catch (e) {
+    // Ignore balance fetch errors
+  }
+}
+
+export function startProfileBalanceInterval(profileId: number, tokenToUse: string, metaapiAccountId: string) {
+  if (discBalanceIntervals.has(profileId)) return;
+  pollBrokerMetricsForProfile(profileId, tokenToUse, metaapiAccountId).catch(() => {});
+  const interval = setInterval(async () => {
+    const { LiveOrchestrator } = await import("../trading/index.js");
+    const currentOrch = LiveOrchestrator.getInstance(profileId);
+    if (!currentOrch || !currentOrch.isRunning()) {
+      clearInterval(interval);
+      discBalanceIntervals.delete(profileId);
+      return;
+    }
+    await pollBrokerMetricsForProfile(profileId, tokenToUse, metaapiAccountId);
+  }, 5000);
+  discBalanceIntervals.set(profileId, interval);
+}
 
 export function initSocket(server: HttpServer) {
   io = new SocketIOServer(server, {
@@ -285,38 +335,7 @@ export function initSocket(server: HttpServer) {
                 if (feed) feed.stop();
               });
 
-              const interval = setInterval(async () => {
-                const currentOrch = LiveOrchestrator.getInstance(
-                  data.profileId,
-                );
-                if (!currentOrch || !currentOrch.isRunning()) {
-                  clearInterval(interval);
-                  discBalanceIntervals.delete(data.profileId);
-                  return;
-                }
-                try {
-                  const conn = await getSharedConnection(
-                    tokenToUse,
-                    profile.metaapi_account_id,
-                  );
-                  if (conn) {
-                    const updated = await conn.getAccountInformation();
-                    if (updated) {
-                      io?.to(`profile_${data.profileId}`).emit(
-                        "discretionary_trader:balance_update",
-                        {
-                          balance: updated.balance,
-                          equity: updated.equity,
-                          currency: updated.currency,
-                        },
-                      );
-                    }
-                  }
-                } catch (e) {
-                  // Ignore balance fetch errors
-                }
-              }, 5000);
-              discBalanceIntervals.set(data.profileId, interval);
+              startProfileBalanceInterval(data.profileId, tokenToUse, profile.metaapi_account_id);
 
               // ✅ Emit started so frontend re-syncs with full DB-loaded state
               io?.to(`profile_${data.profileId}`).emit(
@@ -398,7 +417,12 @@ export function initSocket(server: HttpServer) {
         const orch = LiveOrchestrator.getInstance(data.profileId);
         if (orch) {
           orch.broadcastStatus(data.botId);
-        } else {
+        }
+        const cachedMetrics = getCachedBrokerMetrics(data.profileId);
+        if (cachedMetrics) {
+          socket.emit("discretionary_trader:broker_metrics_update", cachedMetrics);
+        }
+        if (!orch) {
           // Bot is offline — still send persisted bot_risks so UI slider is correct
           const profileRow = (await getCachedBotRisks(data.profileId)) as any;
           const botRisks = (() => {
@@ -754,6 +778,8 @@ export async function resumePersistedBots(): Promise<void> {
             feed.stop();
           });
 
+          startProfileBalanceInterval(Number(profile.id), tokenToUse, profile.metaapi_account_id);
+
           // ─── FLIP automation_active = 1 ────────────────────────────────────
           // Reflects the true running state in the DB/UI. This was previously
           // stale-false after restarts because the resume path never wrote it.
@@ -777,7 +803,8 @@ export function getIO(): SocketIOServer | null {
   if (!io) {
     if (
       process.env.SIMULATION_MODE === "true" ||
-      process.env.NODE_ENV === "test"
+      process.env.NODE_ENV === "test" ||
+      (global as any).isSimulator === true
     )
       return null;
     throw new Error(

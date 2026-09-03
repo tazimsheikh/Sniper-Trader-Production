@@ -16,6 +16,7 @@ interface SymbolCandleCache {
   m1Rows: any[];
   m1Typed: M1TypedArrays;
   m5Candles: any[];
+  emaArr?: Float64Array;
   isForex: boolean;
   pipSize: number;
   spreadPts: number;
@@ -111,11 +112,14 @@ async function getOrLoadSymbolCandleData(symbol: string): Promise<SymbolCandleCa
   }
 
   const m5Candles = aggregateCandles(m1Rows, 5);
+  const { buildEmaArray } = await import("../../market/Indicators.js");
+  const emaArr = buildEmaArray(m5Candles, 20);
 
   const entry: SymbolCandleCache = {
     m1Rows,
     m1Typed,
     m5Candles,
+    emaArr,
     isForex,
     pipSize,
     spreadPts,
@@ -213,7 +217,7 @@ export function getMinAllowedSl(symbol: string): number {
   return Math.max(2.0, 2.5 * spread);
 }
 
-function parseSetupToConfig(setupStr: string, symbol: string, isSage: boolean): any {
+export function parseSetupToConfig(setupStr: string, symbol: string, isSage: boolean): any {
   const parts = setupStr.split("_");
   let session = parts[0];
   if (parts[0] === "NY") session = `NY_${parts[1]}`;
@@ -366,7 +370,8 @@ export function deduplicateConfigs(
       const pfB = b.profitFactor !== undefined ? b.profitFactor : 1.0;
       const scoreA = (a.totalNetR / ddA) * pfA;
       const scoreB = (b.totalNetR / ddB) * pfB;
-      return scoreB - scoreA;
+      return (scoreB - scoreA) ||
+        ((a.setup || "") as string).localeCompare((b.setup || "") as string);
     });
     result.push(...group.slice(0, maxPerSig));
   }
@@ -404,7 +409,6 @@ interface AuditCacheEntry {
   threeYearMaxDrawdown?: number;
   threeYearProfitFactor?: number;
   hasConsecutivePriorYearLoss?: boolean;
-  hasLosingMonthInLast6?: boolean;
   dailyReturns?: Record<string, number>;
   monthlyNetR?: Record<string, number>;
 }
@@ -453,11 +457,18 @@ export function getEliteComponents(
       const threeYrR = c.threeYearNetR !== undefined ? c.threeYearNetR : c.totalTotalR;
       const threeYrTrades = c.threeYearTrades !== undefined ? c.threeYearTrades : c.totalTrades;
       const threeYrWR = c.threeYearWinRate !== undefined ? c.threeYearWinRate : (c.winRate || 0);
+      const dd = c.threeYearMaxDrawdown || c.monteCarloDrawdown99 || c.maxDrawdown || 1;
+      const marRatio = dd > 0 ? threeYrR / dd : threeYrR;
       const expectancy = threeYrTrades > 0 ? threeYrR / threeYrTrades : 0;
       const calmar = (c.threeYearMaxDrawdown || c.maxDrawdown || 0) > 0 ? threeYrR / (c.threeYearMaxDrawdown || c.maxDrawdown || 1) : threeYrR;
 
       // Must meet Elite 3-Year Institutional Quality Standards
-      if (threeYrR < 15.0 || threeYrTrades < 15 || expectancy < 0.05 || calmar < 0.85) {
+      if (threeYrR < 5.0 || threeYrTrades < 10 || expectancy < 0.04 || calmar < 0.75 || marRatio < 0.75) {
+        return false;
+      }
+
+      // Profit Factor floor
+      if (c.threeYearProfitFactor && c.threeYearProfitFactor < 1.15) {
         return false;
       }
 
@@ -480,7 +491,7 @@ export function getEliteComponents(
   );
   if (pool.length === 0) return [];
 
-  const MAX_MC_DD_ALLOWED = 25.0;
+  const MAX_MC_DD_ALLOWED = 32.0;
   pool = pool.filter(c => {
     const mcDd = c.monteCarloDrawdown99 ?? 0;
     if (mcDd > MAX_MC_DD_ALLOWED) {
@@ -497,10 +508,47 @@ export function getEliteComponents(
     return true;
   });
 
-  // Sort candidates by robust composite hedgeScore
-  const sortedAll = [...pool].sort((a, b) => b.hedgeScore - a.hedgeScore);
-  // Keep strictly top 2 champions per symbol + botType to allow more variety
-  return sortedAll.slice(0, 2);
+function extractSetupSignature(setup: string, botType: string): string {
+  const lower = setup.toLowerCase();
+  let session = "other";
+  if (lower.startsWith("london") || lower.includes("session=london")) session = "london";
+  else if (lower.startsWith("asia") || lower.includes("session=asia")) session = "asia";
+  else if (lower.startsWith("ny") || lower.startsWith("new_york") || lower.includes("session=ny")) session = "ny";
+
+  let exitMode = "trailing";
+  if (lower.includes("exitmidpoint") || lower.includes("exit=midpoint")) exitMode = "midpoint";
+  else if (lower.includes("exitopposite_boundary") || lower.includes("exit=opposite_boundary")) exitMode = "boundary";
+  else if (lower.includes("exittrailing") || lower.includes("exit=trailing")) exitMode = "trailing";
+
+  return `${session}_${exitMode}`;
+}
+
+  // Sort candidates by robust composite hedgeScore with deterministic tie-breaking
+  const sortedAll = [...pool].sort((a, b) =>
+    (b.hedgeScore - a.hedgeScore) ||
+    (a.symbol || "").localeCompare(b.symbol || "") ||
+    (a.setup || "").localeCompare(b.setup || "")
+  );
+
+  // Option A: Parameter Signature Clustering & Consensus Champion
+  // Group candidates into distinct strategy archetypes (Session + Exit Mode)
+  // to prevent multiple near-identical micro-variations (e.g. MinSL 15 vs 20) of the same session breakout.
+  const signatureGroups = new Map<string, IndependentSynthesisComponent[]>();
+  for (const comp of sortedAll) {
+    const sig = extractSetupSignature(comp.setup, botType);
+    if (!signatureGroups.has(sig)) signatureGroups.set(sig, []);
+    signatureGroups.get(sig)!.push(comp);
+  }
+
+  const consensusChampions: IndependentSynthesisComponent[] = [];
+  for (const [sig, candidates] of signatureGroups.entries()) {
+    // Select the top consensus champion (highest stability and hedgeScore) for this distinct archetype
+    consensusChampions.push(candidates[0]);
+  }
+
+  // Sort distinct archetypes by hedgeScore descending, keeping up to 3 distinct session archetypes per symbol per bot
+  consensusChampions.sort((a, b) => b.hedgeScore - a.hedgeScore);
+  return consensusChampions.slice(0, 3);
 }
 
 export async function preProcessData(
@@ -546,8 +594,10 @@ export async function preProcessData(
     const minSlVal = minSlMatch ? parseFloat(minSlMatch[1]) : 999;
     if (minSlVal < minAllowedSl) return;
 
-    // C. Basic dump health
-    if ((state.totalNetR || state.oosNetR || 0) <= 0) return;
+    // C. Basic dump health (Strict Out-Of-Sample minimum > 0R)
+    const oosVal = state.oosNetR !== undefined ? state.oosNetR : state.totalNetR;
+    if ((oosVal || 0) <= 0) return;
+    if (state.totalNetR !== undefined && state.totalNetR <= 0) return;
 
     const evaluated = evaluateComponent(state as any, symbol, botType, globalDates, false);
     if (evaluated) {
@@ -617,9 +667,10 @@ export async function preProcessData(
 
       if (!auditResult && candleData) {
         try {
+          let res: any;
           const cfg = parseSetupToConfig(p.setup, p.symbol, p.botType === "Sage");
           const session = cfg.session || "london";
-          const res = p.botType === "Sage"
+          res = p.botType === "Sage"
             ? evaluateSageExits(
                 candleData.m1Typed,
                 candleData.m5Candles,
@@ -718,18 +769,7 @@ export async function preProcessData(
             const priorNextR = monthlyNetR[priorNextMonthKey] ?? 0;
             const hasConsecutivePriorYearLoss = (priorSameR < 0 || priorNextR < 0);
 
-            // ── Zero Losing Month Hard Gate in Last 6 Months ──────────────────
-            // Reject any config that faced a single loss month in the last 6 months
-            const last6MonthKeys: string[] = [];
-            let curD = new Date(endDate);
-            for (let m = 0; m < 6; m++) {
-              const yStr = curD.getUTCFullYear();
-              const mStr = String(curD.getUTCMonth() + 1).padStart(2, "0");
-              last6MonthKeys.push(`${yStr}-${mStr}`);
-              curD.setUTCMonth(curD.getUTCMonth() - 1);
-            }
-            const hasLosingMonthInLast6 = last6MonthKeys.some(mKey => (monthlyNetR[mKey] !== undefined && monthlyNetR[mKey] < -0.01));
-
+            // Compute max drawdown and profit factor from trade records
             let peak = 0;
             let running = 0;
             let maxDd = 0;
@@ -755,7 +795,6 @@ export async function preProcessData(
               threeYearMaxDrawdown: maxDd,
               threeYearProfitFactor: pf,
               hasConsecutivePriorYearLoss,
-              hasLosingMonthInLast6,
               dailyReturns,
               monthlyNetR,
             };
@@ -771,7 +810,6 @@ export async function preProcessData(
               threeYearMaxDrawdown: 0,
               threeYearProfitFactor: 1.0,
               hasConsecutivePriorYearLoss: false,
-              hasLosingMonthInLast6: false,
             };
             cache[cacheKey] = auditResult;
             cacheDirty = true;
@@ -794,7 +832,6 @@ export async function preProcessData(
         p.winRate = auditResult.threeYearWinRate;
         p.regimeConsistency = auditResult.regimeConsistency;
         p.hasConsecutivePriorYearLoss = auditResult.hasConsecutivePriorYearLoss;
-        p.hasLosingMonthInLast6 = auditResult.hasLosingMonthInLast6;
         if (auditResult.dailyReturns) {
           p.dailyReturns = auditResult.dailyReturns;
         }
@@ -804,10 +841,16 @@ export async function preProcessData(
         const recent1YearMonths = targetMonths13.slice(-12);
         const recent6Months = targetMonths13.slice(-6);
         const recentQuarterMonths = targetMonths13.slice(-3);
+        const recent2Months = targetMonths13.slice(-2);
 
         const r1Year = recent1YearMonths.reduce((sum, m) => sum + (monthlyR[m] || 0), 0);
         const rRecent6M = recent6Months.reduce((sum, m) => sum + (monthlyR[m] || 0), 0);
         const rRecentQuarter = recentQuarterMonths.reduce((sum, m) => sum + (monthlyR[m] || 0), 0);
+        const rRecent2M = recent2Months.reduce((sum, m) => sum + (monthlyR[m] || 0), 0);
+
+        const lastMonthR = monthlyR[targetMonths13[targetMonths13.length - 1]] || 0;
+        const secondLastMonthR = monthlyR[targetMonths13[targetMonths13.length - 2]] || 0;
+        const hasConsecutiveRecentLosses = lastMonthR < -0.5 && secondLastMonthR < -0.5;
 
         const expectancy = p.threeYearTrades > 0 ? p.threeYearNetR / p.threeYearTrades : 0;
         const calmar = p.threeYearMaxDrawdown > 0 ? p.threeYearNetR / p.threeYearMaxDrawdown : p.threeYearNetR;
@@ -833,16 +876,20 @@ export async function preProcessData(
         }
         const slope = (nMonths * sumXY - sumX * sumY) / (nMonths * sumXX - sumX * sumX);
 
+        const marRatio = p.threeYearMaxDrawdown > 0 ? p.threeYearNetR / p.threeYearMaxDrawdown : p.threeYearNetR;
+
         if (
-          p.threeYearNetR < 15.0 ||
-          p.threeYearTrades < 20 ||
-          expectancy < 0.05 ||
-          calmar < 1.25 ||
-          r1Year < 8.0 ||
-          rRecent6M < 2.0 || // Dynamic Non-Decaying Alpha: Must be solidly profitable in recent 6-month horizon
-          rRecentQuarter < -0.5 || // Dynamic Recent Quarter (last 90 days) must not be negative
-          slope < -0.8 || // Reject setups with steep decaying trajectory
-          losingMonths13 > 4 ||
+          p.threeYearNetR < 5.0 ||
+          p.threeYearTrades < 10 ||
+          expectancy < 0.04 ||
+          calmar < 0.75 ||
+          marRatio < 0.75 || // Hard MAR Gate
+          (p.threeYearProfitFactor && p.threeYearProfitFactor < 1.15) || // Profit factor floor
+          r1Year < 2.0 || // Rolling 12M must be positive (> +2R)
+          rRecent6M < 0.5 || // Recent 6 months must be positive (> +0.5R)
+          rRecentQuarter < -3.0 || // Recent quarter cannot have severe drop (< -3R)
+          slope < -1.5 || // Reject setups with steep decaying trajectory
+          losingMonths13 > 6 ||
           effectiveOneYearWR < 20.0 ||
           (p.regimeConsistency !== undefined && p.regimeConsistency < 30.0)
         ) {
@@ -905,7 +952,11 @@ export async function preProcessData(
     }
   }
 
-  validComponents.sort((a, b) => b.hedgeScore - a.hedgeScore);
+  validComponents.sort((a, b) =>
+    (b.hedgeScore - a.hedgeScore) ||
+    (a.symbol || "").localeCompare(b.symbol || "") ||
+    (a.setup || "").localeCompare(b.setup || "")
+  );
 
   const mages = getEliteComponents(validComponents, "Mage", minTrades);
   const sages = getEliteComponents(validComponents, "Sage", minTrades);

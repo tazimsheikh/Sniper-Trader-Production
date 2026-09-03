@@ -8,6 +8,7 @@ import { broadcastTradeOpened } from "../../core/socket.js";
 import { TrapSignal } from "../config/types.js";
 // import { SimulationProvider } from './simulationProvider';
 import { isNewsBlackout } from "../../news/newsStore.js";
+import { logger } from "../../utils/logger.js";
 
 // --- MetaApi Log Suppressor ---
 const originalConsoleLog = console.log;
@@ -231,34 +232,122 @@ const liveSpecCache = new Map<
     maxVolume: number;
     volumeStep: number;
     digits: number;
+    stopsLevel: number;
     fetchedAt: number;
   }
 >();
 const SPEC_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 
-export function getFallbackPipValue(brokerSymbol: string): number {
-  const cleanSymbol = brokerSymbol.replace(".Daily", "").toUpperCase();
-  
-  // Indices & Crypto: GER40, DAX40, DE40, UK100, SPX500, NAS100, US30, BTC, ETH
-  if (cleanSymbol.includes('GER40') || cleanSymbol.includes('DAX40') || cleanSymbol.includes('DE40') || cleanSymbol.includes('UK100') || cleanSymbol.includes('SPX500') || cleanSymbol.includes('BTC') || cleanSymbol.includes('ETH') || cleanSymbol.includes('NAS') || cleanSymbol.includes('US30')) {
+export function getFallbackPipValue(brokerSymbol: string, referencePrice?: number): number {
+  if (!brokerSymbol || typeof brokerSymbol !== "string") return 10.0;
+  const clean = brokerSymbol
+    .replace(".Daily", "")
+    .replace(/_[0-9]+$/, "")
+    .replace("=X", "")
+    .replace("=F", "")
+    .toUpperCase();
+
+  // 1. Major US Indices & Equities (1 point = $1.00 per standard 1.0 contract lot)
+  // US30, NAS100, USTEC, NDX, SPX500, SP500, US500, DJ30, WS30, DOW30, BTC, ETH
+  if (
+    clean.includes("US30") ||
+    clean.includes("DJ30") ||
+    clean.includes("WS30") ||
+    clean.includes("DOW30") ||
+    clean.includes("DOW") ||
+    clean.includes("NAS100") ||
+    clean.includes("USTEC") ||
+    clean.includes("NDX") ||
+    clean.includes("SPX500") ||
+    clean.includes("SP500") ||
+    clean.includes("US500") ||
+    clean.includes("BTC") ||
+    clean.includes("ETH")
+  ) {
     return 1.0;
   }
-  // Asian Index (JPN225 = ~0.70 USD per point)
-  if (cleanSymbol.includes('JPN225')) {
-    return 0.70;
+
+  // 2. European Indices (GER40 / DAX40 / DE40 / UK100 / FTSE100) -> 1 point = ~€1.00 / £1.00 (~$1.08 - $1.30 USD)
+  // In USD MT5 accounts, GER40 is $1.08 - $1.15 per index point. Default: 1.10
+  if (
+    clean.includes("GER") ||
+    clean.includes("DAX") ||
+    clean.includes("DE40") ||
+    clean.includes("DE30") ||
+    clean.includes("UK100") ||
+    clean.includes("FTSE")
+  ) {
+    return 1.10;
   }
 
-  // Commodities (XAUUSD Gold, XTIUSD Crude Oil = $10.00 per 1.0 lot per pip)
-  if (cleanSymbol.includes('XAU') || cleanSymbol.includes('XTI')) {
+  // 3. Asian Indices (JPN225 / NIKKEI) -> 1 point (100 JPY) / USDJPY rate (~155) = ~$0.65 USD
+  if (clean.includes("JPN") || clean.includes("JP225") || clean.includes("NIKKEI")) {
+    return 0.65;
+  }
+
+  // 4. Commodities: Gold (XAUUSD) -> 100 oz contract. 1 pip (0.10 price units) = $10.00 USD
+  if (clean.includes("XAU") || clean.includes("GOLD")) {
     return 10.0;
   }
 
-  // Forex JPY / Minor Crosses
-  if (cleanSymbol.includes('JPY') || cleanSymbol.includes('AUD') || cleanSymbol.includes('NZD') || cleanSymbol.includes('CAD') || cleanSymbol.includes('CHF')) {
-    return 6.5;
+  // 5. Commodities: Crude Oil (XTIUSD / WTI / USOIL) -> 1000 bbl contract. 1 pip (0.01 price units) = $10.00 USD
+  if (clean.includes("XTI") || clean.includes("OIL") || clean.includes("USOIL") || clean.includes("WTI")) {
+    return 10.0;
   }
 
-  // Forex Majors (EURUSD, GBPUSD, etc.)
+  // 6. Forex Pairs - JPY Crosses (USDJPY, AUDJPY, GBPJPY, EURJPY, CADJPY, CHFJPY)
+  // 1 standard lot = 100,000 base. 1 pip = 0.01 JPY = 1,000 JPY.
+  // In USD: 1,000 JPY / USDJPY (e.g. 155.00) = $6.45 USD. (Valid range: $6.00 - $7.00)
+  if (clean.includes("JPY")) {
+    if (referencePrice && referencePrice > 50 && clean.startsWith("USD")) {
+      return 1000.0 / referencePrice;
+    }
+    return 6.45;
+  }
+
+  // 7. Forex Pairs - CHF Quote (USDCHF, EURCHF, GBPCHF)
+  // 1 standard lot = 100,000 base. 1 pip = 0.0001 CHF = 10 CHF.
+  // In USD: 10 CHF / USDCHF (e.g. 0.8100) = $12.35 USD. (Valid range: $10.50 - $13.50)
+  if (clean.endsWith("CHF") || clean === "USDCHF") {
+    if (referencePrice && referencePrice > 0.5 && referencePrice < 2.0 && clean.startsWith("USD")) {
+      return 10.0 / referencePrice;
+    }
+    return 12.35;
+  }
+
+  // 8. Forex Pairs - CAD Quote (USDCAD, EURCAD, GBPCAD, AUDCAD, NZDCAD)
+  // 1 standard lot = 100,000 base. 1 pip = 0.0001 CAD = 10 CAD.
+  // In USD: 10 CAD / USDCAD (e.g. 1.3950) = $7.17 USD. (Valid range: $6.80 - $8.00)
+  if (clean.endsWith("CAD") || clean === "USDCAD") {
+    if (referencePrice && referencePrice > 0.9 && referencePrice < 2.5 && clean.startsWith("USD")) {
+      return 10.0 / referencePrice;
+    }
+    return 7.17;
+  }
+
+  // 9. Forex Pairs - NZD Quote (EURNZD, GBPNZD, AUDNZD)
+  // 1 standard lot = 100,000 base. 1 pip = 0.0001 NZD = 10 NZD.
+  // In USD: 10 NZD * NZDUSD (~0.60) = $6.00 USD. (Valid range: $5.50 - $7.00)
+  if (clean.endsWith("NZD")) {
+    return 6.00;
+  }
+
+  // 10. Forex Pairs - AUD Quote (EURAUD, GBPAUD)
+  // 1 standard lot = 100,000 base. 1 pip = 0.0001 AUD = 10 AUD.
+  // In USD: 10 AUD * AUDUSD (~0.66) = $6.60 USD. (Valid range: $6.00 - $7.50)
+  if (clean.endsWith("AUD")) {
+    return 6.60;
+  }
+
+  // 11. Forex Pairs - GBP Quote (EURGBP)
+  // 1 standard lot = 100,000 base. 1 pip = 0.0001 GBP = 10 GBP.
+  // In USD: 10 GBP * GBPUSD (~1.30) = $13.00 USD. (Valid range: $11.50 - $14.50)
+  if (clean.endsWith("GBP")) {
+    return 13.00;
+  }
+
+  // 12. Forex Majors with USD Quote (EURUSD, GBPUSD, AUDUSD, NZDUSD)
+  // 1 standard lot = 100,000 base. 1 pip = 0.0001 USD = $10.00 USD exactly.
   return 10.0;
 }
 
@@ -271,12 +360,40 @@ export function getSymbolSpec(brokerSymbol: string): { pipSize: number, pipValue
     .replace(/_[0-9]+$/, "")
     .replace("=X", "")
     .replace("=F", "");
+
+  const INDEX_ALIASES: Record<string, string> = {
+    SP500: "SPX500",
+    US500: "SPX500",
+    SPX: "SPX500",
+    US30: "US30",
+    DJ30: "US30",
+    WS30: "US30",
+    DOW30: "US30",
+    NAS100: "NAS100",
+    US100: "NAS100",
+    USTEC: "NAS100",
+    NDX: "NAS100",
+    GER40: "GER40",
+    DAX40: "GER40",
+    DE40: "GER40",
+    GER30: "GER40",
+    DE30: "GER40",
+    JPN225: "JPN225",
+    JP225: "JPN225",
+    UK100: "UK100",
+    FTSE100: "UK100",
+    GOLD: "XAUUSD",
+    USOIL: "XTIUSD",
+    WTI: "XTIUSD",
+  };
+
+  const canonicalSymbol = INDEX_ALIASES[cleanSymbol] || cleanSymbol.split("_")[0].split(".")[0];
   
   // 1. Try to fetch from live broker cache first (most accurate for digits and tickSize)
   for (const [key, cached] of liveSpecCache.entries()) {
-    if (key.endsWith(`:${brokerSymbol}`) || key.endsWith(`:${cleanSymbol}`)) {
+    if (key.endsWith(`:${brokerSymbol}`) || key.endsWith(`:${cleanSymbol}`) || key.endsWith(`:${canonicalSymbol}`)) {
        return {
-         pipSize: OPTIMIZER_CONFIG[cleanSymbol]?.pipSize ?? 0.0001,
+         pipSize: OPTIMIZER_CONFIG[canonicalSymbol]?.pipSize ?? OPTIMIZER_CONFIG[cleanSymbol]?.pipSize ?? 0.0001,
          pipValuePerLot: cached.pipValuePerLot,
          digits: cached.digits,
          tickSize: cached.tickSize,
@@ -285,7 +402,7 @@ export function getSymbolSpec(brokerSymbol: string): { pipSize: number, pipValue
   }
 
   // 2. Lookup OPTIMIZER_CONFIG or dynamic asset class fallback
-  const optConfig = OPTIMIZER_CONFIG[cleanSymbol];
+  const optConfig = OPTIMIZER_CONFIG[canonicalSymbol] || OPTIMIZER_CONFIG[cleanSymbol];
   let digits = 5;
   let tickSize = 0.00001;
   let pipSize = 0.0001;
@@ -301,11 +418,31 @@ export function getSymbolSpec(brokerSymbol: string): { pipSize: number, pipValue
       digits = 3;
       tickSize = 0.001;
       pipSize = 0.01;
-    } else if (cleanSymbol.includes("XAU") || cleanSymbol.includes("GOLD") || cleanSymbol.includes("XTI") || cleanSymbol.includes("OIL") || cleanSymbol.includes("BTC") || cleanSymbol.includes("ETH")) {
+    } else if (cleanSymbol.includes("XAU") || cleanSymbol.includes("GOLD") || cleanSymbol.includes("XTI") || cleanSymbol.includes("OIL") || cleanSymbol.includes("USOIL") || cleanSymbol.includes("WTI") || cleanSymbol.includes("BTC") || cleanSymbol.includes("ETH")) {
       digits = 2;
       tickSize = 0.01;
       pipSize = cleanSymbol.includes("XAU") || cleanSymbol.includes("GOLD") ? 0.1 : 0.01;
-    } else if (cleanSymbol.includes("US30") || cleanSymbol.includes("NAS") || cleanSymbol.includes("GER40") || cleanSymbol.includes("DAX40") || cleanSymbol.includes("DE40") || cleanSymbol.includes("SPX") || cleanSymbol.includes("JPN225")) {
+    } else if (
+      cleanSymbol.includes("US30") ||
+      cleanSymbol.includes("DJ") ||
+      cleanSymbol.includes("WS") ||
+      cleanSymbol.includes("DOW") ||
+      cleanSymbol.includes("NAS") ||
+      cleanSymbol.includes("USTEC") ||
+      cleanSymbol.includes("NDX") ||
+      cleanSymbol.includes("GER") ||
+      cleanSymbol.includes("DAX") ||
+      cleanSymbol.includes("DE40") ||
+      cleanSymbol.includes("DE30") ||
+      cleanSymbol.includes("SPX") ||
+      cleanSymbol.includes("SP500") ||
+      cleanSymbol.includes("US500") ||
+      cleanSymbol.includes("JPN") ||
+      cleanSymbol.includes("JP225") ||
+      cleanSymbol.includes("NIKKEI") ||
+      cleanSymbol.includes("UK100") ||
+      cleanSymbol.includes("FTSE")
+    ) {
       digits = 2;
       tickSize = 0.1;
       pipSize = 1.0;
@@ -482,6 +619,7 @@ export async function getLiveBrokerSpec(
   maxVolume: number;
   volumeStep: number;
   digits: number;
+  stopsLevel: number;
   fetchedAt?: number;
 }> {
   const cacheKey = `${createHash("sha256").update(token).digest("hex").slice(0, 8)}:${brokerSymbol}`;
@@ -501,16 +639,29 @@ export async function getLiveBrokerSpec(
       // Derive pipValuePerLot from live broker data:
       // pipValuePerLot = (pipSize / tickSize) * tickValue
       const ticksPerPip = optPipSize / metaSpec.tickSize;
-      const livePipValuePerLot = ticksPerPip * metaSpec.tickValue;
+      let livePipValuePerLot = ticksPerPip * metaSpec.tickValue;
+
+      // 🛡️ SANITY VALIDATION: Verify against analytical expected bounds
+      const canonicalExpected = getFallbackPipValue(cleanSymbol);
+      const minAllowed = canonicalExpected * 0.65;
+      const maxAllowed = canonicalExpected * 1.35;
+
+      if (livePipValuePerLot < minAllowed || livePipValuePerLot > maxAllowed) {
+        logger.warn(
+          `[MetaAPI] ⚠️ Rejecting abnormal live pipValue ($${livePipValuePerLot.toFixed(4)}/lot) for ${brokerSymbol}. Expected ~ $${canonicalExpected.toFixed(2)} (Allowed: $${minAllowed.toFixed(2)} - $${maxAllowed.toFixed(2)}). Enforcing canonical analytical pipValue.`,
+        );
+        livePipValuePerLot = canonicalExpected;
+      }
 
       const result = {
         pipValuePerLot: livePipValuePerLot,
         tickSize: metaSpec.tickSize,
-        contractSize: metaSpec.contractSize || 100000,
+        contractSize: metaSpec.contractSize || (cleanSymbol.includes("XAU") ? 100 : (cleanSymbol.includes("US30") || cleanSymbol.includes("NAS") || cleanSymbol.includes("GER") || cleanSymbol.includes("SPX") ? 1 : 100000)),
         minVolume: metaSpec.minVolume || 0.01,
         maxVolume: metaSpec.maxVolume || 100,
         volumeStep: metaSpec.volumeStep || 0.01,
         digits: metaSpec.digits || Math.max(0, -Math.floor(Math.log10(metaSpec.tickSize))),
+        stopsLevel: metaSpec.stopsLevel || 0,
         fetchedAt: Date.now(),
       };
 
@@ -537,6 +688,7 @@ export async function getLiveBrokerSpec(
     maxVolume: 100,
     volumeStep: 0.01,
     digits: Math.max(0, -Math.floor(Math.log10(optPipSize)) + 1),
+    stopsLevel: 0,
     fetchedAt: 0, // mark as stale so next call will re-fetch
   };
 }
@@ -881,20 +1033,6 @@ export async function getSharedStreamingConnection(
             ),
           ]);
 
-          // Subscribe to all symbols for streaming market data
-          for (const s of ALL_BROKER_SYMBOLS) {
-            try {
-              await connection.subscribeToMarketData(s);
-            } catch (err: any) {
-              if (err.message?.includes("account is not connected") || err.message?.includes("TimeoutError")) {
-                console.warn(`[MetaAPI] Aborting subscriptions for ${accountId} — account is not connected to broker.`);
-                break; // Short-circuit to prevent 28x timeout spam
-              } else if (!err.message?.includes("symbol does not exist")) {
-                console.warn(`[MetaAPI] Failed to subscribe to ${s}:`, err.message);
-              }
-            }
-          }
-
           streamingConnectionCache.set(key, connection);
           console.log(
             `[MetaAPI] ✅ Background streaming sync complete for ${accountId}.`,
@@ -937,25 +1075,11 @@ export async function getSharedStreamingConnection(
       await Promise.race([
         waitPromise,
         new Promise((_, r) =>
-          setTimeout(() => r(new Error("Streaming waitSynchronized timeout (15s)")), 15000),
+          setTimeout(() => r(new Error("Streaming waitSynchronized timeout (20s)")), 20000),
         ),
       ]);
     } catch (syncErr: any) {
       console.warn(`[MetaAPI] ⚠️ Streaming waitSynchronized for ${accountId} timed out: ${syncErr.message}. Connection cached, continuing in background.`);
-    }
-
-    // Subscribe to all symbols for streaming market data
-    for (const s of ALL_BROKER_SYMBOLS) {
-      try {
-        await connection.subscribeToMarketData(s);
-      } catch (err: any) {
-        if (err.message?.includes("account is not connected") || err.message?.includes("TimeoutError")) {
-          console.warn(`[MetaAPI] Aborting subscriptions for ${accountId} — account is not connected to broker.`);
-          break; // Short-circuit to prevent 28x timeout spam
-        } else if (!err.message?.includes("symbol does not exist")) {
-          console.warn(`[MetaAPI] Failed to subscribe to ${s}:`, err.message);
-        }
-      }
     }
 
     streamingConnectionCache.set(key, connection);
@@ -1212,7 +1336,20 @@ export async function executeTradeForProfile(
         if (metaSpec && metaSpec.tickSize && metaSpec.tickValue) {
           // Calculate the exact account currency value of 1 full PIP for 1.0 standard Lot
           const ticksPerPip = spec.pipSize / metaSpec.tickSize;
-          dynamicPipValuePerLot = ticksPerPip * metaSpec.tickValue;
+          const rawPipVal = ticksPerPip * metaSpec.tickValue;
+          const canonicalExpected = getFallbackPipValue(brokerSymbol);
+          const minAllowed = canonicalExpected * 0.65;
+          const maxAllowed = canonicalExpected * 1.35;
+
+          if (rawPipVal >= minAllowed && rawPipVal <= maxAllowed) {
+            dynamicPipValuePerLot = rawPipVal;
+          } else {
+            logger.warn(
+              `[MetaAPI] ⚠️ calculateLots: Abnormal dynamic pipValue ($${rawPipVal.toFixed(4)}) for ${brokerSymbol}. Expected ~ $${canonicalExpected.toFixed(2)}. Enforcing analytical pipValue.`,
+            );
+            dynamicPipValuePerLot = canonicalExpected;
+          }
+
           console.log(
             `[MetaAPI] ${brokerSymbol} Dynamic Pip Value: $${dynamicPipValuePerLot.toFixed(2)} (TickSize: ${metaSpec.tickSize}, TickValue: ${metaSpec.tickValue})`,
           );
@@ -1487,33 +1624,28 @@ export async function getProfileTradeHistory(
 ) {
   const profile = (await db
     .prepare(
-      "SELECT tp.user_id, u.metaapi_token, tp.metaapi_account_id FROM trading_profiles tp JOIN users u ON u.id = tp.user_id WHERE tp.id = ?",
+      "SELECT tp.user_id, tp.metaapi_token as profile_token, u.metaapi_token as user_token, tp.metaapi_account_id FROM trading_profiles tp JOIN users u ON u.id = tp.user_id WHERE tp.id = ?",
     )
     .get(profileId)) as any;
-  if (!profile || !profile.metaapi_token || !profile.metaapi_account_id)
+  if (!profile || !profile.metaapi_account_id)
     return null;
 
-  let rawToken = profile.metaapi_token;
+  let rawToken = profile.profile_token || profile.user_token || process.env.METAAPI_TOKEN;
+  if (!rawToken) return null;
+
   try {
     try {
-      rawToken = isEncrypted(profile.metaapi_token)
-        ? decrypt(profile.metaapi_token)
-        : profile.metaapi_token;
+      rawToken = isEncrypted(rawToken)
+        ? decrypt(rawToken)
+        : rawToken;
     } catch (e) {}
 
-    // Fast fail connection wait (increase race timeout to 5s to be safe)
-    const connPromise = getSharedConnection(
+    const connection = await getSharedConnection(
       rawToken,
       profile.metaapi_account_id,
       false,
     );
-    connPromise.catch(() => {});
-    const connection = await Promise.race([
-      connPromise,
-      new Promise<any>((_, r) =>
-        setTimeout(() => r(new Error("timeout")), 5000),
-      ),
-    ]);
+    if (!connection) return null;
 
     const now = new Date();
     let start = new Date(now.getTime() - daysBack * 24 * 60 * 60 * 1000);

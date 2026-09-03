@@ -181,9 +181,12 @@ export async function enqueueMetaApiRequest<T>(
           isTradeDisabled ||
           isNotFound;
 
+        const detailStr = err.details ? JSON.stringify(err.details) : (err.stringifiedDetails || "");
+        const fullErrMsg = detailStr ? `${errMsg} | Details: ${detailStr}` : errMsg;
+
         if (attempt > maxRetries || isHardReject) {
           console.error(
-            `[MetaApiQueue] [Profile:${profileId}] [${callerTag}] Giving up after ${attempt} attempt(s). Hard Reject: ${isHardReject} | Error: ${errMsg}`,
+            `[MetaApiQueue] [Profile:${profileId}] [${callerTag}] Giving up after ${attempt} attempt(s). Hard Reject: ${isHardReject} | Error: ${fullErrMsg}`,
           );
           throw err;
         }

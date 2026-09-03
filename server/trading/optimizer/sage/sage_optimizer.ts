@@ -35,7 +35,7 @@ export function parseSageConfig(setupStr: string): { session: string; config: Pa
   if (!m) return null;
   const [, sSession, sPen, sMinSL, sMaxSL, sSweep, sMaxSwp, sReqCls, sExit, sTrig, sStep, sFC, sH, sM, sOrb, sAct, sMaxBody] = m;
   const stepVal = parseFloat(sStep);
-  if (stepVal < 1.0) return null;
+  if (stepVal <= 0) return null;
 
   return {
     session: sSession,
@@ -61,17 +61,17 @@ export function parseSageConfig(setupStr: string): { session: string; config: Pa
 }
 
 // Define default grid parameters
-const BASE_MIN_SL_VALS = [10, 15, 20, 30, 40, 60];
-const BASE_MAX_SL_VALS = [35, 40, 50, 80, 100, 150, 200, 250, 300];
-const SWEEP_BUFFERS = [2, 3, 5, 10, 20, 30]; // Removed 50, added 2
+const BASE_MIN_SL_VALS = [5, 7, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 100, 120];
+const BASE_MAX_SL_VALS = [25, 30, 35, 40, 50, 60, 80, 100, 120, 150, 160, 200, 250, 300, 500];
+const SWEEP_BUFFERS = [2, 3, 5, 7, 10, 20, 30, 50];
 const ENTRY_PENETRATIONS = [0, 20];
-const TRAILING_TRIGGERS = [0.25, 0.5, 1.0, 1.5, 2.0]; // Added 0.25
+const TRAILING_TRIGGERS = [0.25, 0.5, 1.0, 1.5, 2.0];
 const TRAILING_STEPS = [0.5, 1.0, 2.0];
 const FORCE_CLOSE_HOURS = [8, 12, 16];
 const EXIT_MODES = ["MIDPOINT", "OPPOSITE_BOUNDARY", "TRAILING"];
-const ORB_MINUTES_GRID = [30, 60];
-const ACTION_MINUTES_GRID = [5, 10, 15, 30];
-const MAX_SWEEP_MULTIPLIERS = [1.5, 2.0];
+const ORB_MINUTES_GRID = [15, 30, 60, 120];
+const ACTION_MINUTES_GRID = [5, 10, 15, 30, 60, 90, 120];
+const MAX_SWEEP_MULTIPLIERS = [1.5, 2.0, 3.0];
 const REQUIRE_CLOSE_INSIDE = [true, false];
 const SIM_YEARS = 3.0; // Dynamic 3-year lookback
 
@@ -304,36 +304,38 @@ if (isMainThread && process.argv[1] && (process.argv[1] === currentFile || path.
 
     if (MAJORS.includes(symbol)) {
       minSlGrid = [5, 7, 10, 15, 20];
-      maxSlGrid = [30, 40, 50, 60, 80]; // Pruned 100 (dead)
-      sweepGrid = [2, 3, 5, 20]; // Pruned 10, 30, 50
-      actionMinutesGrid = [10, 15, 30];
-      trailingTriggersGrid = [0.5, 1.0, 1.5, 2.0]; // Pruned 999
+      maxSlGrid = [30, 40, 50, 60, 80];
+      sweepGrid = [2, 3, 5, 10, 20, 30];
+      actionMinutesGrid = [10, 15, 30, 60];
+      trailingTriggersGrid = [0.5, 1.0, 1.5, 2.0];
     } else if (SLOW_FOREX.includes(symbol)) {
-      minSlGrid = [5, 10, 15, 20, 25, 30]; // Pruned 40, 60, 100+
-      maxSlGrid = [25, 30, 35, 50, 80]; // Pruned 20, 100, 150, 200+
-      sweepGrid = [2, 3, 5, 10]; // Pruned 20, 30, 50
-      actionMinutesGrid = [10, 15, 30];
-      trailingTriggersGrid = [0.5, 1.0, 1.5, 2.0]; // Pruned 999
+      minSlGrid = [5, 10, 15, 20, 25, 30];
+      maxSlGrid = [25, 30, 35, 50, 80];
+      sweepGrid = [2, 3, 5, 10, 20, 30];
+      actionMinutesGrid = [10, 15, 30, 60];
+      trailingTriggersGrid = [0.5, 1.0, 1.5, 2.0];
     } else if (PACIFIC_PAIRS.includes(symbol)) {
       minSlGrid = [5, 10, 15, 20, 30];
       maxSlGrid = [30, 50, 80, 100];
-      sweepGrid = [2, 3, 5, 10]; // Pruned 20, 30, 50
-      actionMinutesGrid = [10, 15, 30];
+      sweepGrid = [2, 3, 5, 10, 20, 30];
+      actionMinutesGrid = [10, 15, 30, 60];
       trailingTriggersGrid = [0.5, 1.0, 1.5, 2.0];
     } else if (VOLATILE_CROSSES.includes(symbol)) {
-      minSlGrid = [20, 30, 40, 50, 60]; // Pruned 70, 80 to prevent overlap
-      maxSlGrid = [60, 80, 100]; // Capped at 100 pips: beyond daily range on volatile crosses
-      sweepGrid = [3, 5, 10, 20, 30, 50]; // Pruned 2 (dead)
-      actionMinutesGrid = [15, 30];
+      minSlGrid = [20, 30, 40, 50, 60, 70, 80];
+      maxSlGrid = [40, 60, 80, 100];
+      sweepGrid = [3, 5, 10, 20, 30, 50];
+      actionMinutesGrid = [15, 30, 60];
       trailingTriggersGrid = [0.5, 1.0, 1.5, 2.0];
     } else if (symbol.includes("BTC")) {
-      minSlGrid = [20, 30, 60, 100]; // Added 20 — extend lower
+      minSlGrid = [20, 30, 60, 100];
       maxSlGrid = [150, 300, 500];
+      sweepGrid = [5, 10, 20, 50];
       trailingTriggersGrid = [0.5, 1.0, 1.5, 2.0];
       trailingStepsGrid = [0.5, 1.0, 2.0];
     } else if (symbol.includes("ETH")) {
-      minSlGrid = [20, 30, 50, 80]; // Raised floor to 20 pips — aligned with BTC volatility class
+      minSlGrid = [20, 30, 50, 80];
       maxSlGrid = [100, 200, 300];
+      sweepGrid = [5, 10, 20, 50];
       trailingTriggersGrid = [0.5, 1.0, 1.5, 2.0];
       trailingStepsGrid = [0.5, 1.0, 2.0];
     } else if (
@@ -341,52 +343,30 @@ if (isMainThread && process.argv[1] && (process.argv[1] === currentFile || path.
       symbol.includes("GER40") ||
       symbol.includes("NAS100")
     ) {
-      minSlGrid = [10, 15, 20, 40, 70, 120]; // Added 10,15 — boundary pressure at 20
-      maxSlGrid = [80, 150, 200, 300]; // Realigned
+      minSlGrid = [10, 15, 20, 40, 70, 120];
+      maxSlGrid = [80, 150, 200, 300];
+      sweepGrid = [5, 10, 20, 30, 50];
+      actionMinutesGrid = [5, 10, 15, 30, 60];
     } else if (symbol.includes("SPX")) {
-      minSlGrid = [5, 10, 20, 30]; // Added 5 — boundary at 10
+      minSlGrid = [5, 10, 20, 30];
       maxSlGrid = [40, 80, 120, 200];
-      actionMinutesGrid = [5, 10, 15, 30, 60, 90]; // Added 90
+      sweepGrid = [10, 20, 30, 50];
+      actionMinutesGrid = [5, 10, 15, 30, 60, 90];
       entryPenetrationsGrid = [0, 20];
-      trailingTriggersGrid = [0.5, 1.0, 1.5, 2.0]; // Pruned 999
+      trailingTriggersGrid = [0.5, 1.0, 1.5, 2.0];
     } else if (symbol.includes("JPN")) {
       minSlGrid = [30, 50, 80, 120];
       maxSlGrid = [100, 150, 200, 250];
+      sweepGrid = [10, 20, 30, 50];
       actionMinutesGrid = [5, 10, 15, 30, 60];
       entryPenetrationsGrid = [0, 20];
-      trailingTriggersGrid = [0.5, 1.0, 1.5, 2.0]; // Pruned 999
+      trailingTriggersGrid = [0.5, 1.0, 1.5, 2.0];
     } else if (symbol.includes("XAU") || symbol.includes("XTI")) {
       minSlGrid = [10, 15, 30, 40];
-      maxSlGrid = [40, 80, 120, 160, 200, 250]; // Added 200,250 — XAUUSD boundary at 160
-      actionMinutesGrid = [5, 10, 15, 30, 60, 90, 120]; // Added 90,120
-      trailingTriggersGrid = [0.5, 1.0, 1.5, 2.0]; // Pruned 999
-    }
-
-    if (["GBPNZD", "EURNZD", "AUDJPY", "GBPAUD"].includes(symbol)) {
-      orbMinutesGrid = [30, 60, 120];
-    }
-    if (symbol.includes("GER40") || symbol.includes("NAS100")) {
-      maxSweepMultipliersGrid = [1.5, 2.0, 3.0];
-    }
-
-    if (VOLATILE_CROSSES.includes(symbol)) {
-      sweepGrid = [3, 5, 10, 20, 30, 50]; // Added 3
-    } else if (symbol.includes("BTC")) {
-      sweepGrid = [5, 10, 20, 50]; // Added 5
-    } else if (symbol.includes("ETH")) {
-      sweepGrid = [5, 10, 20, 50]; // Added 5
-    } else if (
-      symbol.includes("US30") ||
-      symbol.includes("GER40") ||
-      symbol.includes("NAS100")
-    ) {
-      sweepGrid = [5, 10, 20, 30, 50]; // Added 5
-    } else if (symbol.includes("SPX")) {
-      sweepGrid = [10, 20, 30, 50]; // Realigned
-    } else if (symbol.includes("JPN")) {
-      sweepGrid = [10, 20, 30, 50]; // Realigned
-    } else if (symbol.includes("XAU") || symbol.includes("XTI")) {
-      sweepGrid = [3, 5, 7, 10, 20, 30]; // Added 3,7
+      maxSlGrid = [40, 80, 120, 160, 200, 250];
+      sweepGrid = [3, 5, 7, 10, 20, 30, 50];
+      actionMinutesGrid = [5, 10, 15, 30, 60, 90, 120];
+      trailingTriggersGrid = [0.5, 1.0, 1.5, 2.0];
     }
 
     let maxBodyGrid = [3, 8, undefined]; // Default Forex

@@ -35,13 +35,24 @@ export function aggregateCandles(
 
   let i = 0;
   for (const row of m1Rows) {
-    const ts = row.timestamp !== undefined ? row.timestamp : Date.UTC(
-      parseInt(row.dateStr.split("-")[0]),
-      parseInt(row.dateStr.split("-")[1]) - 1,
-      parseInt(row.dateStr.split("-")[2]),
-      row.hour,
-      row.minute,
-    );
+    if (!row) continue;
+    let ts: number | undefined = row.timestamp;
+    if (ts === undefined && (row as any).time) {
+      ts = new Date((row as any).time).getTime();
+    }
+    if (ts === undefined && row.dateStr && typeof row.dateStr === "string") {
+      const parts = row.dateStr.split("-");
+      if (parts.length >= 3) {
+        ts = Date.UTC(
+          parseInt(parts[0]),
+          parseInt(parts[1]) - 1,
+          parseInt(parts[2]),
+          row.hour || 0,
+          row.minute || 0,
+        );
+      }
+    }
+    if (ts === undefined || isNaN(ts)) continue;
 
     const block = Math.floor(ts / (tf * 60_000));
 

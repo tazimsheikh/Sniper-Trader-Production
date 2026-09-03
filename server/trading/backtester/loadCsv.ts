@@ -15,6 +15,7 @@ const estFmt = new Intl.DateTimeFormat("en-US", {
 });
 
 const csvCache = new Map<string, M1Row[]>();
+export function clearCsvCache() { csvCache.clear(); }
 
 export async function loadCsv(
   csvPath: string,

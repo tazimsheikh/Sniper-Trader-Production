@@ -462,13 +462,8 @@ export function evaluateExits(
 
         // ─── STEP 1: CHECK SL/TP AGAINST THE PRE-UPDATE STOP ─────────────────
         // For non-entry bars, SL hit is strictly checked against the pre-update stop.
-        // For the entry bar of a directional breakout (close >= open for BUY),
-        // the impulse happens first, matching LiveOrchestrator tick execution.
         if (direction === "BUY") {
-          const isBullishEntry = isEntryBar && m1.close[j] >= m1.open[j];
-          if (!isBullishEntry) {
-            slHit = m1.low[j] <= currentSL;
-          }
+          slHit = m1.low[j] <= currentSL;
           tpHit = m1.high[j] >= tpPrice;
           if (slHit && tpHit) {
             slHit = true;
@@ -488,10 +483,7 @@ export function evaluateExits(
             break;
           }
         } else {
-          const isBearishEntry = isEntryBar && m1.close[j] <= m1.open[j];
-          if (!isBearishEntry) {
-            slHit = gte(m1.high[j] + spreadPts, currentSL);
-          }
+          slHit = gte(m1.high[j] + spreadPts, currentSL);
           tpHit = m1.low[j] + spreadPts <= tpPrice;
           if (slHit && tpHit) {
             slHit = true;
@@ -594,7 +586,7 @@ export function evaluateExits(
               lastTrailingLevel = 0;
             }
             if (tTrig !== undefined && tStep !== undefined && gte(currentR, tTrig + tStep)) {
-              const numSteps = Math.floor((currentR - tTrig + PRICE_EPSILON) / tStep);
+              const numSteps = Math.floor((currentR - tTrig) / tStep);
               const rLevelToLock = numSteps * tStep;
               if (rLevelToLock > lastTrailingLevel) {
                 lastTrailingLevel = rLevelToLock;
@@ -609,7 +601,7 @@ export function evaluateExits(
               lastTrailingLevel = 0;
             }
             if (tTrig !== undefined && tStep !== undefined && gte(currentR, tTrig + tStep)) {
-              const numSteps = Math.floor((currentR - tTrig + PRICE_EPSILON) / tStep);
+              const numSteps = Math.floor((currentR - tTrig) / tStep);
               const rLevelToLock = numSteps * tStep;
               if (rLevelToLock > lastTrailingLevel) {
                 lastTrailingLevel = rLevelToLock;

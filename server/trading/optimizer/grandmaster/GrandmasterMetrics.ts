@@ -35,7 +35,7 @@ function getISOWeek(dateStr: string): string {
 export function evaluateComponent(
   state: GrandmasterOptimizerState & { dailyRArray: Float64Array },
   symbol: string,
-  botType: "Mage" | "Sage",
+  botType: "Mage" | "Sage" | "Seer",
   globalDates: string[],
   hydrate = false,
 ): IndependentSynthesisComponent | null {
@@ -201,7 +201,11 @@ export function evaluateComponent(
     return null;
 
   // Calendar Year Consistency Guard:
-  // Reject any setup that loses net money in any calendar year with active trading (>= 3 trades or net loss < -1.5R)
+  // IMPORTANT: yearlyNetR is built from state.dailyRArray (the OOS dump slice data),
+  // NOT from the 3-Year CSV audit data in GrandmasterPreProcessor. This guard runs
+  // as a fast pre-filter before the CSV audit. A config that passes here may still
+  // be rejected by the authoritative CSV audit gates (threeYearNetR, calmar, etc.).
+  // Reject any setup that loses net money in any calendar year with active trading (≥ 3 trades or net loss < -1.5R)
   for (const [year, yNet] of Object.entries(yearlyNetR)) {
     const yCnt = yearlyTrades[year] || 0;
     if ((yCnt >= 3 && yNet < 0) || yNet < -1.5) {
@@ -308,7 +312,13 @@ export function evaluateComponent(
   
   let wfMultiplier = stepStdDev > 0 ? (stepMean / (stepStdDev + 1)) : 0.1;
   if (minStepReturn < 0) {
-    wfMultiplier *= 0.1;  // Harsh 10x penalty for any losing period
+    // FIX 5: Replace flat 10x penalty with magnitude-proportional continuous penalty.
+    // A small dip (−0.5R in a period averaging +10R) should not be treated identically
+    // to a catastrophic losing period (−15R). Scale penalty proportionally by loss
+    // depth vs total portfolio R. Min floor of 0.30 prevents full elimination.
+    const lossMagnitude = Math.abs(minStepReturn);
+    const penaltyFactor = Math.max(0.30, 1.0 - (lossMagnitude / (Math.abs(totalR) + 1.0)));
+    wfMultiplier *= penaltyFactor;
   } else if (minStepReturn < stepMean * 0.2) {
     wfMultiplier *= 0.5;
   }

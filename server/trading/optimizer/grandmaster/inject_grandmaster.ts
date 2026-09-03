@@ -28,7 +28,8 @@ const GRANDMASTER_MD_PATH = path.join(
   "server",
   "trading",
   "optimizer",
-  "grandmaster_holy_grail_portfolios.md",
+  "grandmaster",
+  "grandmaster_holy_grail.md",
 );
 
 // Resolve SAGE dump dir the same way the synthesizer does:
@@ -87,19 +88,21 @@ function parseGrandmasterMarkdown(
   categoryName: string,
   targetRank: number = 1,
 ) {
-  const jsonPath = path.join(path.dirname(filePath), "grandmaster_holy_grail_portfolios.json");
+  const jsonPath = path.join(path.dirname(filePath), "grandmaster_portfolio.json");
   if (fs.existsSync(jsonPath)) {
     try {
       const jsonData = JSON.parse(fs.readFileSync(jsonPath, "utf-8"));
       if (Array.isArray(jsonData) && jsonData.length > 0) {
         const mageConfigs: { pair: string; setup: string; riskPct?: number }[] = [];
         const sageConfigs: { pair: string; setup: string; riskPct?: number }[] = [];
+        const seerConfigs: { pair: string; setup: string; riskPct?: number }[] = [];
         for (const item of jsonData) {
           if (item.botType === "Mage") mageConfigs.push({ pair: item.symbol, setup: item.setup, riskPct: item.riskPct });
-          else sageConfigs.push({ pair: item.symbol, setup: item.setup, riskPct: item.riskPct });
+          else if (item.botType === "Sage") sageConfigs.push({ pair: item.symbol, setup: item.setup, riskPct: item.riskPct });
+          else if (item.botType === "Seer") seerConfigs.push({ pair: item.symbol, setup: item.setup, riskPct: item.riskPct });
         }
         console.log(`📦 Loaded ${jsonData.length} portfolio components directly from JSON interchange!`);
-        return { mageConfigs, sageConfigs };
+        return { mageConfigs, sageConfigs, seerConfigs };
       }
     } catch (e: any) {
       console.warn(`⚠️ JSON fallback parse error: ${e.message}, falling back to markdown...`);
@@ -115,16 +118,15 @@ function parseGrandmasterMarkdown(
 
   const sageConfigs: { pair: string; setup: string; riskPct?: number }[] = [];
   const mageConfigs: { pair: string; setup: string; riskPct?: number }[] = [];
+  const seerConfigs: { pair: string; setup: string; riskPct?: number }[] = [];
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
-    // Check if we hit a new highest level category header (e.g., # 🏆 Highest Net Profit)
     if (line.startsWith("# 🏆 ")) {
       if (line.toLowerCase().includes(categoryName.toLowerCase())) {
         inCategory = true;
       } else if (inCategory) {
-        // We moved to the next major section, stop parsing
         break;
       }
     }
@@ -140,20 +142,18 @@ function parseGrandmasterMarkdown(
       }
 
       if (inRankList) {
-        // Stop if we hit an empty line (or new header) signifying the end of the list
         if (
           line.trim() === "" ||
           line.startsWith("#") ||
           line.startsWith("---")
         ) {
-          if (sageConfigs.length > 0 || mageConfigs.length > 0) {
-            break; // We successfully grabbed the target Rank component list
+          if (sageConfigs.length > 0 || mageConfigs.length > 0 || seerConfigs.length > 0) {
+            break;
           }
         }
 
-        // Parse:   - **EURUSD (Mage)**: Setup=`NY_Forex_0%_MinSL20...` | Net R: 18.0 | MC DD: 14.5% | Risk: 0.172%
         const matchSingle = line.match(
-          /\s*-\s*\*\*(.*?)\s+\((Mage|Sage)\)\*\*:\s*Setup=`([^`]+)`(?:.*Risk\s*(?:Multiplier)?:\s*([\d.]+)[x%]?)?/
+          /\s*-\s*\*\*(.*?)\s+\((Mage|Sage|Seer)\)\*\*:\s*Setup=`([^`]+)`(?:.*Risk\s*(?:Multiplier)?:\s*([\d.]+)[x%]?)?/
         );
         if (matchSingle) {
           const pairRaw = matchSingle[1];
@@ -165,9 +165,13 @@ function parseGrandmasterMarkdown(
             if (!mageConfigs.some((c) => c.pair === pairRaw)) {
               mageConfigs.push({ pair: pairRaw, setup, riskPct });
             }
-          } else {
+          } else if (botType === "Sage") {
             if (!sageConfigs.some((c) => c.pair === pairRaw)) {
               sageConfigs.push({ pair: pairRaw, setup, riskPct });
+            }
+          } else if (botType === "Seer") {
+            if (!seerConfigs.some((c) => c.pair === pairRaw)) {
+              seerConfigs.push({ pair: pairRaw, setup, riskPct });
             }
           }
         } else {
@@ -185,7 +189,7 @@ function parseGrandmasterMarkdown(
     }
   }
 
-  return { mageConfigs, sageConfigs };
+  return { mageConfigs, sageConfigs, seerConfigs };
 }
 
 // 3. Build Configuration Strings
@@ -363,13 +367,13 @@ export function parseSetupString(
 }
 
 // 4. Generate Replacement Blocks
-const { mageConfigs, sageConfigs } = parseGrandmasterMarkdown(
+const { mageConfigs, sageConfigs, seerConfigs } = parseGrandmasterMarkdown(
   GRANDMASTER_MD_PATH,
   categoryTarget,
   rankTarget,
 );
 
-if (mageConfigs.length === 0 && sageConfigs.length === 0) {
+if (mageConfigs.length === 0 && sageConfigs.length === 0 && seerConfigs.length === 0) {
   console.error(
     `❌ ERROR: Could not find Grandmaster algorithms for Category="${categoryTarget}" at Rank=${rankTarget}.`,
   );
@@ -377,7 +381,7 @@ if (mageConfigs.length === 0 && sageConfigs.length === 0) {
 }
 
   console.log(
-    `✅ Found a Holy Grail Portfolio with ${mageConfigs.length + sageConfigs.length} component pairs! Generating code blocks...`,
+    `✅ Found a Holy Grail Portfolio with ${mageConfigs.length + sageConfigs.length + seerConfigs.length} component pairs! Generating code blocks...`,
   );
 
 import { OPTIMIZER_CONFIG } from "../../config/OptimizerPairConfig.js";
@@ -386,8 +390,65 @@ function parseSetupStringBody(
   pair: string,
   setupString: string,
   isSage: boolean,
+  isSeer: boolean,
   baseProps: any,
 ): { key: string; body: string } {
+  if (isSeer) {
+    let output = `{\n`;
+    if (baseProps.tickSize !== null) output += `    "tickSize": ${baseProps.tickSize},\n`;
+    if (baseProps.pipSize !== null) output += `    "pipSize": ${baseProps.pipSize},\n`;
+    if (baseProps.spread !== null) output += `    "spread": ${baseProps.spread},\n`;
+
+    const getNum = (label: string) => {
+      const match = setupString.match(new RegExp(`${label}=([\\d\\.]+)`));
+      return match ? parseFloat(match[1]) : 0;
+    };
+    const getStr = (label: string) => {
+      const match = setupString.match(new RegExp(`${label}=([^=]+)(?:_|$)`));
+      if (match) {
+        if (label === 'session') {
+            const sessMatch = setupString.match(/session=(.+)$/);
+            return sessMatch ? sessMatch[1] : match[1];
+        }
+        return match[1].split("_")[0];
+      }
+      return "london";
+    };
+
+    const minBodyPips = getNum("minBodyPips");
+    const pinBarWickBodyRatio = getNum("wickRatio");
+    const minTpDist = getNum("minTpDist");
+    const defaultTpDist = getNum("defaultTpDist");
+    const maxSlDist = getNum("maxSlDist");
+    const trailingSlTrigger = getNum("trailingTrig");
+    const trailingSlStep = getNum("trailingStep");
+    const forceCloseHours = getNum("forceClose");
+    let maxBodyPips: number | undefined = getNum("maxBodyPips");
+    if (!setupString.includes("maxBodyPips=") || isNaN(maxBodyPips) || maxBodyPips === 0) maxBodyPips = undefined;
+    const sessionName = getStr("session");
+
+    output += `      "session": "${sessionName}",\n`;
+    output += `      "sessions": ["${sessionName}"],\n`;
+    output += `      "minBodyPips": ${minBodyPips},\n`;
+    output += `      "pinBarWickBodyRatio": ${pinBarWickBodyRatio},\n`;
+    output += `      "minTpDist": ${minTpDist},\n`;
+    output += `      "defaultTpDist": ${defaultTpDist},\n`;
+    output += `      "maxSlDist": ${maxSlDist},\n`;
+    if (trailingSlTrigger > 0) output += `      "trailingSlTrigger": ${trailingSlTrigger},\n`;
+    if (trailingSlStep > 0) output += `      "trailingSlStep": ${trailingSlStep},\n`;
+    output += `      "forceCloseHours": ${forceCloseHours}`;
+    if (maxBodyPips !== undefined) output += `,\n      "maxBodyPips": ${maxBodyPips}`;
+    
+    if ((baseProps as any).riskPct !== undefined) {
+      output += `,\n      "riskPct": ${(baseProps as any).riskPct}\n`;
+    } else {
+      output += `\n`;
+    }
+    
+    output += `    }`;
+    return { key: pair, body: output };
+  }
+
   let rawMaxBody: number | undefined = undefined;
   let rawEntryPenetration: number | undefined = undefined;
   let rawMinWick: number | undefined = undefined;
@@ -415,14 +476,8 @@ function parseSetupStringBody(
               rawHtfAlign !== undefined ? `htfAlign=${rawHtfAlign}` : null,
             ].filter(Boolean).join(", ");
             if (fieldsFound) console.log(`   [SAGE CONFIG] ${pair}: loaded extra dump fields (${fieldsFound})`);
-          } else {
-            console.log(`   [SAGE CONFIG] ${pair}: setup matched in dump (using setup string configuration)`);
           }
-        } else {
-          console.log(`   [SAGE CONFIG] ${pair}: 100% accurately parsed from canonical setup string`);
         }
-      } else {
-        console.log(`   [SAGE CONFIG] ${pair}: 100% accurately parsed from canonical setup string`);
       }
     } catch (e: any) {
       console.warn(`   ⚠️ Could not read sage dump for ${pair}: ${e.message}`);
@@ -468,9 +523,6 @@ function parseSetupStringBody(
     const maxSwp = findNum("MaxSwp") ?? 3;
     const reqCls = findStr("ReqCls") === "true";
     let exitModeStr = findStr("Exit") ?? "TRAILING";
-    // ExitOPPOSITE_BOUNDARY splits into TWO tokens ("ExitOPPOSITE" + "BOUNDARY") when
-    // the setup string is split on "_". findStr only examines the single Exit-prefixed token
-    // and returns "OPPOSITE", silently discarding "BOUNDARY". Detect and re-join here.
     const exitTokenIdx = parts.findIndex(p => p.startsWith("Exit"));
     if (exitTokenIdx >= 0 && exitTokenIdx + 1 < parts.length && parts[exitTokenIdx + 1] === "BOUNDARY") {
       exitModeStr += "_BOUNDARY";
@@ -520,25 +572,21 @@ function parseSetupStringBody(
        output += `,\n      "htfAlignmentRequired": true`;
     }
 
-    // --- ASSET CLASS ROUTING FOR HTF FILTERS ---
     const isCrypto = pair.includes("BTC") || pair.includes("ETH");
     const isIndex = ["US30", "NAS100", "SPX500", "GER40", "UK100", "JPN225"].some(idx => pair.includes(idx));
     const isJpyCross = pair.includes("JPY");
     const isAsiaSession = sessionName === "asia";
 
-    // 1. HTF Parabolic SAR Filter
     let useHtfSar = true;
     if (isCrypto) useHtfSar = false;
     if (isIndex && isAsiaSession) useHtfSar = false;
-    if (isJpyCross && !pair.includes("GBP")) useHtfSar = false; // CHFJPY false, GBPJPY true
+    if (isJpyCross && !pair.includes("GBP")) useHtfSar = false;
     if (pair === "NZDUSD") useHtfSar = false;
     
-    // 2. Require Close Location Half
     let reqCloseHalf = false;
     if (isIndex && !isAsiaSession) reqCloseHalf = true;
     if (pair === "USDCAD" || pair === "GBPJPY" || pair === "BTCUSD") reqCloseHalf = true;
     
-    // 3. Minimum Wick-to-Body Ratio (WBR)
     const wbr = (pair.includes("EURUSD") || (pair.includes("CHFJPY") && !isAsiaSession)) ? 1.75 : 1.5;
 
     output += `,\n      "maxH1EmaSlope": 20`;
@@ -556,8 +604,6 @@ function parseSetupStringBody(
     const orbMins = findNum("OrbMins") ?? 15;
     const actMins = findNum("ActMins");
     let exitModeStr = findStr("Exit") ?? "TRAILING";
-    // ExitOPPOSITE_BOUNDARY splits into TWO tokens ("ExitOPPOSITE" + "BOUNDARY").
-    // findStr only returns the single Exit-prefixed token remainder. Detect the continuation.
     const exitTokenIdx = parts.findIndex(p => p.startsWith("Exit"));
     if (exitTokenIdx >= 0 && exitTokenIdx + 1 < parts.length) {
       const nextToken = parts[exitTokenIdx + 1];
@@ -582,15 +628,6 @@ function parseSetupStringBody(
     output += `      "forceCloseHours": ${fc}\n`;
   }
 
-  // Inject riskPct if available.
-  // SEMANTIC CONTRACT:
-  //   riskPct is in PERCENTAGE units (e.g. 0.698 means 0.698% of balance per 1R trade).
-  //   The live engine's userRiskDial is a SIMPLE MULTIPLIER on top of this:
-  //     userRiskDial=1 → trade at Grandmaster-assigned risk (e.g. 0.698%)
-  //     userRiskDial=2 → double it (e.g. 1.396%)
-  //     userRiskDial=3 → triple it (e.g. 2.094%)
-  //   The Grandmaster sizes riskPct so that the combined MC 99th-pct portfolio drawdown
-  //   is capped at 5R when userRiskDial=1. Setting userRiskDial above 7 will exceed that cap.
   if ((baseProps as any).riskPct !== undefined) {
     if (output.endsWith("\n")) {
       output = output.slice(0, -1) + ",\n";
@@ -606,6 +643,7 @@ function parseSetupStringBody(
 function generateObjectBlock(
   configList: { pair: string; setup: string; riskPct?: number }[],
   isSage: boolean,
+  isSeer: boolean = false,
 ) {
   let groups: Record<string, string[]> = {};
   
@@ -615,8 +653,8 @@ function generateObjectBlock(
     const riskPct = configList[k].riskPct;
 
     let baseProps: any = { tickSize: null, pipSize: null, spread: null, riskPct };
-    const baseSymbol = pair.replace(".Daily", "");
-    const optConfig = OPTIMIZER_CONFIG[pair] || OPTIMIZER_CONFIG[baseSymbol];
+    const baseSymbol = pair.replace(/\.daily$/i, "");
+    const optConfig = OPTIMIZER_CONFIG[pair] || OPTIMIZER_CONFIG[baseSymbol] || OPTIMIZER_CONFIG[baseSymbol.toUpperCase()];
 
     if (optConfig) {
       baseProps.tickSize = optConfig.tickSize;
@@ -626,7 +664,7 @@ function generateObjectBlock(
       throw new Error(`CRITICAL: No OPTIMIZER_CONFIG found for ${pair}. Cannot resolve mechanical stats.`);
     }
 
-    const parsed = parseSetupStringBody(pair, setupStr, isSage, baseProps);
+    const parsed = parseSetupStringBody(pair, setupStr, isSage, isSeer, baseProps);
     if (!groups[parsed.key]) groups[parsed.key] = [];
     groups[parsed.key].push(parsed.body);
   }
@@ -646,11 +684,15 @@ function generateObjectBlock(
 
 const sageReplacementString =
   `export const SAGE_PAIR_CONFIG: Record<string, PairConfig[]> = ` +
-  generateObjectBlock(sageConfigs, true) +
+  generateObjectBlock(sageConfigs, true, false) +
   `;`;
 const mageReplacementString =
   `export const MAGE_PAIR_CONFIG: Record<string, PairConfig[]> = ` +
-  generateObjectBlock(mageConfigs, false) +
+  generateObjectBlock(mageConfigs, false, false) +
+  `;`;
+const seerReplacementString =
+  `export const SEER_PAIR_CONFIG: Record<string, PairConfig[]> = ` +
+  generateObjectBlock(seerConfigs, false, true) +
   `;`;
 
 // 5. Safely inject into PairConfig.ts\n
@@ -686,40 +728,10 @@ finalContent += "// ============================================================
 finalContent += "// SAGE OPTIMIZED CONFIGURATIONS\n";
 finalContent += "// ============================================================\n";
 finalContent += sageReplacementString + "\n\n";
-// Bug Fix: Preserve existing SEER_PAIR_CONFIG block instead of wiping it with {}.
-// Injecting an empty object would destroy Seer's live configs on every Grandmaster run,
-// directly violating the Bot Separation Rule.
-function extractExistingSeerConfig(fileContent: string): string {
-  const seerMarker = "export const SEER_PAIR_CONFIG";
-  const seerIdx = fileContent.indexOf(seerMarker);
-  if (seerIdx === -1) {
-    // No existing Seer config found in source — return safe empty default
-    console.warn("⚠️  No existing SEER_PAIR_CONFIG found in PairConfig.ts — using empty default.");
-    return `export const SEER_PAIR_CONFIG: Record<string, PairConfig[]> = {};`;
-  }
-  // Walk forward to find the end of this export statement (closing semicolon at top level)
-  let depth = 0;
-  let i = seerIdx;
-  let started = false;
-  while (i < fileContent.length) {
-    const ch = fileContent[i];
-    if (ch === '{') { depth++; started = true; }
-    else if (ch === '}') { depth--; }
-    if (started && depth === 0) {
-      let end = i + 1;
-      while (end < fileContent.length && (fileContent[end] === ';' || fileContent[end] === '\n' || fileContent[end] === '\r' || fileContent[end] === ' ')) end++;
-      const rawBlock = fileContent.substring(seerIdx, end).trimEnd();
-      return rawBlock.replace(/;+$/, "") + ";";
-    }
-    i++;
-  }
-  // Fallback: return from marker to end of file
-  return fileContent.substring(seerIdx).trimEnd().replace(/;+$/, "") + ";";
-}
-
-const existingSeerBlock = extractExistingSeerConfig(pairConfigContent);
-finalContent += existingSeerBlock + "\n";
-
+finalContent += "// ============================================================\n";
+finalContent += "// SEER OPTIMIZED CONFIGURATIONS\n";
+finalContent += "// ============================================================\n";
+finalContent += seerReplacementString + "\n\n";
 
 // ── Pre-Write Structural Integrity Validator ──────────────────
 function validateFinalContent(content: string): void {

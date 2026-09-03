@@ -17,7 +17,13 @@ import * as path from "path";
 import { runShadowBacktest } from "../backtester/OrchestratorShadowBacktester.js";
 import { clearMageBacktestCache } from "../backtester/MageMathBacktester.js";
 import { clearSageBacktestCache } from "../backtester/SageMathBacktester.js";
-import { PairConfigManager, MAGE_PAIR_CONFIG, SAGE_PAIR_CONFIG } from "../config/PairConfig.js";
+import { clearSeerBacktestCache } from "../backtester/SeerMathBacktester.js";
+import { PairConfigManager, MAGE_PAIR_CONFIG, SAGE_PAIR_CONFIG, SEER_PAIR_CONFIG } from "../config/PairConfig.js";
+import { generateMagicNumber } from "../../utils/magicNumber.js";
+import { getFixedEstDate } from "../engine/LiveOrchestrator.js";
+
+process.env.SIMULATION_MODE = "true";
+(global as any).isSimulator = true;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Universal Multi-Pair Live Shadow Trade Loader
@@ -25,59 +31,109 @@ import { PairConfigManager, MAGE_PAIR_CONFIG, SAGE_PAIR_CONFIG } from "../config
 async function loadUnifiedPortfolioShadowTrades(startDate: string, endDate: string, slippagePoints = 0): Promise<any[]> {
   process.stdout.write(`\n🔮 [PORTFOLIO SHADOW] Executing LiveOrchestrator Shadow Backtests (${startDate} → ${endDate})...\n`);
 
-  const activePairs = new Set<string>();
-  Object.keys(MAGE_PAIR_CONFIG).forEach(p => activePairs.add(p.split('.')[0]));
-  Object.keys(SAGE_PAIR_CONFIG).forEach(p => activePairs.add(p.split('.')[0]));
-
   // Read Holy Grail portfolio weights if available
   const jsonPath = path.join(process.cwd(), "server", "trading", "optimizer", "grandmaster_holy_grail_portfolios.json");
-  const riskMap: Record<string, number> = {};
-  if (fs.existsSync(jsonPath)) {
-    try {
-      const portfolio: any[] = JSON.parse(fs.readFileSync(jsonPath, "utf-8"));
-      for (const comp of portfolio) {
-        riskMap[`${comp.symbol}_${comp.botType.toUpperCase()}`] = comp.riskPct || 1.0;
-      }
-    } catch (e) {}
+  if (!fs.existsSync(jsonPath)) {
+    throw new Error(`Holy Grail portfolio not found at ${jsonPath}`);
+  }
+
+  const portfolio: any[] = JSON.parse(fs.readFileSync(jsonPath, "utf-8"));
+
+  // Extract unique (cleanSym, botType) pairs to run cleanly
+  const runTasks = new Map<string, { cleanSym: string; botType: string; components: any[] }>();
+  for (const comp of portfolio) {
+    const cleanSym = comp.symbol.replace(/\.daily$/i, "");
+    const key = `${cleanSym}_${comp.botType.toUpperCase()}`;
+    if (!runTasks.has(key)) {
+      runTasks.set(key, { cleanSym, botType: comp.botType, components: [] });
+    }
+    runTasks.get(key)!.components.push(comp);
   }
 
   let allTrades: any[] = [];
   const targetStartMs = new Date(startDate).getTime();
 
-  for (const pair of activePairs) {
+  for (const [key, task] of runTasks.entries()) {
+    const { cleanSym, botType, components } = task;
     try {
-      const res = await runShadowBacktest(pair, startDate, endDate, { enableMage: true, enableSage: true, enableSeer: false });
+      const isMage = botType.toUpperCase() === "MAGE";
+      const isSage = botType.toUpperCase() === "SAGE";
+      const isSeer = botType.toUpperCase() === "SEER";
+
+      const res = await runShadowBacktest(cleanSym, startDate, endDate, {
+        enableMage: isMage,
+        enableSage: isSage,
+        enableSeer: isSeer,
+      });
+
       const records = res.tradeLog || [];
       const valid = records.filter((r: any) =>
         r.openTime >= targetStartMs &&
         r.outcome !== "SKIPPED" &&
-        r.outcome !== "NO_TRADE"
+        r.outcome !== "NO_TRADE" &&
+        (r.botId?.toUpperCase() === botType.toUpperCase() || (!r.botId && isMage))
       );
+
+      // Get live configs for matching
+      let liveCfgs: any[] = [];
+      if (isSage) liveCfgs = PairConfigManager.getSageConfigs(cleanSym) || [];
+      else if (isSeer) liveCfgs = PairConfigManager.getSeerConfigs(cleanSym) || [];
+      else liveCfgs = PairConfigManager.getMageConfigs(cleanSym) || [];
+
       valid.forEach((r: any) => {
-        const isSage = (r.botId || "").toUpperCase() === "SAGE";
-        const botType = isSage ? "SAGE" : "MAGE";
-        const liveCfgs = isSage ? PairConfigManager.getSageConfigs(r.symbol) : PairConfigManager.getMageConfigs(r.symbol);
-        let matchedCfg = liveCfgs?.find((c: any) => c.signature && r.clientId && (c.signature === r.clientId || r.clientId.includes(c.signature)));
-        if (!matchedCfg && liveCfgs && liveCfgs.length > 0) {
+        // Deterministic magic matching
+        let matchedCfg = liveCfgs.find((c: any) => generateMagicNumber(botType.toUpperCase() as any, c.signature!) === r.magic);
+        if (!matchedCfg && r.clientId) {
+          matchedCfg = liveCfgs.find((c: any) => c.signature && (c.signature === r.clientId || r.clientId.includes(c.signature)));
+        }
+        if (!matchedCfg && liveCfgs.length > 0) {
           matchedCfg = liveCfgs[0];
         }
-        const assignedRisk = matchedCfg?.riskPct || riskMap[`${r.symbol}_${botType}`] || 1.0;
 
-        r.pair = r.symbol;
-        r.bot = isSage ? "Sage" : "Mage";
+        // Match to portfolio component
+        let matchedComp = components.find((comp: any) => matchedCfg && comp.riskPct === matchedCfg.riskPct);
+        if (!matchedComp && components.length > 0) {
+          matchedComp = components[0];
+        }
+
+        const assignedRisk = matchedComp?.riskPct || matchedCfg?.riskPct || 0.0115;
+
+        r.pair = cleanSym;
+        r.symbol = cleanSym;
+        r.bot = botType.toUpperCase();
+        r.setup = matchedComp?.setup || matchedCfg?.signature || r.signature || "default";
+        r.configKey = `${r.bot} | ${cleanSym} | ${r.setup}`;
         r.riskMultiplier = assignedRisk;
         r.entryTime = new Date(r.openTime).toISOString();
         r.exitTime = new Date(r.closeTime || r.openTime).toISOString();
       });
+
       allTrades = allTrades.concat(valid);
-      clearMageBacktestCache(pair);
-      clearSageBacktestCache(pair);
+      if (isMage) clearMageBacktestCache(cleanSym);
+      if (isSage) clearSageBacktestCache(cleanSym);
+      if (isSeer) clearSeerBacktestCache(cleanSym);
     } catch (e: any) {
-      console.error(`[SHADOW] Error running ${pair}:`, e.message);
+      console.error(`[SHADOW] Error running ${cleanSym} (${botType}):`, e.message);
     }
   }
 
   allTrades.sort((a, b) => (a.openTime || 0) - (b.openTime || 0));
+
+  allTrades.forEach((t: any) => {
+    const d = new Date(t.exitTime || t.entryTime || t.date || t.time || t.openTime);
+    const estDate = getFixedEstDate(d);
+    let y = estDate.getUTCFullYear();
+    let m = estDate.getUTCMonth() + 1;
+    let day = estDate.getUTCDate();
+    if (estDate.getUTCHours() >= 17) {
+      const nextD = new Date(estDate.getTime() + 24 * 3600 * 1000);
+      y = nextD.getUTCFullYear();
+      m = nextD.getUTCMonth() + 1;
+      day = nextD.getUTCDate();
+    }
+    t.simEstDay = `${y}-${m}-${day}`;
+  });
+
   return allTrades;
 }
 
@@ -105,7 +161,7 @@ async function runRiskModesModule(trades: any[]) {
     for (let i = 0; i < trades.length; i++) {
       const t = trades[i];
       const r = t.rMultiple || 0;
-      const tDateStr = (t.exitTime || t.entryTime || t.date || t.time || "").substring(0, 10);
+      const tDateStr = t.simEstDay || (t.exitTime || t.entryTime || t.date || t.time || "").substring(0, 10);
       const mStr = tDateStr.substring(0, 7);
 
       if (mode === 'MONTHLY' && mStr !== currentMonthStr) {
@@ -368,30 +424,75 @@ async function runPerPairMonthlyMatrixModule(trades: any[]) {
   console.log(` ${currentYear} YR | ${finalYrSummary} | ${finalYrTotStr.padStart(8)}`);
   console.log(`====================================================================================================`);
 
-  const grandPairTotals: Record<string, { r: number; trades: number; wins: number }> = {};
-  for (const s of symbols) grandPairTotals[s] = { r: 0, trades: 0, wins: 0 };
-  for (const s of symbols) {
-    for (const m of months) {
-      grandPairTotals[s].r += matrix[s][m].r;
-      grandPairTotals[s].trades += matrix[s][m].trades;
-      grandPairTotals[s].wins += matrix[s][m].wins;
+  // ─────────────────────────────────────────────────────────
+  // Per-Config Performance Audit (Net R & Max Drawdown in R)
+  // ─────────────────────────────────────────────────────────
+  console.log(`\n🏆 ALL-TIME PER-CONFIG PERFORMANCE & DRAWDOWN AUDIT:`);
+  
+  const configGroups = new Map<string, {
+    bot: string;
+    symbol: string;
+    setup: string;
+    trades: any[];
+  }>();
+
+  for (const t of trades) {
+    const key = t.configKey || `${t.bot || "BOT"} | ${t.symbol || t.pair} | ${t.setup || "default"}`;
+    if (!configGroups.has(key)) {
+      configGroups.set(key, {
+        bot: t.bot || "BOT",
+        symbol: t.symbol || t.pair,
+        setup: t.setup || "default",
+        trades: [],
+      });
     }
+    configGroups.get(key)!.trades.push(t);
   }
 
-  console.log(`\n🏆 ALL-TIME PAIR TOTALS (3-Year Aggregated):`);
-  const pairSummaryTable = symbols.map(s => {
-    const d = grandPairTotals[s];
-    const winPct = d.trades > 0 ? ((d.wins / d.trades) * 100).toFixed(1) + "%" : "0.0%";
-    return {
-      Symbol: s,
-      Trades: d.trades,
-      Wins: d.wins,
+  const configSummaryTable: any[] = [];
+
+  for (const [key, grp] of configGroups.entries()) {
+    // Chronological sort for accurate drawdown calculation
+    grp.trades.sort((a, b) => {
+      const timeA = new Date(a.exitTime || a.entryTime || a.date || a.time || a.openTime).getTime();
+      const timeB = new Date(b.exitTime || b.entryTime || b.date || b.time || b.openTime).getTime();
+      return timeA - timeB;
+    });
+
+    let totalR = 0;
+    let wins = 0;
+    let peakR = 0;
+    let maxDd = 0;
+
+    for (const t of grp.trades) {
+      const r = t.rMultiple || 0;
+      totalR += r;
+      if (r > 0.0001) wins++;
+
+      if (totalR > peakR) peakR = totalR;
+      const dd = peakR - totalR;
+      if (dd > maxDd) maxDd = dd;
+    }
+
+    const tradeCount = grp.trades.length;
+    const winPct = tradeCount > 0 ? ((wins / tradeCount) * 100).toFixed(1) + "%" : "0.0%";
+    const avgR = tradeCount > 0 ? (totalR / tradeCount).toFixed(2) + " R" : "0.00 R";
+
+    configSummaryTable.push({
+      Bot: grp.bot,
+      Symbol: grp.symbol,
+      Setup: grp.setup,
+      Trades: tradeCount,
+      Wins: wins,
       "Win %": winPct,
-      "Total Net R": (d.r >= 0 ? "+" : "") + d.r.toFixed(2) + " R",
-      "Avg R / Trade": d.trades > 0 ? (d.r / d.trades).toFixed(2) + " R" : "0.00 R",
-    };
-  });
-  console.table(pairSummaryTable);
+      "Net R": (totalR >= 0 ? "+" : "") + totalR.toFixed(2) + " R",
+      "Max DD (R)": maxDd.toFixed(2) + " R",
+      "Avg R": avgR,
+    });
+  }
+
+  configSummaryTable.sort((a, b) => parseFloat(b["Net R"]) - parseFloat(a["Net R"]));
+  console.table(configSummaryTable);
   console.log("====================================================================================================\n");
 }
 

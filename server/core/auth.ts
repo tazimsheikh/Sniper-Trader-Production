@@ -541,6 +541,18 @@ authRouter.post('/profiles/:id/settings', requireAuth, tradeLimiter, async (req:
       registerProfileName(Number(profileId), finalName);
     }
 
+    // 🔄 Immediately refresh LiveOrchestrator in-memory cache for live trading synchronization
+    try {
+      const { LiveOrchestrator } = await import("../trading/engine/LiveOrchestrator.js");
+      const orch = LiveOrchestrator.getInstance(profileId);
+      if (orch) {
+        await orch.refreshProfileCache();
+        console.log(`[Auth] 🔄 LiveOrchestrator profile cache refreshed for P#${profileId} (Risk: ${finalRiskMultiplier}x, Inst: ${finalInstitutionalEnabled}, Cap: ${finalInstitutionalDailyCap}%, Draw: ${finalInstitutionalPeakToDraw}%)`);
+      }
+    } catch (cacheErr: any) {
+      console.warn(`[Auth] Could not refresh LiveOrchestrator cache for P#${profileId}:`, cacheErr.message);
+    }
+
     // ✅ Initialize DWCB Peak Balance to live equity immediately if missing
     let newDwcbPeakBalance: number | null = null;
     if (finalDwcbEnabled && (!existing.dwcb_peak_balance || existing.dwcb_peak_balance === 0)) {
@@ -619,6 +631,18 @@ authRouter.post('/profiles/:id/institutional-reset', requireAuth, async (req: Au
     const today = `${year}-${month}-${day}`;
 
     await db.prepare("UPDATE trading_profiles SET institutional_daily_start_balance = ?, institutional_daily_date = ?, institutional_peak_balance = ? WHERE id = ?").run(liveBalance, today, liveBalance, profileId);
+
+    // 🔄 Immediately refresh LiveOrchestrator in-memory cache for live trading synchronization
+    try {
+      const { LiveOrchestrator } = await import("../trading/engine/LiveOrchestrator.js");
+      const orch = LiveOrchestrator.getInstance(profileId);
+      if (orch) {
+        await orch.refreshProfileCache();
+        console.log(`[Auth] 🔄 LiveOrchestrator profile cache refreshed on institutional reset for P#${profileId}`);
+      }
+    } catch (cacheErr: any) {
+      console.warn(`[Auth] Could not refresh LiveOrchestrator cache on institutional reset for P#${profileId}:`, cacheErr.message);
+    }
 
     res.json({ success: true, message: 'Institutional limits reset successfully.', newStartBalance: liveBalance });
   } catch (err: any) {
@@ -1036,9 +1060,13 @@ authRouter.get('/profiles/:id/metaapi/analytics', requireAuth, async (req: AuthR
       analyticsHistoryCache.set(profileId, historyStats);
     }
 
+    const { processAndCacheBrokerMetrics } = await import("../utils/BrokerMetricsEngine.js");
+    const brokerMetrics = await processAndCacheBrokerMetrics(profileId, accountInfo);
+
     res.json({
       success: true,
       status: 'connected',
+      brokerMetrics,
       account: {
         balance: accountInfo.balance,
         equity: accountInfo.equity,

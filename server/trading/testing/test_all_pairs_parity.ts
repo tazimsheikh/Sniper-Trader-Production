@@ -38,6 +38,7 @@ async function runAll() {
   }
   
   const botPairs = [
+    { bot: "SEER", pairs: Object.keys(SEER_PAIR_CONFIG || {}) },
     { bot: "SAGE", pairs: Object.keys(SAGE_PAIR_CONFIG || {}) },
     { bot: "MAGE", pairs: Object.keys(MAGE_PAIR_CONFIG || {}) },
   ];

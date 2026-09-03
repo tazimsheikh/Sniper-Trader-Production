@@ -58,8 +58,8 @@ export async function runVisionBacktest(
   const config = SEER_PAIR_CONFIG[pair]?.[0];
   if (!config) throw new Error(`Unknown pair: ${pair}`);
 
-  const baseSymbol = pair.replace(".Daily", "");
-  const optConfig = OPTIMIZER_CONFIG[pair] || OPTIMIZER_CONFIG[baseSymbol];
+  const baseSymbol = pair.replace(/\.daily$/i, "");
+  const optConfig = OPTIMIZER_CONFIG[pair] || OPTIMIZER_CONFIG[baseSymbol] || OPTIMIZER_CONFIG[baseSymbol.toUpperCase()];
   if (!optConfig) throw new Error(`No OPTIMIZER_CONFIG found for ${pair}`);
 
   const tickSize = optConfig.tickSize !== undefined ? optConfig.tickSize : 0.0001;
@@ -355,18 +355,6 @@ export async function runVisionBacktest(
     if (!isEngulfing) continue;
 
     if (!isTradeAllowed({ pair, setupType, timestamp: c.timestamp })) continue;
-
-    // DWCB Pre-Flight Check: Do not ask AI if account is blown
-    const currentDd = (localPeak - localBalance) / localPeak;
-    if (currentDd >= 0.29) {
-      if (!dwcbTriggered) {
-        console.warn(
-          `[DWCB] 🛑 ${pair} hit 29% Drawdown (${(currentDd * 100).toFixed(1)}%). Halting all future Vision AI queries.`,
-        );
-        dwcbTriggered = true;
-      }
-      continue; // Save API costs
-    }
 
     // ── Generate chart image ────────────────────────────────────
     const { candles: windowCandles, startIdx } = getChartWindow(

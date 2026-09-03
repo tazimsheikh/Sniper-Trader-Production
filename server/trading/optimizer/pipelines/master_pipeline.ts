@@ -316,37 +316,16 @@ async function runMasterPipeline() {
       ["tsx", "server/trading/optimizer/sage/sage_optimizer.ts"],
       "Sage Optimizer",
     );
-
-    /*
     await runCommand(
       "npx",
-      ["tsx", "server/trading/optimizer/mage/mage_synthesizer.ts"],
-      "Mage Synthesizer",
-    );
-    await runCommand(
-      "npx",
-      ["tsx", "server/trading/optimizer/sage/sage_synthesizer.ts"],
-      "Sage Synthesizer",
-    );
-    */
-
-    /*
-    await runCommand(
-      "npx",
-      ["tsx", "server/trading/optimizer/seer/seer_cluster_optimizer.ts"],
+      ["tsx", "server/trading/optimizer/seer/seer_optimizer.ts"],
       "Seer Optimizer",
     );
-    await runCommand(
-      "npx",
-      ["tsx", "server/trading/optimizer/seer/seer_synthesizer.ts"],
-      "Seer Synthesizer",
-    );
-    */
 
     await runCommand(
       "npx",
       ["tsx", "server/trading/optimizer/grandmaster/grandmaster_synthesizer.ts"],
-      "Grandmaster Synthesizer",
+      "Grandmaster Synthesizer (Tri-Bot)",
     );
 
     await runCommand(
@@ -357,8 +336,20 @@ async function runMasterPipeline() {
 
     await runCommand(
       "npx",
+      ["tsx", "server/trading/optimizer/seer/inject_seer_grandmaster.ts"],
+      "Inject Grandmaster (Seer)",
+    );
+
+    await runCommand(
+      "npx",
       ["tsx", "server/trading/optimizer/grandmaster/inject_toxic_hours.ts"],
-      "Inject Toxic Hours",
+      "Inject Toxic Hours (Mage/Sage)",
+    );
+
+    await runCommand(
+      "npx",
+      ["tsx", "server/trading/optimizer/seer/inject_seer_toxic_hours.ts"],
+      "Inject Toxic Hours (Seer)",
     );
 
     await runCommand(
@@ -375,7 +366,7 @@ async function runMasterPipeline() {
 
 
     console.log(`\n🎉 MASTER PIPELINE COMPLETED SUCCESSFULLY!`);
-    console.log(`🏆 Holy Grail Portfolio injected to PairConfig.ts (Mage + Sage)`);
+    console.log(`🏆 Holy Grail Portfolio injected to PairConfig.ts (Mage + Sage + Seer)`);
     process.exit(0);
 
   } catch (err: any) {

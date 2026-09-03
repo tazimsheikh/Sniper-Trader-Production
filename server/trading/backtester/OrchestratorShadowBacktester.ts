@@ -11,7 +11,7 @@ import { createRequire } from 'module';
 import { pathToFileURL } from 'url';
 import { loadCsv } from './loadCsv.js';
 import { MockBrokerAccount } from './stubs/MockBrokerAccount.js';
-import { MAGE_PAIR_CONFIG, SAGE_PAIR_CONFIG, PairConfigManager } from '../config/PairConfig.js';
+import { MAGE_PAIR_CONFIG, SAGE_PAIR_CONFIG, SEER_PAIR_CONFIG, PairConfigManager } from '../config/PairConfig.js';
 import { OPTIMIZER_CONFIG, getDynamicPipSize } from '../config/OptimizerPairConfig.js';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -117,7 +117,8 @@ export async function runShadowBacktest(pair: string, startDate?: string, endDat
   const LiveOrchestrator = await loadPatchedOrchestrator();
 
   const configArray = MAGE_PAIR_CONFIG[pair] || MAGE_PAIR_CONFIG[pair.replace('.Daily', '')] ||
-                      SAGE_PAIR_CONFIG[pair] || SAGE_PAIR_CONFIG[pair.replace('.Daily', '')];
+                      SAGE_PAIR_CONFIG[pair] || SAGE_PAIR_CONFIG[pair.replace('.Daily', '')] ||
+                      SEER_PAIR_CONFIG[pair] || SEER_PAIR_CONFIG[pair.replace('.Daily', '')];
   const config = Array.isArray(configArray) ? configArray[0] : (configArray || OPTIMIZER_CONFIG[pair] || OPTIMIZER_CONFIG[pair.replace('.Daily', '')]);
   if (!config) throw new Error(`No config for ${pair}`);
 

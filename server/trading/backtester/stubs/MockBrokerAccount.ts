@@ -108,15 +108,19 @@ export class MockBrokerAccount {
   }
 
   private deduceBotId(opts?: any): string {
-    if (opts?.botId) return opts.botId;
-    const cid = opts?.clientId as string | undefined;
-    if (cid) {
-      const upperCid = cid.toUpperCase();
-      if (upperCid.startsWith("S_") || upperCid.startsWith("SAGE_") || upperCid.includes("_SAGE_") || upperCid.includes("_S_")) return "sage";
-      if (upperCid.startsWith("SRC_") || upperCid.startsWith("SEER_") || upperCid.includes("_SEER_") || upperCid.includes("_SRC_")) return "seer";
-      if (upperCid.startsWith("M_") || upperCid.startsWith("MAGE_") || upperCid.includes("_MAGE_") || upperCid.includes("_M_")) return "mage";
+    if (opts?.botId) return String(opts.botId).toUpperCase();
+    if (opts?.magic) {
+      if (opts.magic >= 100000000 && opts.magic < 200000000) return 'MAGE';
+      if (opts.magic >= 200000000 && opts.magic < 300000000) return 'SAGE';
+      if (opts.magic >= 300000000 && opts.magic < 400000000) return 'SEER';
     }
-    return "mage";
+    if (opts?.clientId) {
+      const cid = String(opts.clientId).toUpperCase();
+      if (cid.includes('MAGE')) return 'MAGE';
+      if (cid.includes('SAGE')) return 'SAGE';
+      if (cid.includes('SEER') || cid.includes('SRC_')) return 'SEER';
+    }
+    return "UNKNOWN";
   }
 
   private resolveSageKey(orchestratorState: any, clientId?: string): string | null {
@@ -125,7 +129,7 @@ export class MockBrokerAccount {
     
     const parts = clientId.split('_');
     for (const part of parts) {
-      if (part === "P0" || part === "Psimulator" || (part.startsWith("P") && part.length <= 4) || part === "S" || part === "M" || part === "SRC") continue;
+      if (part === "P0" || part === "Psimulator" || (part.startsWith("P") && part.length <= 4) || part === "S" || part === "M" || part === "SRC" || part === "SAGE" || part === "MAGE" || part === "SEER") continue;
       for (const key of Object.keys(orchestratorState.sageStates)) {
         if (getShortHash(key) === part || key.includes(part)) {
           return key;
@@ -141,7 +145,7 @@ export class MockBrokerAccount {
     
     const parts = clientId.split('_');
     for (const part of parts) {
-      if (part === "P0" || part === "Psimulator" || (part.startsWith("P") && part.length <= 4) || part === "S" || part === "M" || part === "SRC") continue;
+      if (part === "P0" || part === "Psimulator" || (part.startsWith("P") && part.length <= 4) || part === "S" || part === "M" || part === "SRC" || part === "SAGE" || part === "MAGE" || part === "SEER") continue;
       for (const key of Object.keys(orchestratorState.orbStates)) {
         if (getShortHash(key) === part || key.includes(part)) {
           return key;
@@ -244,7 +248,7 @@ export class MockBrokerAccount {
 
   async createMarketBuyOrder(symbol: string, lots: number, sl: number, tp: number, opts?: any) {
     const id = `SIM_${this.orderId++}`;
-    let price = (this.currentCandle?.open || 0) + this.spreadPts;
+    let price = opts?.entryPrice !== undefined ? opts.entryPrice : ((this.currentCandle?.open || 0) + this.spreadPts);
     const c = this.currentCandle;
     const botId = this.deduceBotId(opts);
     
@@ -286,6 +290,7 @@ export class MockBrokerAccount {
         metaOrderId: id,
         clientId: opts?.clientId || botId,
         botId,
+        magic: opts?.magic,
         symbol,
         direction: 'BUY',
         entryPrice: price,
@@ -304,7 +309,7 @@ export class MockBrokerAccount {
 
   async createMarketSellOrder(symbol: string, lots: number, sl: number, tp: number, opts?: any) {
     const id = `SIM_${this.orderId++}`;
-    let price = (this.currentCandle?.open || 0);
+    let price = opts?.entryPrice !== undefined ? opts.entryPrice : (this.currentCandle?.open || 0);
     const c = this.currentCandle;
     const botId = this.deduceBotId(opts);
 
@@ -346,6 +351,7 @@ export class MockBrokerAccount {
           metaOrderId: id,
           clientId: opts?.clientId || botId,
           botId,
+          magic: opts?.magic,
           symbol,
           direction: 'SELL',
           entryPrice: price,
@@ -585,6 +591,7 @@ export class MockBrokerAccount {
                 metaOrderId: orderId,
                 clientId: mageSig,
                 botId: 'MAGE',
+                magic: order.magic,
                 symbol: this.symbol,
                 direction: isBuy ? 'BUY' : 'SELL',
                 entryPrice: pos.openPrice,
@@ -681,12 +688,15 @@ export class MockBrokerAccount {
     // Iterate over broker positions directly so no position is ever orphaned or unmanaged
     for (const pos of Array.from(this.positions.values())) {
       const isBuy = pos.type === 'POSITION_TYPE_BUY';
-      const actualRiskPips = Math.abs(pos.openPrice - (pos.originalSl || pos.sl)) / this.pipSize;
+      const actualRiskPips = (pos as any).intendedRiskPips || (Math.abs(pos.openPrice - (pos.originalSl || pos.sl)) / this.pipSize);
       const effectiveRiskPips = actualRiskPips > 0 ? actualRiskPips : 1;
 
       if (isBuy && c.low <= pos.sl) {
         const exitPrice = (c.open < pos.sl) ? c.open : pos.sl;
-        const rMultiple = ((exitPrice - pos.openPrice) / this.pipSize) / effectiveRiskPips;
+        let rMultiple = ((exitPrice - pos.openPrice) / this.pipSize) / effectiveRiskPips;
+        if ((pos as any).hasTakenPartial) {
+          rMultiple = (1.5 * 0.5) + (rMultiple * 0.5);
+        }
         this.tradeLog.push({
           symbol: this.symbol, direction: 'BUY', entryPrice: pos.openPrice,
           exitPrice: exitPrice, slPrice: pos.sl, originalSl: pos.originalSl || pos.sl, tpPrice: pos.tp, outcome: 'SL',
@@ -713,7 +723,10 @@ export class MockBrokerAccount {
         anyHit = true;
       } else if (!isBuy && c.high + this.spreadPts >= pos.sl) {
         const exitPrice = (c.open + this.spreadPts > pos.sl) ? (c.open + this.spreadPts) : pos.sl;
-        const rMultiple = ((pos.openPrice - exitPrice) / this.pipSize) / effectiveRiskPips;
+        let rMultiple = ((pos.openPrice - exitPrice) / this.pipSize) / effectiveRiskPips;
+        if ((pos as any).hasTakenPartial) {
+          rMultiple = (1.5 * 0.5) + (rMultiple * 0.5);
+        }
         this.tradeLog.push({
           symbol: this.symbol, direction: 'SELL', entryPrice: pos.openPrice,
           exitPrice: exitPrice, slPrice: pos.sl, originalSl: pos.originalSl || pos.sl, tpPrice: pos.tp, outcome: 'SL',
@@ -739,7 +752,10 @@ export class MockBrokerAccount {
         }
         anyHit = true;
       } else if (pos.tp && isBuy && c.high >= pos.tp) {
-        const rMultiple = (pos.tp - pos.openPrice) / this.pipSize / effectiveRiskPips;
+        let rMultiple = (pos.tp - pos.openPrice) / this.pipSize / effectiveRiskPips;
+        if ((pos as any).hasTakenPartial) {
+          rMultiple = (1.5 * 0.5) + (rMultiple * 0.5);
+        }
         this.tradeLog.push({
           symbol: this.symbol, direction: 'BUY', entryPrice: pos.openPrice,
           exitPrice: pos.tp, slPrice: pos.sl, originalSl: pos.originalSl || pos.sl, tpPrice: pos.tp, outcome: 'TP',
@@ -765,7 +781,10 @@ export class MockBrokerAccount {
         }
         anyHit = true;
       } else if (pos.tp && !isBuy && c.low + this.spreadPts <= pos.tp) {
-        const rMultiple = (pos.openPrice - pos.tp) / this.pipSize / effectiveRiskPips;
+        let rMultiple = (pos.openPrice - pos.tp) / this.pipSize / effectiveRiskPips;
+        if ((pos as any).hasTakenPartial) {
+          rMultiple = (1.5 * 0.5) + (rMultiple * 0.5);
+        }
         this.tradeLog.push({
           symbol: this.symbol, direction: 'SELL', entryPrice: pos.openPrice,
           exitPrice: pos.tp, slPrice: pos.sl, originalSl: pos.originalSl || pos.sl, tpPrice: pos.tp, outcome: 'TP',
@@ -851,7 +870,10 @@ export class MockBrokerAccount {
     const profitPips = isBuy
       ? (exitPrice - pos.openPrice) / pipSize
       : (pos.openPrice - exitPrice) / pipSize;
-    const rMultiple = riskPips > 0 ? profitPips / riskPips : 0;
+    let rMultiple = riskPips > 0 ? profitPips / riskPips : 0;
+    if ((pos as any).hasTakenPartial) {
+      rMultiple = (1.5 * 0.5) + (rMultiple * 0.5);
+    }
 
     const estDateProvider = (global as any).__SIM_TIME_PROVIDER__;
     const estDate = estDateProvider ? estDateProvider(new Date(c.timestamp)) : new Date(c.timestamp);
@@ -903,7 +925,11 @@ export class MockBrokerAccount {
   }
 
   async closePositionPartially(positionId: string, volume: number, opts: any) {
-    // For MAGE we don't do partials, but stub it safely
+    const pos = this.positions.get(positionId);
+    if (pos) {
+      (pos as any).hasTakenPartial = true;
+      pos.volume = Math.max(0.01, pos.volume - volume);
+    }
     return { positionId };
   }
 

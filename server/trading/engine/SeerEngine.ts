@@ -62,11 +62,14 @@ import {
   isTradeAllowed,
   isSeerRolloverHalt
 } from "../market/MathFilters.js";
+import { buildBollingerArray, buildRsiArray } from "../market/Indicators.js";
+import { evaluateStacyBurkeSetup } from "../market/SeerMathCore.js";
 import { getIO } from '../../core/socket.js';
 import { renderChart, getChartWindow } from "../ai/ChartRenderer.js";
 import { isEncrypted as realIsEncrypted, decrypt as realDecrypt } from '../../core/crypto.js';
 const isEncrypted = (...args: any[]) => ((global as any).__SIM_CRYPTO__?.isEncrypted || realIsEncrypted)(...args);
 const decrypt = (...args: any[]) => ((global as any).__SIM_CRYPTO__?.decrypt || realDecrypt)(...args);
+import { generateMagicNumber } from "../../utils/magicNumber.js";
 
 
 function isConnectionError(err: any): boolean {
@@ -120,170 +123,60 @@ export async function runPreFlightFilter(
   const seerConfig = (seerConfigArray && seerConfigArray.length > 0) ? seerConfigArray[0] : state.config;
   const botId = orch.getBotIdForSetup(setupType);
   if (!orch.activeBots.has(botId)) return;
-  if (state.activeTrade) return;
-  if (state.m5Buffer.length < 3) return;
-  const c = state.m5Buffer[state.m5Buffer.length - 2];
+  if (state.m5Buffer.length < 2) return;
+  const c = state.m5Buffer[state.m5Buffer.length - 1];
   if (!c) return;
 
-  if (state.lastEstHour !== undefined) {
+  if (state.seerLastEstHour !== undefined) {
     if (
-      (state.lastEstHour < 17 && c.estHour >= 17) ||
-      (state.lastEstHour > c.estHour && c.estHour >= 17) ||
-      (state.currentDateStr && state.currentDateStr !== c.dateStr)
+      (state.seerLastEstHour < 17 && c.estHour >= 17) ||
+      (state.seerLastEstHour > c.estHour && c.estHour >= 17)
     ) {
       state.seerTradeTakenToday = false;
     }
   }
-  state.lastEstHour = c.estHour;
+  state.seerLastEstHour = c.estHour;
   state.currentDateStr = c.dateStr;
 
+  if ((global as any).__SIM_WARMUP__) return;
+  if (state.activeTrade || state.isPlacing) return;
   if (state.seerTradeTakenToday) return;
 
-  const isAllowed = isTradeAllowed({
-    pair: symbol,
-    setupType,
-    timestamp: c.timestamp,
-  });
-  if (!isAllowed) return;
-  const prevC = state.m5Buffer[state.m5Buffer.length - 3];
-  let isEngulfing = false;
-  let expectedDirection = "";
-  const tickSize = seerConfig.tickSize; // Left for fallback if needed
   const optCfg = OPTIMIZER_CONFIG[symbol.replace(".Daily", "")];
-    const pipSize = getDynamicPipSize(symbol);
+  const pipSize = getDynamicPipSize(symbol);
   const ema20 = state.emaArr[state.emaArr.length - 1] ?? 0;
-  let minBodyPips = seerConfig.minBodyPips;
-  if (minBodyPips === void 0) {
-    minBodyPips = 3;
-    if (symbol.includes("XAU")) minBodyPips = 20;
-    else if (symbol.includes("NAS")) minBodyPips = 20;
-    else if (symbol.includes("US30") || symbol.includes("GER40"))
-      minBodyPips = 20;
-    else if (symbol.includes("BTC")) minBodyPips = 7.5;
-    else if (symbol.includes("ETH")) minBodyPips = 2;
-    else if (
-      symbol.includes("JPY") ||
-      symbol.includes("AUD") ||
-      symbol.includes("NZD") ||
-      symbol.includes("CAD")
-    )
-      minBodyPips = 5;
-  }
-  const cTotalPips = Math.abs(c.high - c.low) / pipSize;
-  const cBodyPips = Math.abs(c.close - c.open) / pipSize;
-  const upperWickPips = (c.high - Math.max(c.open, c.close)) / pipSize;
-  const lowerWickPips = (Math.min(c.open, c.close) - c.low) / pipSize;
-  const isBearishEngulfing =
-    c.close < c.open &&
-    prevC.close > prevC.open &&
-    c.open >= prevC.close &&
-    c.close <= prevC.open &&
-    cBodyPips >= minBodyPips;
-  const isBullishEngulfing =
-    c.close > c.open &&
-    prevC.close < prevC.open &&
-    c.open <= prevC.close &&
-    c.close >= prevC.open &&
-    cBodyPips >= minBodyPips;
-  const pinBarWickBodyRatio = seerConfig.pinBarWickBodyRatio ?? 1.5;
-  const isBearishPin =
-    upperWickPips >= cBodyPips * pinBarWickBodyRatio &&
-    upperWickPips >= minBodyPips &&
-    lowerWickPips <= Math.max(2, cBodyPips);
-  const isBullishPin =
-    lowerWickPips >= cBodyPips * pinBarWickBodyRatio &&
-    lowerWickPips >= minBodyPips &&
-    upperWickPips <= Math.max(2, cBodyPips);
-  const isBearishTrigger = isBearishEngulfing || isBearishPin;
-  const isBullishTrigger = isBullishEngulfing || isBullishPin;
-  const peakTolerance = 10 * pipSize;
-  if (setupType === "FRD" || setupType === "DAY3_LONG") {
-    if (isBearishTrigger) {
-      expectedDirection = "SELL";
-      if (setupType === "DAY3_LONG") {
-        const currentDay = state.dailyTracker.getCurrentDaily();
-          let day3HighBeforeC = -Infinity;
-          if (currentDay) {
-            for (let i = state.m5Buffer.length - 3; i >= 0; i--) {
-              const pastC = state.m5Buffer[i];
-              if (pastC.timestamp < currentDay.startTime) break;
-            if (pastC.high > day3HighBeforeC) day3HighBeforeC = pastC.high;
-          }
-        }
-        if (
-          day3HighBeforeC !== -Infinity &&
-          (prevC.high >= day3HighBeforeC - peakTolerance ||
-            c.high >= day3HighBeforeC - peakTolerance)
-        )
-          isEngulfing = true;
-      } else {
-        if (c.high > prevDay.high - (prevDay.high - prevDay.low) * 0.3)
-          isEngulfing = true;
-      }
-    }
-    if (setupType === "FRD" && isBullishTrigger) {
-      expectedDirection = "BUY";
-      if (c.low < prevDay.low + (prevDay.high - prevDay.low) * 0.3)
-        isEngulfing = true;
-    }
-  } else if (setupType === "FGD" || setupType === "DAY3_SHORT") {
-    if (isBullishTrigger) {
-      expectedDirection = "BUY";
-      if (setupType === "DAY3_SHORT") {
-        const currentDay = state.dailyTracker.getCurrentDaily();
-          let day3LowBeforeC = Infinity;
-          if (currentDay) {
-            for (let i = state.m5Buffer.length - 3; i >= 0; i--) {
-              const pastC = state.m5Buffer[i];
-              if (pastC.timestamp < currentDay.startTime) break;
-            if (pastC.low < day3LowBeforeC) day3LowBeforeC = pastC.low;
-          }
-        }
-        if (
-          day3LowBeforeC !== Infinity &&
-          (prevC.low <= day3LowBeforeC + peakTolerance ||
-            c.low <= day3LowBeforeC + peakTolerance)
-        )
-          isEngulfing = true;
-      } else {
-        if (c.low < prevDay.low + (prevDay.high - prevDay.low) * 0.3)
-          isEngulfing = true;
-      }
-    }
-    if (setupType === "FGD" && isBearishTrigger) {
-      expectedDirection = "SELL";
-      if (c.high > prevDay.high - (prevDay.high - prevDay.low) * 0.3)
-        isEngulfing = true;
-    }
-  } else if (setupType === "INSIDE_DAY") {
-    if (isBearishTrigger) {
-      if (prevC.high > prevDay.high || c.high > prevDay.high) {
-        isEngulfing = true;
-        expectedDirection = "SELL";
-      }
-    } else if (isBullishTrigger) {
-      if (prevC.low < prevDay.low || c.low < prevDay.low) {
-        isEngulfing = true;
-        expectedDirection = "BUY";
-      }
-    }
-  } else if (setupType === "LHF_LONG") {
-    expectedDirection = "BUY";
-    if (isBullishTrigger && c.low <= ema20 && c.close > ema20) {
-      isEngulfing = true;
-    }
-  } else if (setupType === "LHF_SHORT") {
-    expectedDirection = "SELL";
-    if (isBearishTrigger && c.high >= ema20 && c.close < ema20) {
-      isEngulfing = true;
+  const prevC = state.m5Buffer[state.m5Buffer.length - 2];
+
+  const bbArr = seerConfig.bbStdDev !== undefined ? buildBollingerArray(state.m5Buffer, 20, 2.0) : null;
+  const bbValues = bbArr && bbArr.length >= 2 ? bbArr[bbArr.length - 2] : undefined;
+
+  const rsiArr = seerConfig.rsiThreshold !== undefined ? buildRsiArray(state.m5Buffer, 14) : null;
+  const rsiValue = rsiArr && rsiArr.length >= 2 ? rsiArr[rsiArr.length - 2] : undefined;
+
+  let day3High = -Infinity;
+  let day3Low = Infinity;
+  const currentDay = state.dailyTracker.getCurrentDaily();
+  if (currentDay) {
+    for (let i = state.m5Buffer.length - 2; i >= 0; i--) {
+      const pastC = state.m5Buffer[i];
+      if (pastC.timestamp < currentDay.startTime) break;
+      if (pastC.high > day3High) day3High = pastC.high;
+      if (pastC.low < day3Low) day3Low = pastC.low;
     }
   }
-  if (!isEngulfing) return;
+
+  let orbStartHour = seerConfig.orbStartHour !== undefined ? seerConfig.orbStartHour : 9;
+  if (seerConfig.orbStartHour === undefined) {
+    if (symbol.includes('JPY')) orbStartHour = 20;
+    else if (symbol === 'GER40') orbStartHour = 3;
+    else if (symbol.includes('EUR') || symbol.includes('GBP')) orbStartHour = 3;
+    else if (symbol === 'XAUUSD') orbStartHour = 8;
+  }
   const estH = c.estHour;
   const isAsia = estH >= 20 && estH < 23;
   const isLondon = estH >= 2 && estH < 5;
-  const isNY = estH >= 8 && estH < 11;
-  let sessions = seerConfig.sessions;
+  const isNY = estH >= 9 && estH < 13;
+  let sessions = seerConfig.sessions || (seerConfig.session ? [seerConfig.session] : undefined);
   if (!sessions) {
     if (symbol.includes("JPY")) sessions = ["asia", "london"];
     else if (symbol.includes("EUR") || symbol.includes("GBP"))
@@ -296,7 +189,78 @@ export async function runPreFlightFilter(
   for (const sess of sessions) {
     if (sess === "asia" && isAsia) inWindow = true;
     if (sess === "london" && isLondon) inWindow = true;
-    if ((sess === "NY_Forex" || sess === "NY_Indices") && isNY) inWindow = true;
+    if ((sess === "NY_Forex" || sess === "NY_Indices" || sess === "ny" || sess === "newyork") && isNY) inWindow = true;
+  }
+
+  const baseSymbol = PairConfigManager.getBaseSymbol(symbol);
+  const dateStr = c.dateStr.split(" ")[0];
+  const windowName = isLondon
+    ? "london"
+    : isNY
+      ? seerConfig.session || "ny"
+      : isAsia
+        ? "asia"
+        : "default";
+
+  let isCatchUp = false;
+  let catchUpLeadTrade: any = null;
+
+  // ── CROSS-ACCOUNT SMART TRADE CATCH-UP ──
+  const leadTrade = globalTradeGate.getActiveLeadTrade("SEER", baseSymbol, windowName, dateStr);
+  if (
+    leadTrade &&
+    (!leadTrade.session || leadTrade.session === windowName) &&
+    leadTrade.leadProfileId !== orch.profileId &&
+    !state.seerTradeTakenToday &&
+    !state.activeTrade &&
+    !state.isEvaluating
+  ) {
+    const isBuy = leadTrade.direction === "BUY";
+    const currentPrice = c.close;
+    const proximityThreshold = Math.max(2.5 * pipSize, 0.10 * Math.abs(leadTrade.entryPrice - leadTrade.slPrice));
+    const distFromLead = isBuy ? (currentPrice - leadTrade.entryPrice) : (leadTrade.entryPrice - currentPrice);
+    const totalTpDist = Math.abs(leadTrade.tpPrice - leadTrade.entryPrice);
+    const pctTowardsTp = distFromLead > 0 ? (distFromLead / (totalTpDist || 1)) : 0;
+    const hitSl = isBuy ? (currentPrice <= leadTrade.slPrice) : (currentPrice >= leadTrade.slPrice);
+
+    if (!hitSl && pctTowardsTp < 0.10 && distFromLead <= proximityThreshold) {
+      logger.info(
+        `[SeerEngine][P#${orch.profileId}] 🔄 Cross-Account Smart Catch-Up triggered for ${baseSymbol} ${leadTrade.direction} (Lead from P#${leadTrade.leadProfileId} at ${leadTrade.entryPrice}, Live: ${currentPrice}, Slippage: ${(distFromLead / pipSize).toFixed(1)} pips)`,
+      );
+      isCatchUp = true;
+      catchUpLeadTrade = leadTrade;
+      inWindow = true;
+    }
+  }
+
+  if (!inWindow) return;
+
+  let mathResult: any = null;
+  let expectedDirection: "BUY" | "SELL" | null = null;
+
+  if (isCatchUp && catchUpLeadTrade) {
+    expectedDirection = catchUpLeadTrade.direction;
+    setupType = "CATCH_UP";
+  } else {
+    mathResult = evaluateStacyBurkeSetup(
+      c,
+      prevC,
+      ema20,
+      prevDay,
+      setupType,
+      seerConfig,
+      pipSize,
+      symbol,
+      false,
+      day3High,
+      day3Low,
+      bbValues,
+      rsiValue
+    );
+
+    if (!mathResult) return;
+    expectedDirection = mathResult.direction;
+    setupType = mathResult.setupType;
   }
 
   // Strict Execution Window Enforcement
@@ -381,12 +345,14 @@ export async function runPreFlightFilter(
       if (inAsia) return wc.estHour >= 19;
       return false;
     });
-    // MATH-ONLY MODE BYPASS: Auto-approve math-derived setups without Vision API call
+    // SMART CATCH-UP / MATH-ONLY AUTO APPROVAL
     const result: VisionDecision = {
       decision: expectedDirection as "BUY" | "SELL",
       confidence: 100,
       setupQuality: 100,
-      reasoning: "Math-only mode auto-approval"
+      reasoning: isCatchUp ? "Cross-Account Smart Catch-Up from Lead Profile" : "Math-only mode auto-approval",
+      stopLoss: isCatchUp && catchUpLeadTrade?.slPrice ? catchUpLeadTrade.slPrice : undefined,
+      takeProfit: isCatchUp && catchUpLeadTrade?.tpPrice ? catchUpLeadTrade.tpPrice : undefined,
     };
     logger.info(`[DiscretionaryTrader] \u{1F52E} Result for ${symbol}: ${result.decision} (${result.confidence}%)`,);
     if (io) {
@@ -460,7 +426,8 @@ export async function runPreFlightFilter(
     if (result.decision === "BUY" || result.decision === "SELL") {
       const optCfg = OPTIMIZER_CONFIG[symbol.replace(".Daily", "")];
       const pipSize3 = getDynamicPipSize(symbol);
-      const e = c.close;
+      const askSpread = (seerConfig.spread ?? optCfg?.spread ?? 0) * pipSize3;
+      const e = result.decision === "BUY" ? c.close + askSpread : c.close;
       const isVolatile =
         symbol.includes("XAU") ||
         symbol.includes("NAS") ||
@@ -486,53 +453,30 @@ export async function runPreFlightFilter(
       let maxSlDist = maxPips * pipSize3;
       if (seerConfig.maxSlDist !== void 0)
         maxSlDist = seerConfig.maxSlDist * pipSize3;
-      const currHigh = currentDay ? currentDay.high : e + minSlDist;
-      const currLow = currentDay ? currentDay.low : e - minSlDist;
-      const pHigh = prevDay2 ? prevDay2.high : e + minSlDist;
-      const pLow = prevDay2 ? prevDay2.low : e - minSlDist;
-      const d3High = day3 ? day3.high : e + minSlDist;
-      const d3Low = day3 ? day3.low : e - minSlDist;
-      const trapHigh = Math.max(c.high, prevC.high);
-      const trapLow = Math.min(c.low, prevC.low);
-      let calculatedSl =
-        result.decision === "SELL"
-          ? trapHigh + seerConfig.spread * pipSize3 + 10 * pipSize3
-          : trapLow - 10 * pipSize3;
-      let minTpDist = (isVolatile ? 40 : 20) * pipSize3;
-      if (seerConfig.minTpDist !== void 0)
-        minTpDist = seerConfig.minTpDist * pipSize3;
-      let defaultTpDist = (isVolatile ? 100 : 40) * pipSize3;
-      if (seerConfig.defaultTpDist !== void 0)
-        defaultTpDist = seerConfig.defaultTpDist * pipSize3;
-      let maxTpDist = (isVolatile ? 100 : 50) * pipSize3;
-      if (seerConfig.maxTpDist !== void 0)
-        maxTpDist = seerConfig.maxTpDist * pipSize3;
-      let calculatedTp = e;
-      if (result.decision === "SELL") {
-        if (e - d3Low >= minTpDist)
-          calculatedTp = Math.max(d3Low, e - maxTpDist);
-        else if (e - pLow >= minTpDist)
-          calculatedTp = Math.max(pLow, e - maxTpDist);
-        else calculatedTp = e - defaultTpDist;
-      } else {
-        if (d3High - e >= minTpDist)
-          calculatedTp = Math.min(d3High, e + maxTpDist);
-        else if (pHigh - e >= minTpDist)
-          calculatedTp = Math.min(pHigh, e + maxTpDist);
-        else calculatedTp = e + defaultTpDist;
+      let calculatedSl = (isCatchUp && catchUpLeadTrade?.slPrice)
+        ? catchUpLeadTrade.slPrice
+        : (result.decision === "BUY"
+            ? c.low - (2 * pipSize3)
+            : c.high + (2 * pipSize3) + askSpread);
+
+      const slDistPips = Math.abs(e - calculatedSl) / pipSize3;
+      const minSlVal = minSlDist / pipSize3;
+      const maxSlVal = maxSlDist / pipSize3;
+      if (slDistPips < minSlVal) {
+        calculatedSl = result.decision === "BUY"
+          ? e - (minSlVal * pipSize3)
+          : e + (minSlVal * pipSize3);
+      } else if (slDistPips > maxSlVal) {
+        calculatedSl = result.decision === "BUY"
+          ? e - (maxSlVal * pipSize3)
+          : e + (maxSlVal * pipSize3);
       }
-      const structuralSlDist = Math.abs(e - calculatedSl);
-      const maxSlPips = maxSlDist / pipSize3;
-      if (structuralSlDist > maxSlDist) {
-        logger.info(`[DiscretionaryTrader] \u{1F6A8} Rejecting trade on ${symbol}: Structural SL is too wide (${(structuralSlDist / pipSize3).toFixed(1)} pips). Limit is ${maxSlPips} pips.`,);
-        result.decision = "NO_TRADE";
-        return;
-      }
-      if (result.decision === "SELL") {
-        if (calculatedSl < e + minSlDist) calculatedSl = e + minSlDist;
-      } else {
-        if (calculatedSl > e - minSlDist) calculatedSl = e - minSlDist;
-      }
+
+      const tpDist = 100 * pipSize3;
+      let calculatedTp = (isCatchUp && catchUpLeadTrade?.tpPrice)
+        ? catchUpLeadTrade.tpPrice
+        : (result.decision === "BUY" ? e + tpDist : e - tpDist);
+
       const adjustedRiskPips = Math.abs(e - calculatedSl) / pipSize3;
       result.stopLoss = calculatedSl;
       result.takeProfit = calculatedTp;
@@ -548,7 +492,7 @@ export async function runPreFlightFilter(
         let brokerSymbol = symbol;
         let dbId = void 0;
         try {
-          const rolloverDate = getFixedEstDate(new Date());
+          const rolloverDate = getFixedEstDate(new Date(c.timestamp));
           const rolloverH = rolloverDate.getUTCHours();
           const rolloverM = rolloverDate.getUTCMinutes();
           if (isSeerRolloverHalt(rolloverH, rolloverM)) {
@@ -599,11 +543,12 @@ export async function runPreFlightFilter(
           }
           const conn = await getSharedConnection(orch.token, orch.accountId);
           const freshQuote = await conn.getSymbolPrice(brokerSymbol);
-          const freshEntry =
-            result.decision === "BUY" ? freshQuote.ask : freshQuote.bid;
           const spec = getSymbolSpec(symbol.split("_")[0]);
+          const freshEntry = (global as any).__SIM_TIME_PROVIDER__
+            ? roundPrice(e, symbol)
+            : (result.decision === "BUY" ? freshQuote.ask : freshQuote.bid);
           const slippagePips = Math.abs(freshQuote.bid - e) / spec.pipSize;
-          if (slippagePips > 4) {
+          if (!(global as any).__SIM_TIME_PROVIDER__ && slippagePips > 4) {
             logger.info(`[DiscretionaryTrader] \u26D4 ${brokerSymbol} \u2014 Slippage exceeded 4 pips (${slippagePips.toFixed(1)} pips) during AI eval. Trade aborted. freshQuote.bid=${freshQuote.bid} e=${e} spec.pipSize=${spec.pipSize}`,);
             addBotLog(
               orch.profileId,
@@ -657,6 +602,7 @@ export async function runPreFlightFilter(
           }
 
           // Institutional Drawdowns
+          let institutionalMultiplier = 1.0;
           if (profile.institutional_enabled === 1) {
             const dailyCapPct = profile.institutional_daily_cap ? profile.institutional_daily_cap / 100 : 0.025;
             const peakToDrawPct = profile.institutional_peak_to_draw ? profile.institutional_peak_to_draw / 100 : 0.055;
@@ -685,6 +631,19 @@ export async function runPreFlightFilter(
                   }
                 });
                 return;
+              }
+
+              // 🛡️ Dynamic Trailing Proximity Scaling (Adaptive Drawdown De-risking)
+              const rho = absDrawdown / peakToDrawPct; // 0.0 at peak -> 1.0 at limit
+              if (rho >= 0.85) {
+                institutionalMultiplier = 0.15;
+                logger.warn(`[SeerEngine] ⚠️ Institutional Proximity Scaling: Drawdown is ${(rho * 100).toFixed(1)}% of max trailing limit on ${brokerSymbol}. Contracting risk to 15%.`);
+              } else if (rho >= 0.70) {
+                institutionalMultiplier = 0.30;
+                logger.warn(`[SeerEngine] ⚠️ Institutional Proximity Scaling: Drawdown is ${(rho * 100).toFixed(1)}% of max trailing limit on ${brokerSymbol}. Contracting risk to 30%.`);
+              } else if (rho >= 0.50) {
+                institutionalMultiplier = 0.50;
+                logger.warn(`[SeerEngine] ⚠️ Institutional Proximity Scaling: Drawdown is ${(rho * 100).toFixed(1)}% of max trailing limit on ${brokerSymbol}. Contracting risk to 50%.`);
               }
             }
 
@@ -744,14 +703,17 @@ export async function runPreFlightFilter(
           } else if (riskPct2 > 50 && baseMonteCarloRisk > 1.0) {
             riskPct2 = 50;
           }
-          // Dynamic Live Compounding: Always use live account equity for risk basis
-          const riskBasis = effectiveBalance;
+          // Base Risk: use fixed user-defined balance if set, otherwise live equity
+          const riskBasis =
+            profile.base_risk_balance && Number(profile.base_risk_balance) > 0
+              ? Number(profile.base_risk_balance)
+              : effectiveBalance;
           if (!riskBasis || riskBasis <= 0) {
-            logger.error(`[SeerEngine] ❌ Invalid live equity (${riskBasis}). Aborting trade placement for safety on ${brokerSymbol}.`);
+            logger.error(`[SeerEngine] ❌ Invalid balance / live equity (${riskBasis}). Aborting trade placement for safety on ${brokerSymbol}.`);
             return;
           }
           const riskFraction = riskPct2 / 100;
-          const riskAmountUsd = riskBasis * riskFraction * dwcbMultiplier;
+          const riskAmountUsd = riskBasis * riskFraction * dwcbMultiplier * institutionalMultiplier;
           const rawLots = riskAmountUsd / (actualSlPips * pipValuePerLot);
           let safeLots = quantizeLots(
             rawLots,
@@ -760,8 +722,11 @@ export async function runPreFlightFilter(
             liveSpec.maxVolume,
           );
           safeLots = parseFloat(safeLots.toFixed(2));
-          logger.info(`[DiscretionaryTrader] \u2694\uFE0F Executing ${result.decision} on ${brokerSymbol} | Lots: ${safeLots} | SL Pips: ${actualSlPips.toFixed(1)}`,);
-          const clientId = `SRC_${c.timestamp.toString().slice(-6)}`;
+          logger.info(`[DiscretionaryTrader] ⚔️ Executing ${result.decision} on ${brokerSymbol} | Lots: ${safeLots} | SL Pips: ${actualSlPips.toFixed(1)}`,);
+          state.isPlacing = true;
+          state.seerTradeTakenToday = true;
+          const clientId = `SEER_${orch.profileId}_${Date.now().toString(36)}`;
+          const magic = generateMagicNumber("SEER", seerConfig.signature || symbol);
           try {
             const tp = await db
               .prepare("SELECT user_id FROM trading_profiles WHERE id = ?")
@@ -888,8 +853,8 @@ export async function runPreFlightFilter(
                     brokerSymbol,
                     safeLots,
                     cleanSl,
-                    cleanTp,
-                    { clientId },
+                    cleanTp || undefined,
+                    { clientId, magic, entryPrice: freshEntry },
                   );
                 },
                 `MarketBuy:${symbol}`,
@@ -918,8 +883,8 @@ export async function runPreFlightFilter(
                     brokerSymbol,
                     safeLots,
                     cleanSl,
-                    cleanTp,
-                    { clientId },
+                    cleanTp || undefined,
+                    { clientId, magic, entryPrice: freshEntry },
                   );
                 },
                 `MarketSell:${symbol}`,
@@ -965,6 +930,8 @@ export async function runPreFlightFilter(
                 liveSpec?.tickSize || staticSpec.tickSize || 0.00001,
                 liveSpec?.digits || staticSpec.digits || 5
               );
+              const safeRoundedSl = roundPrice(safePrices.pSl, brokerSymbol);
+              const safeRoundedTp = safePrices.pTp ? roundPrice(safePrices.pTp, brokerSymbol) : undefined;
               if (result.decision === "BUY") {
                 orderResult = await enqueueMetaApiRequest(
                   async () =>
@@ -973,9 +940,9 @@ export async function runPreFlightFilter(
                     ).createMarketBuyOrder(
                       brokerSymbol,
                       safeLots,
-                      safePrices.pSl,
-                      safePrices.pTp,
-                      { clientId },
+                      safeRoundedSl,
+                      safeRoundedTp,
+                      { clientId, magic },
                     ),
                   `MarketBuy:${symbol}`,
                   3,
@@ -990,9 +957,9 @@ export async function runPreFlightFilter(
                     ).createMarketSellOrder(
                       brokerSymbol,
                       safeLots,
-                      safePrices.pSl,
-                      safePrices.pTp,
-                      { clientId },
+                      safeRoundedSl,
+                      safeRoundedTp,
+                      { clientId, magic },
                     ),
                   `MarketSell:${symbol}`,
                   3,
@@ -1036,6 +1003,8 @@ export async function runPreFlightFilter(
           state.activeTrade = {
             dbId,
             metaOrderId: orderResult.orderId,
+            clientId,
+            magic,
             botId: orch.getBotIdForSetup(setupType),
             direction: result.decision,
             entryPrice: freshEntry,
@@ -1052,11 +1021,12 @@ export async function runPreFlightFilter(
             unconfirmedSwingHigh: null,
             lastSwingHigh: null,
             lastSwingLow: null,
-            lastConfirmedSL: result.stopLoss,
-            secondLastConfirmedSL: result.stopLoss,
-            lastConfirmedSH: result.stopLoss,
-            secondLastConfirmedSH: result.stopLoss,
+            lastConfirmedSL: cleanSl,
+            secondLastConfirmedSL: cleanSl,
+            lastConfirmedSH: cleanSl,
+            secondLastConfirmedSH: cleanSl,
             openTime: c.timestamp,
+            lastFcEstHour: c.estHour,
           };
           globalTradeGate.register(
             orch.profileId,
@@ -1065,7 +1035,21 @@ export async function runPreFlightFilter(
             result.decision,
             "DISC",
           );
-          logger.info(`[DiscretionaryTrader] \u2705 Order ${orderResult.orderId} placed successfully for ${brokerSymbol}.`,);
+          const baseSymbol = PairConfigManager.getBaseSymbol(symbol);
+          const dateStr = c.dateStr.split(" ")[0];
+          globalTradeGate.registerSessionDirection({
+            botId: "SEER",
+            symbol: baseSymbol,
+            direction: result.decision as "BUY" | "SELL",
+            entryPrice: freshEntry,
+            slPrice: cleanSl,
+            tpPrice: cleanTp,
+            session: windowName,
+            dateStr: dateStr,
+            leadProfileId: orch.profileId,
+            isFilled: true
+          });
+          logger.info(`[DiscretionaryTrader] ✅ Order ${orderResult.orderId} placed successfully for ${brokerSymbol}.`,);
         } catch (execErr) {
           if (isConnectionError(execErr)) {
             logger.error(`[DiscretionaryTrader] Connection error during trade execution for ${brokerSymbol}: ${execErr.message}. Transitioning trade ${dbId} to PENDING_VERIFICATION.`,);
@@ -1106,6 +1090,7 @@ export async function runPreFlightFilter(
     );
   } finally {
     state.isEvaluating = false;
+    state.isPlacing = false;
     globalTradeGate.clearDiscEvaluating(orch.profileId, symbol);
   }
 }
@@ -1116,9 +1101,27 @@ export async function runSeerBot(
   state: any,
   prevDay2: any,
 ) {
-  const seerConfigArray = PairConfigManager.getSeerConfigs(symbol);
-  const seerConfig = (seerConfigArray && seerConfigArray.length > 0) ? seerConfigArray[0] : state.config;
-  await runPreFlightFilter(orch, symbol, state, prevDay2, "FRD");
+  if (!prevDay2) return;
+
+  // Build the list of setup types active for today's daily context.
+  // Order matters: FRD/FGD first (highest conviction), then DAY3, then LHF/INSIDE_DAY.
+  const setupTypes: string[] = [];
+  if (prevDay2.isFirstRedDay)        setupTypes.push("FRD");
+  if (prevDay2.isFirstGreenDay)      setupTypes.push("FGD");
+  if (prevDay2.isDay3BreakoutLongs)  setupTypes.push("DAY3_LONG");
+  if (prevDay2.isDay3BreakoutShorts) setupTypes.push("DAY3_SHORT");
+  if (prevDay2.isInsideDay)          setupTypes.push("INSIDE_DAY");
+  if (prevDay2.isTrendingLong)       setupTypes.push("LHF_LONG");
+  if (prevDay2.isTrendingShort)      setupTypes.push("LHF_SHORT");
+
+  // Fall back to FRD if no daily context has been classified yet.
+  if (setupTypes.length === 0) setupTypes.push("FRD");
+
+  for (const setupType of setupTypes) {
+    // One trade per day per symbol — stop as soon as one fires.
+    if (state.seerTradeTakenToday) break;
+    await runPreFlightFilter(orch, symbol, state, prevDay2, setupType);
+  }
 }
 
 export async function evaluateSeerTrailingOnTick(orch, symbol, state) {
@@ -1129,13 +1132,25 @@ export async function evaluateSeerTrailingOnTick(orch, symbol, state) {
   const trade = state.activeTrade;
   if (!trade) return;
 
-  const currentTime = state.m5Buffer.length > 0 ? state.m5Buffer[state.m5Buffer.length - 1].timestamp : Date.now();
+  const len = state.m5Buffer.length;
+  if (len < 5) return;
+  const c0 = state.m5Buffer[len - 1];
+  const c1 = state.m5Buffer[len - 2];
+  const c2 = state.m5Buffer[len - 3];
+  const c3 = state.m5Buffer[len - 4];
+  const c4 = state.m5Buffer[len - 5];
+
+  const currentTime = c0.timestamp;
   const newsCheck = isNewsBlackout(symbol, new Date(currentTime));
   const isNewsForceClose = newsCheck.blocked;
 
-  if (isNewsForceClose) {
-      const closeReason = `News Force Close: ${newsCheck.reason}`;
-      logger.info(`[DiscretionaryTrader] ⛔ SEER Force Close (News) for ${symbol}.`);
+  const prevFcHour = trade.lastFcEstHour !== undefined ? trade.lastFcEstHour : c0.estHour;
+  trade.lastFcEstHour = c0.estHour;
+  const is1700Rollover = prevFcHour !== -1 && ((prevFcHour < 17 && c0.estHour >= 17) || (prevFcHour > c0.estHour && c0.estHour >= 17));
+
+  if (isNewsForceClose || is1700Rollover) {
+      const closeReason = isNewsForceClose ? `News Force Close: ${newsCheck.reason}` : `EOD Rollover Force Close`;
+      logger.info(`[DiscretionaryTrader] ⛔ SEER Force Close (${isNewsForceClose ? 'News' : 'EOD'}) for ${symbol}.`);
       try {
         await enqueueMetaApiRequest(
           async () => (await getSharedConnection(orch.token, orch.accountId)).closePosition(trade.metaOrderId),
@@ -1155,24 +1170,16 @@ export async function evaluateSeerTrailingOnTick(orch, symbol, state) {
       } catch(e) {}
       return;
   }
-
-  const len = state.m5Buffer.length;
-  if (len < 5) return;
-  const c0 = state.m5Buffer[len - 1];
-  const c1 = state.m5Buffer[len - 2];
-  const c2 = state.m5Buffer[len - 3];
-  const c3 = state.m5Buffer[len - 4];
-  const c4 = state.m5Buffer[len - 5];
   let shouldUpdateSl = false;
   let newSl = trade.slPrice;
   const optCfg = OPTIMIZER_CONFIG[symbol.replace(".Daily", "")];
     const pipSize = getDynamicPipSize(symbol);
-    const askSpread = optCfg ? optCfg.spread : 0;
+    const askSpread = (optCfg ? optCfg.spread : 0) * pipSize;
   if (!trade.hasTakenPartial) {
     const isBuy = trade.direction === "BUY";
     const profitPips = isBuy
-      ? (c0.close - trade.entryPrice) / pipSize
-      : (trade.entryPrice - c0.close) / pipSize;
+      ? (c0.high - trade.entryPrice) / pipSize
+      : (trade.entryPrice - (c0.low + askSpread)) / pipSize;
     const profitR = profitPips / trade.riskPips;
     if (profitR >= 1.5) {
       trade.hasTakenPartial = true;
@@ -1346,7 +1353,7 @@ export async function evaluateSeerTrailingOnTick(orch, symbol, state) {
           trade.secondLastConfirmedSH = trade.lastConfirmedSH;
           trade.lastConfirmedSH = trade.unconfirmedSwingHigh;
           if (trade.secondLastConfirmedSH < trade.slPrice) {
-            newSl = trade.secondLastConfirmedSH + askSpread * pipSize + pipSize;
+            newSl = trade.secondLastConfirmedSH + pipSize;
             shouldUpdateSl = true;
           }
         }

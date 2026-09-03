@@ -242,8 +242,8 @@ settingsRouter.get(
           if (connection) {
             status.metaapi = "connected";
             const info = await connection.getAccountInformation();
-            if (info && info.balance) {
-              accountData = { balance: info.balance };
+            if (info && (info.balance !== undefined || info.equity !== undefined)) {
+              accountData = { balance: info.balance, equity: info.equity, currency: info.currency };
             }
           }
         }
@@ -719,6 +719,13 @@ settingsRouter.post(
           "UPDATE trading_profiles SET dwcb_peak_balance = ? WHERE id = ?",
         )
         .run(balance !== undefined ? balance : null, profileId);
+
+      try {
+        const { LiveOrchestrator } = await import("../trading/engine/LiveOrchestrator.js");
+        const orch = LiveOrchestrator.getInstance(Number(profileId));
+        if (orch) orch.refreshProfileCache().catch(() => {});
+      } catch (e) {}
+
       res.json({
         success: true,
         message: "DWCB peak balance reset successfully.",

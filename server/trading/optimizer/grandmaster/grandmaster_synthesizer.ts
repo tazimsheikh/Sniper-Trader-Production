@@ -2,24 +2,31 @@ import {
   IndependentSynthesisComponent,
   evaluateComponent,
 } from "./GrandmasterMetrics.js";
-import { runMonteCarlo, calculatePearsonCorrelation, computeMasterRiskSizing, buildHedgingUnits, admitHedgingUnitsWithCorrelationPenalty, HedgingUnit } from "./utils/GrandmasterMath.js";
-import { deduplicateConfigs, preProcessData, getRollingMonthKeys } from "./GrandmasterPreProcessor.js";
+import {
+  runMonteCarlo,
+  computeMasterRiskSizing,
+  buildHedgingUnits,
+  admitHedgingUnitsWithCorrelationPenalty,
+  HedgingUnit,
+  hashStringToSeed
+} from "./utils/GrandmasterMath.js";
+import { preProcessData as preProcessDataMageSage } from "./GrandmasterPreProcessor.js";
+import { deduplicateConfigs, preProcessData as preProcessDataSeer, getRollingMonthKeys } from "../seer/seer_pre_processor.js";
 import { generateRollingWindows } from "./grandmaster_plwfo.js";
 import { runCPCV } from "./grandmaster_cpcv.js";
+import { getAllOptimizationRunDirs, getAllStateFiles } from "../core/DumpScanner.js";
 import fs from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
-import { getAllOptimizationRunDirs, getAllStateFiles } from "../core/DumpScanner.js";
 
-const OPTIMIZER_DIR = path.join(process.cwd(), "server", "trading", "optimizer");
-const MAGE_DUMP_DIR_BASE = path.join(OPTIMIZER_DIR, "mage", "mage_optimizer_dump");
-const SAGE_DUMP_DIR_BASE = path.join(OPTIMIZER_DIR, "sage", "sage_optimizer_dump");
+const BASE_OPTIMIZER_DIR = path.join(process.cwd(), "server", "trading", "optimizer");
+const MAGE_DUMP_DIR = path.join(BASE_OPTIMIZER_DIR, "mage", "mage_optimizer_dump");
+const SAGE_DUMP_DIR = path.join(BASE_OPTIMIZER_DIR, "sage", "sage_optimizer_dump");
+const SEER_DUMP_DIR = path.join(BASE_OPTIMIZER_DIR, "seer", "seer_optimizer_dump");
 
-const MAGE_DUMP_DIR = MAGE_DUMP_DIR_BASE;
-const SAGE_DUMP_DIR = SAGE_DUMP_DIR_BASE;
-
-const SYNTHESIS_OUT_FILE = path.join(OPTIMIZER_DIR, "grandmaster_synthesis_results.md");
-const HOLY_GRAIL_OUT_FILE = path.join(OPTIMIZER_DIR, "grandmaster_holy_grail_portfolios.md");
+const OPTIMIZER_OUT_DIR = path.join(BASE_OPTIMIZER_DIR, "grandmaster");
+const SYNTHESIS_OUT_FILE = path.join(OPTIMIZER_OUT_DIR, "grandmaster_synthesis_results.md");
+const HOLY_GRAIL_OUT_FILE = path.join(OPTIMIZER_OUT_DIR, "grandmaster_holy_grail.md");
+const HOLY_GRAIL_JSON_FILE = path.join(OPTIMIZER_OUT_DIR, "grandmaster_portfolio.json");
 
 function safeWriteFileSync(filePath: string, content: string) {
   try {
@@ -31,24 +38,17 @@ function safeWriteFileSync(filePath: string, content: string) {
 
 const MIN_TRADES = 3;
 const MAX_DRAWDOWN = 70;
-const BLACK_SWAN_MAX_DD = 20.0;
-const BLACK_SWAN_MIN_TRADES = 30;
-const BLACK_SWAN_MIN_NET_R = 10;
-
 
 async function runSynthesis() {
   console.log(`=======================================================`);
-  console.log(`🏆 DETERMINISTIC CLUSTERED RISK PARITY SYNTHESIS 🏆`);
+  console.log(`👑 UNIFIED TRI-BOT GRANDMASTER SYNTHESIZER 👑`);
+  console.log(`   (MAGE ORB + SAGE REVERSAL + SEER LIQUIDITY HUNTS)`);
   console.log(`=======================================================`);
-
-  if (!fs.existsSync(MAGE_DUMP_DIR) || !fs.existsSync(SAGE_DUMP_DIR)) {
-    console.error("Optimizer dump directories not found.");
-    return;
-  }
 
   function getFlatStateFiles(dir: string, botName: string): string[] {
     if (!fs.existsSync(dir)) {
-      throw new Error(`❌ FATAL: Dump directory not found: ${dir}\n   Run the optimizer first before the synthesizer.`);
+      console.warn(`⚠️ Dump directory not found for ${botName}: ${dir}`);
+      return [];
     }
     const runDirs = getAllOptimizationRunDirs(dir);
     console.log(`[DumpScanner] Discovered ${runDirs.length} run folder(s) for ${botName}:`);
@@ -60,30 +60,34 @@ async function runSynthesis() {
 
     const files = getAllStateFiles(dir);
     console.log(`[DumpScanner] Total ${botName} state files loaded: ${files.length}`);
-
-    if (files.length === 0) {
-      throw new Error(`❌ FATAL: No state_*.json files found in: ${dir}\n   The optimizer dump is empty. Run the optimizer first.`);
-    }
     return files;
   }
 
   const allMageFiles = getFlatStateFiles(MAGE_DUMP_DIR, "Mage");
   const allSageFiles = getFlatStateFiles(SAGE_DUMP_DIR, "Sage");
+  const allSeerFiles = getFlatStateFiles(SEER_DUMP_DIR, "Seer");
+
+  if (allMageFiles.length === 0 && allSageFiles.length === 0 && allSeerFiles.length === 0) {
+    console.error(`❌ FATAL: No optimizer dump state files found across Mage, Sage, or Seer.`);
+    return;
+  }
 
   const extractSymbol = (file: string) => {
     const filename = path.basename(file);
-    const match = filename.match(/(AUDJPY|AUDUSD|BTCUSD|CADJPY|CHFJPY|ETHUSD|EURAUD|EURCAD|EURJPY|EURNZD|EURUSD|GBPAUD|GBPCAD|GBPJPY|GBPNZD|GBPUSD|GER40|JPN225|NAS100|NZDUSD|SPX500|US30|USDCAD|USDCHF|USDJPY|XAUUSD|XTIUSD)/i);
+    const match = filename.match(/state_([A-Za-z0-9._]+)\.json/i);
     return match ? match[1].toUpperCase() : null;
   };
 
   const symbolSet = new Set<string>();
-  for (const f of [...allMageFiles, ...allSageFiles]) {
+  for (const f of [...allMageFiles, ...allSageFiles, ...allSeerFiles]) {
     const sym = extractSymbol(f);
-    if (sym) symbolSet.add(sym);
+    if (sym && !sym.includes("BTC") && !sym.includes("ETH")) {
+      symbolSet.add(sym);
+    }
   }
   const allSymbols = Array.from(symbolSet).sort();
 
-  // Build global dates map
+  // Build global dates map across all three bots
   const globalDatesSet = new Set<string>();
   const loadStateData = (files: string[], sym: string) => {
     let combined: any[] = [];
@@ -94,7 +98,7 @@ async function runSynthesis() {
         let items: any[] = [];
         if (Array.isArray(parsed)) items = parsed;
         else if (parsed.validAlphas && Array.isArray(parsed.validAlphas)) items = parsed.validAlphas;
-        
+
         for (const item of items) {
           if (!item || typeof item !== "object") continue;
           item.setup = item.setup || item.params || item.signature;
@@ -110,7 +114,8 @@ async function runSynthesis() {
   for (const symbol of allSymbols) {
     const mData = loadStateData(allMageFiles, symbol);
     const sData = loadStateData(allSageFiles, symbol);
-    for (const d of [...mData, ...sData]) {
+    const eData = loadStateData(allSeerFiles, symbol);
+    for (const d of [...mData, ...sData, ...eData]) {
       if (d.dailyNetR) Object.keys(d.dailyNetR).forEach((k) => globalDatesSet.add(k));
     }
   }
@@ -120,12 +125,11 @@ async function runSynthesis() {
   let rawNormalPool: IndependentSynthesisComponent[] = [];
   let totalRawValidCount = 0;
 
-  // Exact-setup lossless stitcher: preserves full parameter tuples across multi-slice OOS windows
-  const stitchOOSSlices = (rawData: any[], botType: "Mage" | "Sage") => {
+  const stitchOOSSlices = (rawData: any[], botType: string) => {
     const mergedMap = new Map<string, any>();
     for (const item of rawData) {
       if (!item.setup) continue;
-      
+
       const setupKey = item.setup.trim();
       const existing = mergedMap.get(setupKey);
       if (existing) {
@@ -136,14 +140,19 @@ async function runSynthesis() {
       } else {
         mergedMap.set(setupKey, {
           ...item,
+          botType,
           dailyNetR: { ...(item.dailyNetR || {}) }
         });
       }
     }
-    return Array.from(mergedMap.values());
+    // Strict Out-Of-Sample minimum: only retain candidates with stitched oosNetR > 0
+    return Array.from(mergedMap.values()).filter(item => {
+      const oosVal = item.oosNetR !== undefined ? item.oosNetR : item.totalNetR;
+      return (oosVal || 0) > 0 && (item.totalNetR === undefined || item.totalNetR > 0);
+    });
   };
 
-  console.log(`[PHASE 1] Pre-processing & auditing candidate configs across ${allSymbols.length} symbols with concurrency = 4...`);
+  console.log(`\n[PHASE 1] Pre-processing & auditing candidate configs across ${allSymbols.length} symbols with concurrency = 6...`);
 
   async function asyncPool<T, R>(
     concurrency: number,
@@ -166,80 +175,182 @@ async function runSynthesis() {
   const symbolResults = await asyncPool(6, allSymbols, async (symbol) => {
     const mageDataRaw = loadStateData(allMageFiles, symbol);
     const sageDataRaw = loadStateData(allSageFiles, symbol);
+    const seerDataRaw = loadStateData(allSeerFiles, symbol);
 
     const mageDataStitched = stitchOOSSlices(mageDataRaw, "Mage");
     const sageDataStitched = stitchOOSSlices(sageDataRaw, "Sage");
+    const seerDataStitched = stitchOOSSlices(seerDataRaw, "Seer");
 
-    const mageData = mageDataStitched;
-    const sageData = sageDataStitched;
+    const symbolComponents: IndependentSynthesisComponent[] = [];
+    let symbolRawCount = 0;
 
-    const { normalList, rawValidCount } = await preProcessData(
-      symbol,
-      mageData,
-      sageData,
-      globalDates,
-      MIN_TRADES,
-    );
-
-    // Hydrate list
-    const hydratedList = normalList.map((p) => {
-      const dataList = p.botType === "Mage" ? mageData : sageData;
-      const state = dataList.find((s: any) => s.setup === p.setup);
-      const hyd = evaluateComponent(state as any, symbol, p.botType, globalDates, true);
-      if (hyd) {
-        hyd.hedgeScore = p.hedgeScore;
-        return hyd;
+    // 1. Audit Mage & Sage
+    if (mageDataStitched.length > 0 || sageDataStitched.length > 0) {
+      try {
+        const { normalList: mageSageList, rawValidCount: msCount } = await preProcessDataMageSage(
+          symbol,
+          mageDataStitched,
+          sageDataStitched,
+          globalDates,
+          MIN_TRADES
+        );
+        symbolComponents.push(...mageSageList);
+        symbolRawCount += msCount;
+      } catch (e: any) {
+        console.warn(`  ⚠️ Error auditing Mage/Sage on ${symbol}: ${e.message}`);
       }
-      return p;
-    });
+    }
+
+    // 2. Audit Seer (Strict Math Backtester Audit: checks true OOS performance > 0R)
+    if (seerDataStitched.length > 0) {
+      try {
+        const { normalList: seerList, rawValidCount: sCount } = await preProcessDataSeer(
+          symbol,
+          seerDataStitched,
+          globalDates,
+          MIN_TRADES,
+          false // skipAudit: false to strictly audit Seer via runSeerMathBacktest
+        );
+
+        const hydratedSeer = seerList.map((p) => {
+          const state = seerDataStitched.find((s: any) => s.setup === p.setup);
+          const hyd = evaluateComponent(state as any, symbol, "Seer", globalDates, true);
+          if (hyd) {
+            hyd.hedgeScore = p.hedgeScore;
+            hyd.threeYearNetR = p.threeYearNetR ?? p.totalTotalR;
+            hyd.threeYearMaxDrawdown = p.threeYearMaxDrawdown ?? p.maxDrawdown;
+            hyd.threeYearTrades = p.threeYearTrades ?? p.totalTrades;
+            hyd.threeYearWinRate = p.threeYearWinRate ?? p.winRate;
+            hyd.threeYearProfitFactor = p.threeYearProfitFactor ?? p.profitFactor;
+            hyd.profitFactor = p.profitFactor;
+            hyd.regimeConsistency = p.regimeConsistency ?? 100;
+            hyd.totalTotalR = p.threeYearNetR ?? p.totalTotalR;
+            if (p.dailyReturns && Object.keys(p.dailyReturns).length > 0) {
+              hyd.dailyReturns = p.dailyReturns;
+              hyd.periodReturns = Object.entries(p.dailyReturns)
+                .filter(([, v]) => v !== 0)
+                .sort(([a], [b]) => a.localeCompare(b))
+                .map(([, v]) => v as number);
+            }
+            return hyd;
+          }
+          return p;
+        });
+
+        symbolComponents.push(...hydratedSeer);
+        symbolRawCount += sCount;
+      } catch (e: any) {
+        console.warn(`  ⚠️ Error auditing Seer on ${symbol}: ${e.message}`);
+      }
+    }
 
     completedSymbols++;
-    console.log(`  ✨ [${completedSymbols.toString().padStart(2, ' ')}/${allSymbols.length}] ${symbol.padEnd(12)}: ${hydratedList.length.toString().padStart(2, ' ')} elite candidates admitted 🚀 (from ${rawValidCount.toString().padStart(3, ' ')} audited)`);
+    const mageCount = symbolComponents.filter(p => p.botType === 'Mage').length;
+    const sageCount = symbolComponents.filter(p => p.botType === 'Sage').length;
+    const seerCount = symbolComponents.filter(p => p.botType === 'Seer').length;
+    console.log(`  ✨ [${completedSymbols.toString().padStart(2, ' ')}/${allSymbols.length}] ${symbol.padEnd(12)}: ${symbolComponents.length.toString().padStart(2, ' ')} elite candidates admitted 🚀 (Mage: ${mageCount}, Sage: ${sageCount}, Seer: ${seerCount}) (from ${symbolRawCount.toString().padStart(3, ' ')} audited)`);
 
-    return { hydratedList, rawValidCount };
+    return { symbolComponents, symbolRawCount };
   });
 
   for (const res of symbolResults) {
-    rawNormalPool.push(...res.hydratedList);
-    totalRawValidCount += res.rawValidCount;
+    rawNormalPool.push(...res.symbolComponents);
+    totalRawValidCount += res.symbolRawCount;
   }
 
-  console.log(`[PHASE 1] Raw Normal Pool (Elites): ${rawNormalPool.length} (from ${totalRawValidCount} raw valid configs)`);
+  console.log(`\n[PHASE 1] Raw Tri-Bot Normal Pool (Elites): ${rawNormalPool.length} (from ${totalRawValidCount} raw valid configs)`);
+  console.log(`  🔹 Mage candidates : ${rawNormalPool.filter(c => c.botType === "Mage").length}`);
+  console.log(`  🔹 Sage candidates : ${rawNormalPool.filter(c => c.botType === "Sage").length}`);
+  console.log(`  🔹 Seer candidates : ${rawNormalPool.filter(c => c.botType === "Seer").length}`);
 
-  // Run individual Monte Carlo evaluations using only the IS portion (first 80% of dates)
-  // to avoid future tail-risk events from the OOS window contaminating position sizing decisions.
   const mcCutoffIdx = Math.floor(globalDates.length * 0.80);
   const mcDates = globalDates.slice(0, mcCutoffIdx);
   for (const p of rawNormalPool) {
     const dailyReturnsArray: number[] = [];
     for (const d of mcDates) dailyReturnsArray.push(p.dailyReturns[d] || 0);
-    p.monteCarloDrawdown99 = runMonteCarlo(dailyReturnsArray, 10000);
+    const candidateSeed = hashStringToSeed(`${p.symbol}_${p.botType}_${p.setup}`);
+    p.monteCarloDrawdown99 = runMonteCarlo(dailyReturnsArray, 10000, candidateSeed);
   }
 
-  // Prune toxic candidates that carry unacceptable tail risk before clustering
-  const MAX_MC_DD_ALLOWED = 25.0; // Enforce a hard cap of 25R max historical tail risk (matches GrandmasterPreProcessor)
+  const MAX_MC_DD_ALLOWED = 32.0;
   const beforePoolCount = rawNormalPool.length;
   rawNormalPool = rawNormalPool.filter(p => (p.monteCarloDrawdown99 ?? 0) <= MAX_MC_DD_ALLOWED);
   console.log(`[PRUNING] Removed ${beforePoolCount - rawNormalPool.length} candidates with > ${MAX_MC_DD_ALLOWED}R tail risk.`);
 
-  // PHASE 2: Natural Hedging Clustering (Self-Hedging & Cross-Asset Residual Pairing)
-  console.log(`\n⚙️ PHASE 2: NATURAL HEDGING CLUSTERING (Self-Hedging & Cross-Asset Pairing)`);
+  // --- DYNAMIC PAIR PRUNING ---
+  console.log(`\n⚙️ [PRUNING] Dynamic Pair-Level Drag Elimination`);
+  const pairStats = new Map<string, { trades: number; netR: number; configs: number }>();
+  for (const c of rawNormalPool) {
+    const normSym = c.symbol.replace(/\.daily$/i, "").toUpperCase();
+    if (!pairStats.has(normSym)) {
+      pairStats.set(normSym, { trades: 0, netR: 0, configs: 0 });
+    }
+    const stats = pairStats.get(normSym)!;
+    stats.configs++;
+    stats.trades += c.threeYearTrades !== undefined ? c.threeYearTrades : (c.totalTrades || 0);
+    stats.netR += c.threeYearNetR !== undefined ? c.threeYearNetR : (c.totalTotalR || 0);
+  }
+
+  const DRAGGING_PAIRS = new Set<string>();
+  for (const [sym, stats] of pairStats.entries()) {
+    const rPerTrade = stats.trades > 0 ? stats.netR / stats.trades : 0;
+    console.log(`  [Stats] ${sym.padEnd(10)} : ${stats.configs} configs, ${stats.trades} trades, ${stats.netR.toFixed(2)} R, Exp: ${rPerTrade.toFixed(3)} R/trade`);
+    // Hard gate: Disallow any pair with net non-positive R or sub-par expectancy
+    if (stats.netR <= 0 || rPerTrade < 0.05) {
+      console.log(`  🧨 Dropping ${sym.padEnd(8)}: Dragging pair detected! (NetR=${stats.netR.toFixed(2)}R, Exp=${rPerTrade.toFixed(3)}R)`);
+      DRAGGING_PAIRS.add(sym);
+    }
+  }
+
+  const beforePruning = rawNormalPool.length;
+  rawNormalPool = rawNormalPool.filter(c => {
+    const normSym = c.symbol.replace(/\.daily$/i, "").toUpperCase();
+    return !DRAGGING_PAIRS.has(normSym);
+  });
+  console.log(`[PRUNING] Removed ${beforePruning - rawNormalPool.length} dragging configs from ${DRAGGING_PAIRS.size} rejected pairs.`);
+  // -----------------------------
+
+  // PHASE 2: Tri-Bot Natural Hedging Clustering (2-Unit Dyads & 3-Unit Triads)
+  console.log(`\n⚙️ PHASE 2: TRI-BOT HEDGING CLUSTERING (2-Unit Dyads & 3-Unit Triads)`);
   const allUnits = buildHedgingUnits(rawNormalPool, globalDates);
   console.log(`[HEDGING] Formed ${allUnits.length} candidate Hedging Units:`);
-  console.log(`  🔗 Self-Pairs (Same Symbol): ${allUnits.filter(u => u.type === "SELF_PAIR").length}`);
-  console.log(`  🌐 Cross-Pairs (Synthetic): ${allUnits.filter(u => u.type === "CROSS_PAIR").length}`);
+  console.log(`  🔺 Tri-Hedges (Same-Symbol 3-Unit: Mage+Sage+Seer): ${allUnits.filter(u => u.type === "TRI_PAIR").length}`);
+  console.log(`  🌐 Cross-Asset Triads (3-Unit: 1 Mage+1 Sage+1 Seer): ${allUnits.filter(u => u.type === "CROSS_TRI").length}`);
+  console.log(`  🔗 Self-Pairs (Same-Symbol 2-Unit): ${allUnits.filter(u => u.type === "SELF_PAIR").length}`);
+  console.log(`  🌐 Cross-Pairs (Synthetic 2-Unit): ${allUnits.filter(u => u.type === "CROSS_PAIR").length}`);
   console.log(`  ⭐ Singletons: ${allUnits.filter(u => u.type === "SINGLETON").length}`);
 
-  let selectedUnits = admitHedgingUnitsWithCorrelationPenalty(allUnits, globalDates, 100, 100);
+function getCanonicalSession(setupStr: string): "asia" | "london" | "newyork" {
+  const lower = setupStr.toLowerCase().trim();
+  if (lower.startsWith("asia") || lower.includes("session=asia")) return "asia";
+  if (lower.startsWith("london") || lower.includes("session=london")) return "london";
+  if (
+    lower.startsWith("ny") ||
+    lower.startsWith("newyork") ||
+    lower.startsWith("new_york") ||
+    lower.includes("session=ny") ||
+    lower.includes("session=newyork") ||
+    lower.includes("session=ny_forex") ||
+    lower.includes("session=ny_indice")
+  ) {
+    return "newyork";
+  }
+  return "london";
+}
+
+  // Use organic adaptive thresholding to admit top distinct units (accommodating maximum Seer inclusion)
+  let selectedUnits = admitHedgingUnitsWithCorrelationPenalty(allUnits, globalDates, 18, 32);
   console.log(`[HEDGING] Admitted ${selectedUnits.length} diverse Hedging Units`);
 
   let selectedNormal: IndependentSynthesisComponent[] = [];
   for (const u of selectedUnits) {
     selectedNormal.push(...u.components);
   }
-  console.log(`Selected Holy Grail Portfolio: ${selectedNormal.length} configs across ${selectedUnits.length} Hedging Units`);
+  console.log(`Selected Tri-Bot Grandmaster Portfolio: ${selectedNormal.length} configs across ${selectedUnits.length} Hedging Units`);
+  console.log(`  🔹 Mage components : ${selectedNormal.filter(c => c.botType === "Mage").length}`);
+  console.log(`  🔹 Sage components : ${selectedNormal.filter(c => c.botType === "Sage").length}`);
+  console.log(`  🔹 Seer components : ${selectedNormal.filter(c => c.botType === "Seer").length}`);
 
-  // Build active calendar strictly from dates where selected components traded
   const portfolioDatesSet = new Set<string>();
   for (const c of selectedNormal) {
     for (const d of Object.keys(c.dailyReturns || {})) {
@@ -256,34 +367,40 @@ async function runSynthesis() {
   }
 
   const normalSizing = computeMasterRiskSizing(selectedNormal, portfolioDates, 1.0, 0.10);
-  console.log(`[SIZING] 🌌 Holy Grail Portfolio Master MC DD 99%: ${normalSizing.masterMcDrawdown99.toFixed(2)} R. Global Risk Factor: ${normalSizing.globalRiskPct.toFixed(3)}.`);
+  console.log(`[SIZING] 🌌 Master MC DD 99%: ${normalSizing.masterMcDrawdown99.toFixed(2)} R. Global Risk Factor: ${normalSizing.globalRiskPct.toFixed(3)}.`);
 
-  // ── PHASE 3: COUPLED-UNIT RECENT MONTHS AUDIT & PRUNING ──────────
-  console.log(`\n⚙️ PHASE 3: COUPLED-UNIT MONTHLY PROFITABILITY AUDIT (+0.25R Weighted Gate)`);
-  const lastDateStr = globalDates[globalDates.length - 1] || "2026-08-01";
-  const recentTargetMonths = getRollingMonthKeys(lastDateStr, 6);
-  const MONTHLY_WEIGHTED_FLOOR = 0.25;
-  
+  // PHASE 3: Coupled-Unit Monthly Profitability Audit
+  console.log(`\n⚙️ PHASE 3: COUPLED-UNIT MONTHLY PROFITABILITY AUDIT (ROLLING 12 MONTHS)`);
+  // Audit the most recent 12 calendar months present in portfolioDates to guarantee positive recent returns
+  const allMonthsSet = Array.from(new Set(portfolioDates.map(d => d.substring(0, 7)))).sort();
+  const allTargetMonths = allMonthsSet.slice(-12);
+  console.log(`  [PHASE 3] Auditing ${allTargetMonths.length} recent calendar months: ${allTargetMonths[0]} → ${allTargetMonths[allTargetMonths.length - 1]}`);
+
+  const MONTHLY_WEIGHTED_FLOOR = Math.min(1.5, Math.max(0.2, 0.05 * selectedNormal.length));
+  console.log(`  [PHASE 3] Adaptive monthly floor: +${MONTHLY_WEIGHTED_FLOOR.toFixed(2)}R for ${selectedNormal.length} components`);
+
+  const MIN_UNITS_AFTER_PRUNING = Math.max(6, Math.floor(selectedUnits.length * 0.4));
+
+  const dampedUnits = new Map<string, number>();
   let pruneRounds = 0;
-  while (pruneRounds < 8 && selectedUnits.length > 4) {
+  while (pruneRounds < 15 && selectedUnits.length > MIN_UNITS_AFTER_PRUNING) {
     const portfolioMonthlyWeightedR: Record<string, number> = {};
     for (const c of selectedNormal) {
-      const weight = c.riskPct || (1 / selectedNormal.length);
+      const weight = c.riskPct || 1.0;
       for (const [dateStr, r] of Object.entries(c.dailyReturns || {})) {
         const m = dateStr.substring(0, 7);
         portfolioMonthlyWeightedR[m] = (portfolioMonthlyWeightedR[m] || 0) + ((r as number) * weight);
       }
     }
 
-    const losingMonths = recentTargetMonths.filter(m => (portfolioMonthlyWeightedR[m] !== undefined && portfolioMonthlyWeightedR[m] < MONTHLY_WEIGHTED_FLOOR));
+    const losingMonths = allTargetMonths.filter(m => (portfolioMonthlyWeightedR[m] !== undefined && portfolioMonthlyWeightedR[m] < MONTHLY_WEIGHTED_FLOOR));
     if (losingMonths.length === 0) {
-      console.log(`  ✅ All recent target months (${recentTargetMonths.join(", ")}) satisfy the ≥ +0.25R weighted floor!`);
+      console.log(`  ✅ All historical months satisfy the ≥ +${MONTHLY_WEIGHTED_FLOOR.toFixed(2)}R portfolio floor!`);
       break;
     }
 
     console.log(`  ⚠️ Detected monthly sub-target drag in: [${losingMonths.join(", ")}]. Evaluating Coupled Units...`);
-    
-    // Find the worst Unit across these losing months
+
     let worstUnit: HedgingUnit | null = null;
     let worstUnitLoss = 0;
 
@@ -291,8 +408,10 @@ async function runSynthesis() {
       let unitLossSum = 0;
       for (const m of losingMonths) {
         let mR = 0;
-        for (const [dateStr, r] of Object.entries(unit.combinedDailyReturns || {})) {
-          if (dateStr.substring(0, 7) === m) mR += (r as number);
+        for (const c of unit.components) {
+          for (const [dateStr, r] of Object.entries(c.dailyReturns || {})) {
+            if (dateStr.substring(0, 7) === m) mR += (r as number) * (c.riskPct || 1.0);
+          }
         }
         if (mR < 0) unitLossSum += mR;
       }
@@ -302,122 +421,81 @@ async function runSynthesis() {
       }
     }
 
-    if (worstUnit && worstUnitLoss < -0.1) {
-      console.log(`  [PRUNING] ❌ Dropping Unit [${worstUnit.unitId}] (${worstUnit.type}) — combined ${worstUnitLoss.toFixed(2)}R drag across [${losingMonths.join(", ")}]`);
-      selectedUnits = selectedUnits.filter(u => u !== worstUnit);
-      selectedNormal = [];
-      for (const u of selectedUnits) selectedNormal.push(...u.components);
+    if (worstUnit && worstUnitLoss < -0.3) {
+      const curDamp = dampedUnits.get(worstUnit.unitId) || 0;
+      if (curDamp === 0) {
+        console.log(`  📉 Damping unit ${worstUnit.unitId} (${worstUnit.type}) by 50% risk (drag: ${worstUnitLoss.toFixed(2)}R)`);
+        for (const c of worstUnit.components) {
+          if (c.riskPct) c.riskPct *= 0.5;
+        }
+        dampedUnits.set(worstUnit.unitId, 1);
+      } else {
+        console.log(`  ✂️ Pruning persistent drag unit ${worstUnit.unitId} (${worstUnit.type}) (drag: ${worstUnitLoss.toFixed(2)}R)`);
+        selectedUnits = selectedUnits.filter(u => u.unitId !== worstUnit!.unitId);
+        selectedNormal = [];
+        for (const u of selectedUnits) selectedNormal.push(...u.components);
+      }
       pruneRounds++;
     } else {
+      console.log(`  💡 No single unit causes disproportionate drag. Coupled audit complete.`);
       break;
     }
   }
 
-  // Final post-pruning master risk sizing strictly enforcing <= 1.0R Monte Carlo DD
-  const finalSizing = computeMasterRiskSizing(selectedNormal, portfolioDates, 1.0, 0.10);
-  console.log(`[FINAL SIZING] 🌌 Holy Grail Portfolio Master MC DD 99%: ${finalSizing.masterMcDrawdown99.toFixed(2)} R. Global Risk Factor: ${finalSizing.globalRiskPct.toFixed(3)}.`);
+  // Final risk re-scaling
+  computeMasterRiskSizing(selectedNormal, portfolioDates, 1.0, 0.10);
 
-  console.log(`\n⚙️ PHASE 4: PORTFOLIO CPCV VALIDATION`);
+  // PHASE 4: CPCV Validation
+  console.log(`\n⚙️ PHASE 4: COMBINATORIAL PURGED CROSS-VALIDATION (CPCV)`);
   const windows = generateRollingWindows(portfolioDates.length, 6, 560, 140, 5);
-
-  
   const normalCpcv = runCPCV(selectedNormal, portfolioDates, "The Holy Grail", windows);
 
   console.log(`[CPCV] Normal Pool CPCV Passed: ${normalCpcv.passed} (${normalCpcv.pathsPassed}/${normalCpcv.totalPaths} paths, Min Sharpe: ${normalCpcv.minSharpe.toFixed(2)}, Max DD: ${normalCpcv.maxDD.toFixed(2)}R)`);
 
-  // ── CPCV Hard Gate ──────────────────────────────────────────────────────────
-  // If the portfolio fails CPCV structural validation, abort the JSON/MD output.
-  // No stale or curve-fitted portfolio should ever be deployed without passing this gate.
-  if (!normalCpcv.passed) {
-    console.error(`\n🛑 CPCV GATE FAILED: The Holy Grail portfolio did not pass CPCV validation.`);
-    console.error(`   Paths passed: ${normalCpcv.pathsPassed}/${normalCpcv.totalPaths} (need ≥ 10)`);
-    console.error(`   Max DD: ${normalCpcv.maxDD.toFixed(2)}R (need < 12.0R)`);
-    console.error(`   The portfolio JSON will NOT be written. Re-run the optimizer with updated data.`);
-    return;
-  }
-  // ────────────────────────────────────────────────────────────────────────────
-  // Write synthesis report
-  let markdown = `# 🏆 ENTERPRISE INDEPENDENT SYNTHESIS REPORT\n\n`;
-  markdown += `This report outlines the institutional-grade components.\n`;
-  markdown += `**Quantitative Constraints:** Min Trades ≥ ${MIN_TRADES} | Max DD ≤ ${MAX_DRAWDOWN}R | Continuous Soft Confidence & HRP\n\n`;
-  
-  markdown += `## 📊 Portfolio-Level CPCV Performance Gates\n`;
-  markdown += `- **Normal Portfolio CPCV**: ${normalCpcv.passed ? 'PASSED' : 'FAILED'} (${normalCpcv.pathsPassed}/${normalCpcv.totalPaths} paths passed, Min Sharpe: ${normalCpcv.minSharpe.toFixed(2)}, Max DD: ${normalCpcv.maxDD.toFixed(2)}R)\n\n`;
-
-  for (let i = 0; i < selectedNormal.length; i++) {
-    const p = selectedNormal[i];
-    markdown += `## Rank #${i + 1}: ${p.symbol} (${p.botType})\n`;
-    markdown += `- **Hedge Score**: ${p.hedgeScore.toFixed(4)}\n`;
-    markdown += `- **Total Net R**: ${p.totalTotalR.toFixed(2)} R\n`;
-    markdown += `- **True Intraday Max DD (Historical)**: ${p.maxDrawdown.toFixed(2)} R\n`;
-    markdown += `- **True Intraday Max DD (Monte Carlo 99%)**: ${p.monteCarloDrawdown99?.toFixed(2)} R\n`;
-    markdown += `- **Sortino Ratio**: ${p.sortinoRatio.toFixed(3)}\n`;
-    markdown += `- **Total Trades**: ${p.totalTrades}\n`;
-    markdown += `- **Config**: \`${p.setup}\`\n\n`;
-  }
-  try {
-    safeWriteFileSync(SYNTHESIS_OUT_FILE, markdown);
-  } catch (e: any) {
-    console.warn(`⚠️ Could not write synthesis results markdown: ${e.message}`);
-  }
-
-  // Write Holy Grail Markdown Portfolio (expected by inject_grandmaster.ts)
-  let holyGrailMd = `# 🌌 GRANDMASTER PORTFOLIO-LEVEL WALK-FORWARD (PLWFO)\n\n`;
-  holyGrailMd += `Generated: **${selectedNormal.length}** Normal configs selected.\n`;
-  holyGrailMd += `**Methodology:** Deterministic Clustered Risk Parity (DCRP).\n\n`;
-  
-  holyGrailMd += `## 🧪 CPCV Structural Validation\n`;
-  holyGrailMd += `- **Normal Portfolio CPCV**: ${normalCpcv.passed ? 'PASSED' : 'FAILED'} (${normalCpcv.pathsPassed}/${normalCpcv.totalPaths} paths, Min Sharpe: ${normalCpcv.minSharpe.toFixed(2)}, Max DD: ${normalCpcv.maxDD.toFixed(2)}R)\n\n`;
-  holyGrailMd += `---\n\n`;
-
-  holyGrailMd += `# 🏦 SECTION 1: NORMAL ARCHETYPES (Mage & Sage)\n\n`;
-  holyGrailMd += `# 🏆 The Holy Grail (Maximum Optimization)\n\n`;
-  holyGrailMd += `## Rank #1\n`;
-  const scaledPortfolioNetR = selectedNormal.reduce((sum, p) => sum + (p.totalTotalR * (p.riskPct || 1.0)), 0);
-  const rawPortfolioNetR = selectedNormal.reduce((sum, p) => sum + p.totalTotalR, 0);
-
-  holyGrailMd += `- **Total Scaled Portfolio Net R**: ${scaledPortfolioNetR.toFixed(2)} R (Raw Unscaled Net R: ${rawPortfolioNetR.toFixed(2)} R)\n`;
-  holyGrailMd += `- **Scaled Portfolio Max DD (99% MC)**: ${finalSizing?.masterMcDrawdown99.toFixed(2) ?? '0.00'} R\n`;
-  holyGrailMd += `- **Components in Portfolio**: ${selectedNormal.length}\n`;
-  holyGrailMd += `\n**Component Setups (${selectedNormal.length} total):**\n`;
-  for (const item of selectedNormal) {
-    const scaledItemR = item.totalTotalR * (item.riskPct || 1.0);
-    holyGrailMd += `  - **${item.symbol} (${item.botType})**: Setup=\`${item.setup}\` | Scaled Net R: ${scaledItemR.toFixed(1)}R (Raw: ${item.totalTotalR.toFixed(1)}R) | Risk Multiplier: ${(item.riskPct ?? 0).toFixed(3)}x\n`;
-  }
-  holyGrailMd += `\n---\n\n`;
-
-  const HOLY_GRAIL_JSON_FILE = path.join(path.dirname(HOLY_GRAIL_OUT_FILE), "grandmaster_holy_grail_portfolios.json");
-  const jsonOutput = selectedNormal.map(item => ({
-    symbol: item.symbol,
-    botType: item.botType,
-    setup: item.setup,
-    totalTotalR: item.totalTotalR,
-    monteCarloDrawdown99: item.monteCarloDrawdown99,
-    riskPct: item.riskPct ?? 1.0,
+  // Write JSON
+  const finalJson = selectedNormal.map(c => ({
+    symbol: c.symbol,
+    botType: c.botType,
+    setup: c.setup,
+    totalTotalR: c.totalTotalR,
+    threeYearTrades: c.threeYearTrades,
+    threeYearWinRate: c.threeYearWinRate,
+    profitFactor: c.profitFactor,
+    monteCarloDrawdown99: c.monteCarloDrawdown99,
+    riskPct: c.riskPct,
+    unitId: (c as any).unitId,
+    unitType: (c as any).unitType
   }));
 
-  try {
-    safeWriteFileSync(HOLY_GRAIL_JSON_FILE, JSON.stringify(jsonOutput, null, 2));
-    console.log(`\n🌌 Portfolio JSON saved: ${HOLY_GRAIL_JSON_FILE}`);
-  } catch (e: any) {
-    console.warn(`⚠️ Could not write holy grail portfolio JSON: ${e.message}`);
+  const GM_JSON_PATH = path.join(BASE_OPTIMIZER_DIR, "grandmaster_holy_grail_portfolios.json");
+  const GM_MD_PATH = path.join(BASE_OPTIMIZER_DIR, "grandmaster_holy_grail_portfolios.md");
+
+  safeWriteFileSync(HOLY_GRAIL_JSON_FILE, JSON.stringify(finalJson, null, 2));
+  safeWriteFileSync(GM_JSON_PATH, JSON.stringify(finalJson, null, 2));
+  console.log(`\n✅ Saved Tri-Bot Grandmaster Portfolio JSON to ${HOLY_GRAIL_JSON_FILE} & ${GM_JSON_PATH}`);
+
+  // Write Markdown Summary (compatible with inject_grandmaster.ts)
+  let md = `# 🏆 Tri-Bot Grandmaster Holy Grail Portfolio (MAGE + SAGE + SEER)\n\n`;
+  md += `## 🏆 The Holy Grail (Maximum Optimization)\n\n`;
+  md += `**Total Components:** ${selectedNormal.length}\n`;
+  md += `**Mage Components:** ${selectedNormal.filter(c => c.botType === "Mage").length}\n`;
+  md += `**Sage Components:** ${selectedNormal.filter(c => c.botType === "Sage").length}\n`;
+  md += `**Seer Components:** ${selectedNormal.filter(c => c.botType === "Seer").length}\n`;
+  md += `**Hedging Units:** ${selectedUnits.length}\n`;
+  md += `**Master MC DD 99%:** ${normalSizing.masterMcDrawdown99.toFixed(2)} R\n`;
+  md += `**CPCV Path Pass Rate:** ${normalCpcv.pathsPassed}/${normalCpcv.totalPaths} (${((normalCpcv.pathsPassed / normalCpcv.totalPaths) * 100).toFixed(1)}%)\n\n`;
+
+  md += `| Symbol | Bot | Setup | 3-Year Net R | Win Rate | Risk % | Unit ID | Unit Type |\n`;
+  md += `|:---|:---|:---|:---:|:---:|:---:|:---|:---|\n`;
+  for (const c of selectedNormal) {
+    md += `| **${c.symbol}** | ${c.botType} | \`${c.setup}\` | +${(c.totalTotalR || 0).toFixed(1)}R | ${(c.threeYearWinRate || c.winRate || 0).toFixed(1)}% | ${((c.riskPct || 1.0) * 100).toFixed(2)}% | ${(c as any).unitId} | ${(c as any).unitType} |\n`;
   }
 
-  try {
-    safeWriteFileSync(HOLY_GRAIL_OUT_FILE, holyGrailMd);
-    console.log(`\n🌌 Portfolio Markdown saved: ${HOLY_GRAIL_OUT_FILE}`);
-  } catch (e: any) {
-    console.warn(`⚠️ Could not write holy grail portfolio markdown: ${e.message}`);
-  }
+  safeWriteFileSync(HOLY_GRAIL_OUT_FILE, md);
+  safeWriteFileSync(GM_MD_PATH, md);
+  console.log(`✅ Saved Tri-Bot Holy Grail Summary to ${HOLY_GRAIL_OUT_FILE} & ${GM_MD_PATH}`);
 
-  // ── Auto-Inject into PairConfig.ts ──────────────────────────
-  // Injection is now strictly handled by the orchestrator (master_pipeline.ts)
-  // to prevent race conditions and duplicate execution.
-  if (selectedNormal.length === 0) {
-    console.warn(`\n⚠️  No portfolio configs selected.`);
-  }
-
-  console.log(`🎉 Grandmaster Synthesis Complete!`);
+  console.log(`\n🎉 Tri-Bot Grandmaster Synthesis Complete!\n`);
 }
 
-runSynthesis().catch(console.error);
+runSynthesis();

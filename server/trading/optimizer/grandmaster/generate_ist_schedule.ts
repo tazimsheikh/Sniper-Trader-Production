@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { MAGE_PAIR_CONFIG, SAGE_PAIR_CONFIG } from '../../config/PairConfig.js';
+import { MAGE_PAIR_CONFIG, SAGE_PAIR_CONFIG, SEER_PAIR_CONFIG } from '../../config/PairConfig.js';
 
 function convertNyTimeToIst(nyHour: number, nyMin: number): { istHour: number; istMin: number; istStr: string; totalIstMins: number } {
   // Use Intl.DateTimeFormat to calculate the exact dynamic offset between NY and India (DST-aware)
@@ -83,35 +83,59 @@ interface ScheduleEntry {
 const entries: ScheduleEntry[] = [];
 
 function processConfigs(configs: Record<string, any[]>, botName: string) {
-  for (const [symbol, pairCfgs] of Object.entries(configs)) {
+  for (const [symbol, pairCfgs] of Object.entries(configs || {})) {
     for (const cfg of pairCfgs) {
-      if (!cfg.orbEnabled) continue;
-      
       let strategyType = "Unknown";
-      if (botName === "Mage") strategyType = "ORB Breakout";
-      else if (botName === "Sage") strategyType = "Liquidity Sweep";
-      
-      const orbDuration = cfg.orbMinutes || 0;
-      const startMins = cfg.orbStartHour * 60 + cfg.orbStartMin;
-      // Add exact live engine execution offset: +6 mins for Mage (M5 candle close + M1 buffer), +1 min for Sage
-      const delayMins = botName === "Mage" ? 6 : 1;
-      const endMins = (startMins + orbDuration + delayMins) % 1440;
-      
-      const nyEndHour = Math.floor(endMins / 60);
-      const nyEndMin = endMins % 60;
-      
+      let orbDuration = cfg.orbMinutes || 0;
+      let nyStartHour = cfg.orbStartHour || 0;
+      let nyStartMin = cfg.orbStartMin || 0;
+      let nyEndHour = 0;
+      let nyEndMin = 0;
+      let actionWindow = cfg.actionMinutes || 0;
+
+      if (botName === "Mage") {
+        if (!cfg.orbEnabled) continue;
+        strategyType = "ORB Breakout";
+        const startMins = nyStartHour * 60 + nyStartMin;
+        const delayMins = 6;
+        const endMins = (startMins + orbDuration + delayMins) % 1440;
+        nyEndHour = Math.floor(endMins / 60);
+        nyEndMin = endMins % 60;
+      } else if (botName === "Sage") {
+        if (!cfg.orbEnabled) continue;
+        strategyType = "Liquidity Sweep";
+        const startMins = nyStartHour * 60 + nyStartMin;
+        const delayMins = 1;
+        const endMins = (startMins + orbDuration + delayMins) % 1440;
+        nyEndHour = Math.floor(endMins / 60);
+        nyEndMin = endMins % 60;
+      } else if (botName === "Seer") {
+        strategyType = "Liquidity Hunt (Pin Bar)";
+        const sess = (cfg.session || (cfg.sessions && cfg.sessions[0]) || "london").toLowerCase();
+        if (sess.includes("asia")) {
+          nyStartHour = 20; // 8:00 PM NY
+          nyStartMin = 0;
+        } else if (sess.includes("london")) {
+          nyStartHour = 2; // 2:00 AM NY
+          nyStartMin = 0;
+        } else if (sess.includes("ny")) {
+          nyStartHour = 8; // 8:00 AM NY
+          nyStartMin = 0;
+        }
+        nyEndHour = nyStartHour;
+        nyEndMin = nyStartMin;
+        orbDuration = 0;
+        actionWindow = 240;
+      }
+
       // Stamp time at exact moment when live engine registers and begins active scan/execution
       const istTradeStartStr = formatISTTime(nyEndHour, nyEndMin);
       const istMins = getMinutesFromMidnightIST(nyEndHour, nyEndMin);
-      
-      const nySession = cfg.session;
-      const nyStartHour = cfg.orbStartHour;
-      const nyStartMin = cfg.orbStartMin;
-      
-      const actionWindow = cfg.actionMinutes || 0;
+
+      const nySession = cfg.session || (cfg.sessions && cfg.sessions[0]) || "london";
       const slBounds = `${cfg.minSlDist} – ${cfg.maxSlDist} pips`;
       const riskPct = cfg.riskPct !== undefined ? (cfg.riskPct * 100).toFixed(1) + "%" : "N/A";
-      
+
       const toxicHoursStr = formatToxicHoursIST(cfg.toxicHours);
       const toxicDaysStr = formatToxicDays(cfg.toxicDays);
       const toxicMonthsStr = formatArray(cfg.toxicMonths);
@@ -141,6 +165,7 @@ function processConfigs(configs: Record<string, any[]>, botName: string) {
 
 processConfigs(MAGE_PAIR_CONFIG, "Mage");
 processConfigs(SAGE_PAIR_CONFIG, "Sage");
+processConfigs(SEER_PAIR_CONFIG, "Seer");
 
 // Sort chronologically by ORB completion time in IST
 entries.sort((a, b) => a.istMins - b.istMins);

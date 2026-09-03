@@ -199,6 +199,7 @@ export class LiveOrchestrator {
   evaluator: any;
   loggerInited?: boolean;
   cachedEquity: number = 0;
+  cachedBrokerMetrics: any = null;
   plog: ProfileLogger;
   pendingHydration: Set<string>;
 
@@ -283,9 +284,12 @@ export class LiveOrchestrator {
   }
 
   public cachedProfile: any = null;
+  public cachedProfileTime: number = 0;
 
   async getProfileData() {
-    if (this.cachedProfile) return this.cachedProfile;
+    if (this.cachedProfile && Date.now() - this.cachedProfileTime < 15000) {
+      return this.cachedProfile;
+    }
     return await this.refreshProfileCache();
   }
 
@@ -293,11 +297,12 @@ export class LiveOrchestrator {
     try {
       const row = await db
         .prepare(
-          "SELECT t.risk_multiplier, COALESCE(t.metaapi_token, u.metaapi_token) as metaapi_token, t.metaapi_account_id, t.dwcb_enabled, t.dwcb_peak_balance, t.base_risk_balance, t.broker_symbol_map, t.institutional_enabled, t.institutional_daily_start_balance, t.institutional_daily_date, t.institutional_peak_balance, t.institutional_daily_cap, t.institutional_peak_to_draw FROM trading_profiles t LEFT JOIN users u ON t.user_id = u.id WHERE t.id = ?",
+          "SELECT t.risk_multiplier, COALESCE(t.metaapi_token, u.metaapi_token) as metaapi_token, t.metaapi_account_id, t.dwcb_enabled, t.dwcb_peak_balance, t.base_risk_balance, t.broker_symbol_map, t.institutional_enabled, t.institutional_daily_start_balance, t.institutional_daily_date, t.institutional_peak_balance, t.institutional_daily_cap, t.institutional_peak_to_draw, t.automation_active, t.ai_sniper_active FROM trading_profiles t LEFT JOIN users u ON t.user_id = u.id WHERE t.id = ?",
         )
         .get(this.profileId);
       if (row) {
         this.cachedProfile = row;
+        this.cachedProfileTime = Date.now();
       }
     } catch (e: any) {
       logger.error(`[LiveOrchestrator] Error refreshing profile data for P#${this.profileId}: ${e.message}`);
@@ -708,11 +713,33 @@ export class LiveOrchestrator {
           }
           
           if (rawM5.length > 0) {
+            const mapCandles = (c: any): any => {
+              const openMs = c.timestamp !== undefined ? c.timestamp : new Date(c.time).getTime();
+              const estDate = getFixedEstDate(new Date(openMs));
+              const yyyy = estDate.getUTCFullYear();
+              const mm = String(estDate.getUTCMonth() + 1).padStart(2, "0");
+              const dd = String(estDate.getUTCDate()).padStart(2, "0");
+              return {
+                timestamp: openMs,
+                open: c.open,
+                high: c.high,
+                low: c.low,
+                close: c.close,
+                tickVolume: c.tickVolume || 1,
+                dateStr: `${yyyy}-${mm}-${dd}`,
+                estHour: estDate.getUTCHours(),
+                estMinute: estDate.getUTCMinutes(),
+              };
+            };
+            const mapped = rawM5
+              .map(mapCandles)
+              .sort((a: any, b: any) => a.timestamp - b.timestamp);
+
             const matchingPairs = Array.from(this.states.keys()).filter((k) => PairConfigManager.getBaseSymbol(k) === symbol || k === symbol);
             for (const sp of matchingPairs) {
               const state = this.states.get(sp);
               if (state) {
-                state.m5Buffer = rawM5.map(c => ({ ...c }));
+                state.m5Buffer = mapped.map((c: any) => ({ ...c }));
                 this.warmupORBStatesForPair(sp);
               }
             }
@@ -862,9 +889,11 @@ export class LiveOrchestrator {
                 dbId,
                 metaOrderId: pos.id,
                 clientId: pos.clientId || null,
+                magic: pos.magic,
                 botId: detectedBotId,
                 direction,
                 entryPrice: pos.openPrice,
+                intendedEntryPrice: pos.intendedEntryPrice || pos.openPrice,
                 slPrice: actualPosSL || pos.openPrice,
                 originalSl: actualPosSL || pos.openPrice,
                 tpPrice: pos.takeProfit || null,
@@ -2131,10 +2160,6 @@ export class LiveOrchestrator {
         (e) => logger.error(`[DiscretionaryTrader] Error evaluating Mage trailing SL for ${sessionPair}:`, e),
       );
     }
-
-
-
-
   }
 
   async onM5Close(symbol, state, c) {
@@ -2274,7 +2299,7 @@ export class LiveOrchestrator {
         (state.activeTrade.botId === "SEER" ||
          state.activeTrade.botId === "seer")
       ) {
-        evaluateSeerTrailingOnTick(this, state.config.pair, state).catch((e) =>
+        await evaluateSeerTrailingOnTick(this, state.config.pair, state).catch((e) =>
           logger.error(`[DiscretionaryTrader] Error evaluating structural SL for ${state.config.pair}:`,
             e,),
         );
@@ -2299,7 +2324,8 @@ export class LiveOrchestrator {
       this.lastChatterMs.set(botId, now);
       this.broadcastIdleChatter(symbol, setupType, botId);
     }
-    runPreFlightFilter(this, symbol, state, prevDay, setupType).catch((e) =>
+    if (!this.activeBots.has(botId)) return;
+    await runPreFlightFilter(this, symbol, state, prevDay, setupType).catch((e) =>
       logger.error(`[DiscretionaryTrader] Eval error on ${symbol}:`, e),
     );
   }

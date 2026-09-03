@@ -87,8 +87,8 @@ export async function runSageMathBacktest(
   if ((config as any).htfAlignmentRequired === undefined) (config as any).htfAlignmentRequired = false;
   // maxBodyPips left undefined when absent � SageMathCore guards with !== undefined check
 
-  const baseSymbol = pair.replace(".Daily", "");
-  const optConfig = OPTIMIZER_CONFIG[pair] || OPTIMIZER_CONFIG[baseSymbol];
+  const baseSymbol = pair.replace(/\.daily$/i, "");
+  const optConfig = OPTIMIZER_CONFIG[pair] || OPTIMIZER_CONFIG[baseSymbol] || OPTIMIZER_CONFIG[baseSymbol.toUpperCase()];
   if (!optConfig) throw new Error(`No OPTIMIZER_CONFIG found for ${pair}`);
 
   const { tickSize, pipSize, spread } = optConfig;

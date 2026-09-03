@@ -22,7 +22,7 @@ import {
   calculateStopsLevelSafePrices as r11,
 } from '../broker/metaApiHandler.js';
 import { logger } from "../../utils/logger.js";
-import { getShortHash } from "../../core/crypto.js";
+
 
 const db: any = new Proxy({}, {
   get(_target, prop) {
@@ -276,7 +276,7 @@ export async function _runSageBotForConfig(orch: any, sessionPair: string, state
       return;
     }
 
-    if (ss.fired || ss.limitOrderId) {
+    if (ss.fired || ss.limitOrderId || ss.isPlacing) {
       /* silently ignore to avoid spam */ return;
     }
 
@@ -287,6 +287,7 @@ export async function _runSageBotForConfig(orch: any, sessionPair: string, state
     const leadTrade = globalTradeGate.getActiveLeadTrade(botId.toUpperCase(), baseSymbol, sessionName, dateStr);
     if (
       leadTrade &&
+      (!leadTrade.session || leadTrade.session === sessionName) &&
       leadTrade.leadProfileId !== orch.profileId &&
       !ss.fired &&
       !ss.limitOrderId &&
@@ -631,7 +632,12 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
     return;
   }
   const baseSymbol = PairConfigManager.getBaseSymbol(sessionPair);
-  const shortClientId = `P${orch.profileId}_S_${getShortHash(sig)}_${Date.now()}`;
+  const preRegKey = `PRE_${sig}`;
+  const shortClientId = `SAGE_${orch.profileId}_${Date.now().toString(36)}`;
+  if (!orch.sigMap) orch.sigMap = {};
+  orch.sigMap[shortClientId] = sig;
+
+  let orderRes: any = null;
   const newsCheck = isNewsBlackout(baseSymbol, new Date(c.timestamp));
   if (newsCheck.blocked) return;
 
@@ -834,7 +840,6 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
       return;
     }
 
-    const preRegKey = `PRE_${sig}`;
     const check = globalTradeGate.canTrade(
       orch.profileId,
       symbol,
@@ -847,6 +852,13 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
     }
 
     globalTradeGate.register(orch.profileId, preRegKey, symbol, ss.direction, "ALGO");
+
+    // 🔒 SYNCHRONOUS IN-FLIGHT MUTEX: Immediately lock this configuration state synchronously
+    // so any fast-arriving ticks during the async broker queue wait cannot duplicate-fire.
+    ss.fired = true;
+    if (!state.sageTradeTakenToday) state.sageTradeTakenToday = {};
+    state.sageTradeTakenToday[sig] = true;
+    ss.isPlacing = true;
 
     const conn = await getSharedConnection(token, accId);
     
@@ -867,10 +879,11 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
     const executeAsMarket = penetrationPct === 0 || isWithinProximity;
 
     let orderRes: any;
+    let placingDbId = 0;
     try {
       const tp = await db.prepare("SELECT user_id FROM trading_profiles WHERE id = ?").get(orch.profileId);
       const actualUserId = tp ? tp.user_id : 0;
-      await db.prepare(`
+      const insertRun = await db.prepare(`
         INSERT INTO bot_trade_states
           (user_id, profile_id, bot_id, broker_symbol, direction, entry_price, sl_price, original_sl, tp_price,
            lots, open_time, meta_order_id, t1_hit, highest_price, lowest_price, initial_risk_pips, status, client_id, manages_own_trailing)
@@ -880,6 +893,9 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
         pEntry, pSl, pSl, pTp, lots, Date.now(),
         pEntry, pEntry, Math.abs(pEntry - pSl) / (sageCfg.pipSize || getDynamicPipSize(symbol.split("_")[0])), shortClientId
       );
+      if (insertRun && insertRun.lastInsertRowid) {
+        placingDbId = Number(insertRun.lastInsertRowid);
+      }
     } catch (dbErr: any) {
       logger.error(`[SageEngine] Failed to insert PLACING state for ${brokerSymbol}: ${dbErr.message}`);
     }
@@ -918,14 +934,14 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
                   brokerSymbol,
                   lots,
                   roundedSafeSl,
-                  roundedSafeTp,
+                  roundedSafeTp || undefined,
                   { magic, clientId: shortClientId },
                 )
               : conn.createMarketSellOrder(
                   brokerSymbol,
                   lots,
                   roundedSafeSl,
-                  roundedSafeTp,
+                  roundedSafeTp || undefined,
                   { magic, clientId: shortClientId },
                 ),
           `CreateSageMarketOrder:${brokerSymbol}`,
@@ -939,7 +955,7 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
                   lots,
                   pEntry,
                   pSl,
-                  pTp,
+                  pTp || undefined,
                   { magic, clientId: shortClientId },
                 )
               : conn.createLimitSellOrder(
@@ -947,7 +963,7 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
                   lots,
                   pEntry,
                   pSl,
-                  pTp,
+                  pTp || undefined,
                   { magic, clientId: shortClientId },
                 ),
           `CreateSageLimitOrder:${brokerSymbol}`,
@@ -999,8 +1015,8 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
         const roundedSafeTp = roundPrice(safePrices.pTp, brokerSymbol);
         logger.info(`[SageEngine] 🛡️ Smart Market Fallback Prices: Entry=${latestPrice}, SL=${roundedSafeSl}, TP=${roundedSafeTp} (stopsLevel=${stopsLevelPts}pts)`);
         orderRes = isBuy
-          ? await conn.createMarketBuyOrder(brokerSymbol, lots, roundedSafeSl, roundedSafeTp, { magic, clientId: shortClientId })
-          : await conn.createMarketSellOrder(brokerSymbol, lots, roundedSafeSl, roundedSafeTp, { magic, clientId: shortClientId });
+          ? await conn.createMarketBuyOrder(brokerSymbol, lots, roundedSafeSl, roundedSafeTp || undefined, { magic, clientId: shortClientId })
+          : await conn.createMarketSellOrder(brokerSymbol, lots, roundedSafeSl, roundedSafeTp || undefined, { magic, clientId: shortClientId });
       } else {
         globalTradeGate.release(orch.profileId, preRegKey);
         throw err;
@@ -1008,6 +1024,7 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
     }
 
     if (orderRes && orderRes.orderId) {
+      ss.isPlacing = false;
       ss.limitOrderId = executeAsMarket ? null : orderRes.orderId;
       
       if (!executeAsMarket && orderRes && orderRes.orderId) {
@@ -1037,18 +1054,23 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
         const openPrice = c.close;
         const openTimeMs = c.timestamp || Date.now();
         try {
-          await db.prepare(`
+          const updateRes = await db.prepare(`
             UPDATE bot_trade_states 
             SET status = 'OPEN', meta_order_id = ?, entry_price = ?, sl_price = ?, tp_price = ?, lots = ?
             WHERE (client_id = ? OR meta_order_id = ?) AND status = 'PLACING'
-          `).run(orderRes.orderId, openPrice, pSl, pTp, lots, shortClientId, orderRes.orderId);
+            RETURNING id
+          `).all(orderRes.orderId, openPrice, pSl, pTp, lots, shortClientId, orderRes.orderId);
+          if (updateRes && updateRes.length > 0 && updateRes[0].id) {
+            placingDbId = Number(updateRes[0].id);
+          }
         } catch (e: any) {}
 
         if (!state.activeTrades) state.activeTrades = [];
         const newTradeRec = {
-          dbId: 0,
+          dbId: placingDbId,
           metaOrderId: orderRes.orderId,
           clientId: sig,
+          magic: magic,
           botId: botId.toUpperCase(),
           direction: ss.direction,
           entryPrice: openPrice,
@@ -1091,12 +1113,19 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
       const summary = `Sage ${executeAsMarket ? 'Market' : 'Limit'} Placed: ${ss.direction} ${baseSymbol}\nEntry: ${ss.limitPrice}\nSL: ${ss.slPrice}\nTP: ${ss.tpPrice}\nVol: ${lots}\nRisk: ${sageRisk.toFixed(2)}%`;
       addBotLog(orch.profileId, botId, brokerSymbol, "TRADE_ENTERED", summary);
     } else {
+      ss.fired = false;
+      if (state.sageTradeTakenToday) state.sageTradeTakenToday[sig] = false;
+      ss.isPlacing = false;
       globalTradeGate.release(orch.profileId, preRegKey);
       db.prepare("UPDATE bot_trade_states SET status = 'FAILED' WHERE client_id = ? AND status = 'PLACING'").run(shortClientId).catch(() => {});
       logger.error(`[PLACE_LIMIT] FAILED order placement: ${JSON.stringify(orderRes)}`);
       addBotLog(orch.profileId, botId, baseSymbol, "ERROR", `Failed to place limit: ${JSON.stringify(orderRes)}`);
     }
   } catch (err: any) {
+    ss.fired = false;
+    if (state.sageTradeTakenToday) state.sageTradeTakenToday[sig] = false;
+    ss.isPlacing = false;
+    globalTradeGate.release(orch.profileId, preRegKey);
     db.prepare("UPDATE bot_trade_states SET status = 'FAILED' WHERE client_id = ? AND status = 'PLACING'").run(shortClientId).catch(() => {});
     logger.error(`[PLACE_LIMIT] ERROR:`, err);
     addBotLog(orch.profileId, botId, baseSymbol, "ERROR", `Error in place stop: ${err.message}`);
@@ -1175,12 +1204,24 @@ export async function evaluateSageTrailingOnTick(
 
     const cid = trade.clientId || "";
     const botId = trade.botId || "";
-    let config = sageConfigs.find(c => {
-      const shortSig = "S_" + getShortHash(c.signature || "");
-      return cid.startsWith(shortSig) || cid.startsWith(c.signature!) || cid.includes(c.signature!);
-    });
-    if (!config) config = sageConfigs.find(c => c.signature === botId || botId.includes(c.signature!));
-    if (!config) config = sageConfigs[0] || state.config;
+
+    // Layer 1: Deterministic magic number (bot + config identity encoded at order placement)
+    let config = trade.magic
+      ? sageConfigs.find(c => generateMagicNumber("SAGE", c.signature!) === trade.magic)
+      : undefined;
+
+    // Layer 2: Exact clientId or signature match
+    if (!config && cid) {
+      config = sageConfigs.find(c => c.signature === cid || cid.startsWith(c.signature!) || cid.includes(c.signature!));
+    }
+
+    // Layer 3: BotId match
+    if (!config && botId) {
+      config = sageConfigs.find(c => c.signature === botId || botId.includes(c.signature!));
+    }
+
+    // Layer 4: Safe fallback to state.config
+    if (!config) config = state.config;
     if (!config) continue;
 
     const currentTime = tick.timestamp || Date.now();
@@ -1233,7 +1274,6 @@ export async function evaluateSageTrailingOnTick(
         // If we don't do this, ss.limitOrderId persists and blocks new signals on every subsequent tick.
         if (state.sageStates && state.sageStates[trade.clientId]) {
           state.sageStates[trade.clientId].limitOrderId = null;
-          state.sageStates[trade.clientId].fired = false;
         }
         continue;
       } catch (e) {
@@ -1287,12 +1327,12 @@ export async function evaluateSageTrailingOnTick(
         let sageNewSl = trade.slPrice;
 
         if (isBuy) {
-          if (currentR >= tTrig && trade.slPrice < trade.entryPrice) {
+          if (tTrig !== undefined && tTrig > 0 && gte(currentR, tTrig) && trade.slPrice < trade.entryPrice) {
             sageNewSl = trade.entryPrice;
             sageShouldUpdate = true;
           }
-          if (currentR >= tTrig + tStep) {
-            const numSteps = Math.floor((currentR - tTrig) / tStep);
+          if (tTrig !== undefined && tTrig > 0 && tStep !== undefined && tStep > 0 && gte(currentR, tTrig + tStep)) {
+            const numSteps = Math.floor((currentR - tTrig + PRICE_EPSILON) / tStep);
             const rLevelToLock = numSteps * tStep;
             const proposedSL = Number((trade.entryPrice + rLevelToLock * actualRisk).toFixed(brokerDigits));
             if (proposedSL > trade.slPrice && proposedSL > sageNewSl) {
@@ -1301,12 +1341,12 @@ export async function evaluateSageTrailingOnTick(
             }
           }
         } else {
-          if (currentR >= tTrig && trade.slPrice > trade.entryPrice) {
+          if (tTrig !== undefined && tTrig > 0 && gte(currentR, tTrig) && trade.slPrice > trade.entryPrice) {
             sageNewSl = trade.entryPrice;
             sageShouldUpdate = true;
           }
-          if (currentR >= tTrig + tStep) {
-            const numSteps = Math.floor((currentR - tTrig) / tStep);
+          if (tTrig !== undefined && tTrig > 0 && tStep !== undefined && tStep > 0 && gte(currentR, tTrig + tStep)) {
+            const numSteps = Math.floor((currentR - tTrig + PRICE_EPSILON) / tStep);
             const rLevelToLock = numSteps * tStep;
             const proposedSL = Number((trade.entryPrice - rLevelToLock * actualRisk).toFixed(brokerDigits));
             if (proposedSL < trade.slPrice && proposedSL < sageNewSl) {
@@ -1414,7 +1454,6 @@ export async function checkSageLimitFill(orch, sessionPair, state, c, targetBotI
             if (p.id === ss.limitOrderId) return true;
             if (p.clientId === sig) return true;
             if (orch.sigMap && orch.sigMap[p.clientId] === sig) return true;
-            if (p.clientId?.includes(getShortHash(sig))) return true;
             return false;
           }
         );
@@ -1435,8 +1474,8 @@ export async function checkSageLimitFill(orch, sessionPair, state, c, targetBotI
             const upgradeRes = await db.prepare(`
               UPDATE bot_trade_states 
               SET status = 'OPEN', meta_order_id = ?, entry_price = ?, sl_price = ?, tp_price = ?, lots = ? 
-              WHERE (client_id = ? OR client_id LIKE ? OR meta_order_id = ?) AND status IN ('PLACING', 'FAILED', 'PENDING_VERIFICATION') RETURNING id
-            `).all(pos.id, pos.openPrice, ss.slPrice, ss.tpPrice, pos.volume, pos.clientId || sig, `%${getShortHash(sig)}%`, ss.limitOrderId);
+              WHERE (client_id = ? OR meta_order_id = ?) AND status IN ('PLACING', 'FAILED', 'PENDING_VERIFICATION') RETURNING id
+            `).all(pos.id, pos.openPrice, ss.slPrice, ss.tpPrice, pos.volume, pos.clientId || sig, ss.limitOrderId);
             
             if (upgradeRes && upgradeRes.length > 0) {
               dbId = upgradeRes[0].id;

@@ -50,8 +50,8 @@ export async function runMathBacktest(
     }
 
     const baseConfig = configs[0];
-    const baseSymbol = pair.replace(".Daily", "");
-    const optConfig = OPTIMIZER_CONFIG[pair] || OPTIMIZER_CONFIG[baseSymbol];
+    const baseSymbol = pair.replace(/\.daily$/i, "");
+    const optConfig = OPTIMIZER_CONFIG[pair] || OPTIMIZER_CONFIG[baseSymbol] || OPTIMIZER_CONFIG[baseSymbol.toUpperCase()];
     if (!optConfig) throw new Error(`No OPTIMIZER_CONFIG found for ${pair}`);
 
     const { tickSize, pipSize, spread } = optConfig;

@@ -168,7 +168,34 @@ export function getSymbolSpec(symbol: string) {
     .replace(/_[0-9]+$/, "")
     .replace("=X", "")
     .replace("=F", "");
-  const optConfig = OPTIMIZER_CONFIG[cleanSymbol] || OPTIMIZER_CONFIG[symbol];
+  const INDEX_ALIASES: Record<string, string> = {
+    SP500: "SPX500",
+    US500: "SPX500",
+    SPX: "SPX500",
+    US30: "US30",
+    DJ30: "US30",
+    WS30: "US30",
+    DOW30: "US30",
+    NAS100: "NAS100",
+    US100: "NAS100",
+    USTEC: "NAS100",
+    NDX: "NAS100",
+    GER40: "GER40",
+    DAX40: "GER40",
+    DE40: "GER40",
+    GER30: "GER40",
+    DE30: "GER40",
+    JPN225: "JPN225",
+    JP225: "JPN225",
+    UK100: "UK100",
+    FTSE100: "UK100",
+    GOLD: "XAUUSD",
+    USOIL: "XTIUSD",
+    WTI: "XTIUSD",
+  };
+
+  const canonicalSymbol = INDEX_ALIASES[cleanSymbol] || cleanSymbol.split("_")[0].split(".")[0];
+  const optConfig = OPTIMIZER_CONFIG[canonicalSymbol] || OPTIMIZER_CONFIG[cleanSymbol] || OPTIMIZER_CONFIG[symbol];
   
   let digits = 5;
   let tickSize = 0.00001;
@@ -188,7 +215,27 @@ export function getSymbolSpec(symbol: string) {
       digits = 2;
       tickSize = 0.01;
       pipSize = cleanSymbol.includes("XAU") || cleanSymbol.includes("GOLD") ? 0.1 : 0.01;
-    } else if (cleanSymbol.includes("US30") || cleanSymbol.includes("NAS") || cleanSymbol.includes("GER40") || cleanSymbol.includes("DAX40") || cleanSymbol.includes("DE40") || cleanSymbol.includes("SPX") || cleanSymbol.includes("JPN225")) {
+    } else if (
+      cleanSymbol.includes("US30") ||
+      cleanSymbol.includes("DJ") ||
+      cleanSymbol.includes("WS") ||
+      cleanSymbol.includes("DOW") ||
+      cleanSymbol.includes("NAS") ||
+      cleanSymbol.includes("USTEC") ||
+      cleanSymbol.includes("NDX") ||
+      cleanSymbol.includes("GER") ||
+      cleanSymbol.includes("DAX") ||
+      cleanSymbol.includes("DE40") ||
+      cleanSymbol.includes("DE30") ||
+      cleanSymbol.includes("SPX") ||
+      cleanSymbol.includes("SP500") ||
+      cleanSymbol.includes("US500") ||
+      cleanSymbol.includes("JPN") ||
+      cleanSymbol.includes("JP225") ||
+      cleanSymbol.includes("NIKKEI") ||
+      cleanSymbol.includes("UK100") ||
+      cleanSymbol.includes("FTSE")
+    ) {
       digits = 2;
       tickSize = 0.1;
       pipSize = 1.0;
@@ -199,14 +246,11 @@ export function getSymbolSpec(symbol: string) {
     }
   }
 
-  const isJpy = cleanSymbol.includes("JPY");
-  const isXauOrGer = cleanSymbol.includes("XAU") || cleanSymbol.includes("GOLD") || cleanSymbol.includes("GER40") || cleanSymbol.includes("DAX40") || cleanSymbol.includes("DE40") || cleanSymbol.includes("UK100") || cleanSymbol.includes("SPX500");
-  const isNas = cleanSymbol.includes("NAS") || cleanSymbol.includes("US30") || cleanSymbol.includes("BTC") || cleanSymbol.includes("ETH");
-  const pipValuePerLot = isJpy ? 6.5 : isXauOrGer ? 10 : isNas ? 1 : 10;
+  const pipValuePerLot = getFallbackPipValue(cleanSymbol);
 
   return {
     pipSize,
-    contractSize: 100000,
+    contractSize: cleanSymbol.includes("XAU") ? 100 : (cleanSymbol.includes("US30") || cleanSymbol.includes("NAS") || cleanSymbol.includes("GER") || cleanSymbol.includes("SPX") ? 1 : 100000),
     digits,
     tickSize,
     stopsLevel: 0,
@@ -234,12 +278,107 @@ export function getBrokerSymbol(
 }
 export function clearSharedConnection(_token: string, _accountId: string) {}
 export function forceRebootMetaApi(_token: string, _accountId: string) {}
+
+export function getFallbackPipValue(brokerSymbol: string, referencePrice?: number): number {
+  if (!brokerSymbol || typeof brokerSymbol !== "string") return 10.0;
+  const clean = brokerSymbol
+    .replace(".Daily", "")
+    .replace(/_[0-9]+$/, "")
+    .replace("=X", "")
+    .replace("=F", "")
+    .toUpperCase();
+
+  // 1. Major US Indices & Equities (1 point = $1.00 per standard 1.0 contract lot)
+  if (
+    clean.includes("US30") ||
+    clean.includes("DJ30") ||
+    clean.includes("WS30") ||
+    clean.includes("DOW30") ||
+    clean.includes("DOW") ||
+    clean.includes("NAS100") ||
+    clean.includes("USTEC") ||
+    clean.includes("NDX") ||
+    clean.includes("SPX500") ||
+    clean.includes("SP500") ||
+    clean.includes("US500") ||
+    clean.includes("BTC") ||
+    clean.includes("ETH")
+  ) {
+    return 1.0;
+  }
+
+  // 2. European Indices (GER40 / DAX40 / DE40 / UK100)
+  if (
+    clean.includes("GER") ||
+    clean.includes("DAX") ||
+    clean.includes("DE40") ||
+    clean.includes("DE30") ||
+    clean.includes("UK100") ||
+    clean.includes("FTSE")
+  ) {
+    return 1.10;
+  }
+
+  // 3. Asian Indices (JPN225 / NIKKEI)
+  if (clean.includes("JPN") || clean.includes("JP225") || clean.includes("NIKKEI")) {
+    return 0.65;
+  }
+
+  // 4. Commodities: Gold (XAUUSD)
+  if (clean.includes("XAU") || clean.includes("GOLD")) {
+    return 10.0;
+  }
+
+  // 5. Commodities: Crude Oil (XTIUSD / WTI / USOIL)
+  if (clean.includes("XTI") || clean.includes("OIL") || clean.includes("USOIL") || clean.includes("WTI")) {
+    return 10.0;
+  }
+
+  // 6. Forex Pairs - JPY Crosses (USDJPY, AUDJPY, GBPJPY, EURJPY, CADJPY, CHFJPY)
+  if (clean.includes("JPY")) {
+    if (referencePrice && referencePrice > 50 && clean.startsWith("USD")) {
+      return 1000.0 / referencePrice;
+    }
+    return 6.45;
+  }
+
+  // 7. Forex Pairs - CHF Quote (USDCHF, EURCHF, GBPCHF)
+  if (clean.endsWith("CHF") || clean === "USDCHF") {
+    if (referencePrice && referencePrice > 0.5 && referencePrice < 2.0 && clean.startsWith("USD")) {
+      return 10.0 / referencePrice;
+    }
+    return 12.35;
+  }
+
+  // 8. Forex Pairs - CAD Quote (USDCAD, EURCAD, GBPCAD, AUDCAD, NZDCAD)
+  if (clean.endsWith("CAD") || clean === "USDCAD") {
+    if (referencePrice && referencePrice > 0.9 && referencePrice < 2.5 && clean.startsWith("USD")) {
+      return 10.0 / referencePrice;
+    }
+    return 7.17;
+  }
+
+  // 9. Forex Pairs - NZD Quote (EURNZD, GBPNZD, AUDNZD)
+  if (clean.endsWith("NZD")) {
+    return 6.00;
+  }
+
+  // 10. Forex Pairs - AUD Quote (EURAUD, GBPAUD)
+  if (clean.endsWith("AUD")) {
+    return 6.60;
+  }
+
+  // 11. Forex Pairs - GBP Quote (EURGBP)
+  if (clean.endsWith("GBP")) {
+    return 13.00;
+  }
+
+  // 12. Forex Majors with USD Quote (EURUSD, GBPUSD, AUDUSD, NZDUSD)
+  return 10.0;
+}
+
 export async function getLiveBrokerSpec(symbol: string, _token?: string, _accountId?: string) {
-  // Return sensible broker spec for lot sizing in the simulator
-  const isJpy = symbol.includes("JPY");
-  const isXauOrGer = symbol.includes("XAU") || symbol.includes("GOLD") || symbol.includes("GER40") || symbol.includes("DAX40") || symbol.includes("DE40") || symbol.includes("UK100") || symbol.includes("SPX500");
-  const isNas = symbol.includes("NAS") || symbol.includes("US30") || symbol.includes("BTC") || symbol.includes("ETH");
-  const pipValuePerLot = isJpy ? 6.5 : isXauOrGer ? 10 : isNas ? 1 : 10;
+  const pipValuePerLot = getFallbackPipValue(symbol);
   return {
     tickSize: 0.00001,
     tickValue: 1,
@@ -248,6 +387,8 @@ export async function getLiveBrokerSpec(symbol: string, _token?: string, _accoun
     maxVolume: 100,
     volumeStep: 0.01,
     pipValuePerLot,
+    stopsLevel: 0,
+    digits: 5
   };
 }
 export function quantizeLots(rawLots: number, volumeStep = 0.01, minVolume = 0.01, maxVolume = 100): number {

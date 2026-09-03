@@ -135,15 +135,16 @@ export const OPTIMIZER_CONFIG: Record<string, BasePhysicalConfig> = {
     maxSpreadLimit: 3.1,
   },
   XTIUSD: { tickSize: 0.01, pipSize: 0.01, spread: 3.0, maxSpreadLimit: 15 }, 
+  "GER40.DAILY": { tickSize: 0.1, pipSize: 1.0, spread: 1.0, maxSpreadLimit: 5.2 },
+  "JPN225.DAILY": { tickSize: 1, pipSize: 1.0, spread: 10.0, maxSpreadLimit: 37 },
+  "NAS100.DAILY": { tickSize: 0.1, pipSize: 1.0, spread: 1.0, maxSpreadLimit: 3.1 },
+  "SPX500.DAILY": { tickSize: 0.1, pipSize: 1.0, spread: 1.4, maxSpreadLimit: 2.9 },
+  "US30.DAILY": { tickSize: 0.1, pipSize: 1.0, spread: 1.5, maxSpreadLimit: 8.1 },
+  "BTCUSD.DAILY": { tickSize: 1, pipSize: 10.0, spread: 1.5, maxSpreadLimit: 2.33 },
+  "ETHUSD.DAILY": { tickSize: 0.1, pipSize: 1.0, spread: 3.0, maxSpreadLimit: 4.5 },
 };
 
 export function getDynamicPipSize(symbol: string): number {
-  const base = symbol.replace(".Daily", "").split("_")[0];
-  if (OPTIMIZER_CONFIG[base]?.pipSize) return OPTIMIZER_CONFIG[base].pipSize;
-  
-  if (base.includes("BTC")) return 10;
-  if (base.includes("ETH") || base.includes("NAS") || base.includes("US30") || base.includes("GER40") || base.includes("DAX40") || base.includes("DE40") || base.includes("SPX500") || base.includes("JPN225")) return 1.0;
-  if (base.includes("XTIUSD") || base.includes("JPY")) return 0.01;
-  if (base.includes("XAU")) return 0.1;
-  return 0.0001;
+  const base = symbol.replace(/\.daily$/i, "").split("_")[0];
+  return OPTIMIZER_CONFIG[symbol]?.pipSize || OPTIMIZER_CONFIG[base]?.pipSize || OPTIMIZER_CONFIG[base.toUpperCase()]?.pipSize || 0.0001;
 }
