@@ -698,10 +698,9 @@ export async function runPreFlightFilter(
           const baseMonteCarloRisk = seerConfig.riskPct ?? 0.01;
           const userRiskDial = state.botConfigs.get(botId2)?.risk ?? state.riskPct ?? 1;
           let riskPct2 = baseMonteCarloRisk * userRiskDial * (profile.risk_multiplier || 1);
-          if (riskPct2 > 0.50 && baseMonteCarloRisk <= 1.0) {
-            riskPct2 = 0.50;
-          } else if (riskPct2 > 50 && baseMonteCarloRisk > 1.0) {
-            riskPct2 = 50;
+          const MAX_PERMITTED_RISK_PCT = 3.0;
+          if (riskPct2 > MAX_PERMITTED_RISK_PCT) {
+            riskPct2 = MAX_PERMITTED_RISK_PCT;
           }
           // Base Risk: use fixed user-defined balance if set, otherwise live equity
           const riskBasis =

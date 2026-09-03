@@ -322,6 +322,30 @@ class GlobalTradeGate {
   }
 
   /**
+   * Updates an existing lead trade to mark it as filled, synchronizing price across peers.
+   */
+  markLeadTradeFilled(
+    botId: string,
+    pair: string,
+    session?: string,
+    dateStr?: string,
+    fillPrice?: number,
+  ) {
+    const cleanPair = PairConfigManager.getBaseSymbol(pair).toUpperCase();
+    const cleanBot = botId.toUpperCase();
+    const trade = this.getActiveLeadTrade(cleanBot, cleanPair, session, dateStr);
+    if (trade) {
+      trade.isFilled = true;
+      if (fillPrice && fillPrice > 0) {
+        trade.entryPrice = fillPrice;
+      }
+      logger.info(
+        `[GlobalTradeGate] 🟢 Marked lead trade as FILLED for ${cleanBot} ${cleanPair} at ${fillPrice || trade.entryPrice}`,
+      );
+    }
+  }
+
+  /**
    * Periodic cleanup of session direction locks older than 24 hours.
    */
   clearOldSessionLocks(olderThanHours = 24) {

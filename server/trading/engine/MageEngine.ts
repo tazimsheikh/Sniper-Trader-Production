@@ -280,9 +280,6 @@ export async function _runMageBotForConfig(orch: any, symbol: string, state: any
     }
     return;
   }
-  if (os.mageTradeTakenToday) return;
-  if (os.fired || os.limitOrderId || os.isPlacing) return;
-
   // ── CROSS-ACCOUNT SMART TRADE CATCH-UP ──
   const sessionName = config?.session || state.config?.session || "default";
   const leadTrade = globalTradeGate.getActiveLeadTrade("MAGE", symbol, sessionName, dateStr);
@@ -290,8 +287,8 @@ export async function _runMageBotForConfig(orch: any, symbol: string, state: any
     leadTrade &&
     (!leadTrade.session || leadTrade.session === sessionName) &&
     leadTrade.leadProfileId !== orch.profileId &&
-    !os.fired &&
     !os.limitOrderId &&
+    !os.isPlacing &&
     (!state.activeTrades || !state.activeTrades.find((t: any) => t.clientId === sig || t.magic === magic))
   ) {
     const isBuy = leadTrade.direction === "BUY";
@@ -299,49 +296,33 @@ export async function _runMageBotForConfig(orch: any, symbol: string, state: any
     const pipSize = config?.pipSize || optCfg?.pipSize || getDynamicPipSize(symbol.split("_")[0]);
     const spreadPts = (optCfg && optCfg.spread !== undefined) ? optCfg.spread * pipSize : 0;
     const currentPrice = isBuy ? c.close + spreadPts : c.close;
-    const proximityThreshold = Math.max(2.5 * pipSize, (optCfg?.spread || 1) * 2.5 * pipSize, 0.10 * Math.abs(leadTrade.entryPrice - leadTrade.slPrice));
+    const proximityThreshold = Math.max(3.5 * pipSize, (optCfg?.spread || 1) * 2.5 * pipSize, 0.15 * Math.abs(leadTrade.entryPrice - leadTrade.slPrice));
     
     const distFromLead = isBuy ? (currentPrice - leadTrade.entryPrice) : (leadTrade.entryPrice - currentPrice);
     const totalTpDist = Math.abs(leadTrade.tpPrice - leadTrade.entryPrice);
     const pctTowardsTp = distFromLead > 0 ? (distFromLead / (totalTpDist || 1)) : 0;
     const hitSl = isBuy ? (currentPrice <= leadTrade.slPrice) : (currentPrice >= leadTrade.slPrice);
 
-    // 🛡️ Proximity market execution is ONLY permitted if leadTrade is confirmed filled.
-    // If the lead trade is an unfilled pending limit order (isFilled === false), place identical limit order without converting to market.
-    const isLeadFilled = leadTrade.isFilled !== false;
-    if (isLeadFilled) {
-      if (!hitSl && pctTowardsTp < 0.10 && distFromLead <= proximityThreshold) {
-        logger.info(
-          `[MageEngine][P#${orch.profileId}] 🔄 Cross-Account Smart Catch-Up triggered for ${symbol} ${leadTrade.direction} (Lead from P#${leadTrade.leadProfileId} at ${leadTrade.entryPrice}, Live: ${currentPrice}, Slippage: ${(distFromLead / pipSize).toFixed(1)} pips)`,
-        );
-        os.breakoutDir = leadTrade.direction;
-        os.limitPrice = leadTrade.entryPrice;
-        os.slPrice = leadTrade.slPrice;
-        os.tpPrice = leadTrade.tpPrice;
-        os.visionApproved = true;
-        placeMageLimitOrder(orch, symbol, state, c, sig, config, botId).catch((e) => {
-          logger.error("[MageEngine CatchUp Error]", e);
-        });
-        return;
-      }
-    } else {
-      // Leader is resting on an unfilled limit order -> replicate the pending limit order directly
-      if (!hitSl && !os.limitOrderId) {
-        logger.info(
-          `[MageEngine][P#${orch.profileId}] 🔄 Cross-Account Pending Limit Replication for ${symbol} ${leadTrade.direction} (Lead Limit from P#${leadTrade.leadProfileId} at ${leadTrade.entryPrice})`,
-        );
-        os.breakoutDir = leadTrade.direction;
-        os.limitPrice = leadTrade.entryPrice;
-        os.slPrice = leadTrade.slPrice;
-        os.tpPrice = leadTrade.tpPrice;
-        os.visionApproved = true;
-        placeMageLimitOrder(orch, symbol, state, c, sig, config, botId, true /* forceLimit */).catch((e) => {
-          logger.error("[MageEngine CatchUp Limit Error]", e);
-        });
-        return;
-      }
+    const isWithinSafeProximity = !hitSl && pctTowardsTp < 0.15 && (distFromLead <= proximityThreshold || (isBuy ? currentPrice <= leadTrade.entryPrice : currentPrice >= leadTrade.entryPrice));
+
+    if (isWithinSafeProximity) {
+      logger.info(
+        `[MageEngine][P#${orch.profileId}] 🔄 Cross-Account Smart Catch-Up triggered for ${symbol} ${leadTrade.direction} (Lead from P#${leadTrade.leadProfileId} at ${leadTrade.entryPrice}, Live: ${currentPrice}, Slippage: ${(distFromLead / pipSize).toFixed(1)} pips)`,
+      );
+      os.breakoutDir = leadTrade.direction;
+      os.limitPrice = leadTrade.entryPrice;
+      os.slPrice = leadTrade.slPrice;
+      os.tpPrice = leadTrade.tpPrice;
+      os.visionApproved = true;
+      placeMageLimitOrder(orch, symbol, state, c, sig, config, botId).catch((e) => {
+        logger.error("[MageEngine CatchUp Error]", e);
+      });
+      return;
     }
   }
+
+  if (os.mageTradeTakenToday) return;
+  if (os.fired || os.limitOrderId || os.isPlacing) return;
 
   if (
     !isTradeAllowed({
@@ -743,33 +724,46 @@ async function placeMageLimitOrder(orch: any, symbol: string, state: any, c: any
   const _sessionPair = symbol + _sessionStr;
   const _mCfg = config;
   const os = state.orbStates[sig];
-  if (!os || !os.visionApproved || os.fired || os.limitOrderId) return;
+  if (!os || !os.visionApproved || os.fired || os.limitOrderId || os.isPlacing) return;
+  os.isPlacing = true;
+
+  const abortPlacement = () => {
+    os.isPlacing = false;
+  };
+
   const magic = generateMagicNumber('MAGE', sig);
   if (state.activeTrades && state.activeTrades.some((t: any) => t.magic === magic || t.clientId === sig)) {
     os.fired = true;
     os.mageTradeTakenToday = true;
+    abortPlacement();
     return;
   }
   if ((global as any).__SIM_WARMUP__) {
     os.fired = false;
     os.visionApproved = false;
     os.mageTradeTakenToday = false;
+    abortPlacement();
     return;
   }
   if (state.botConfigs.get(botId)?.enabled === false) {
     logger.info(`[DiscretionaryTrader] ⛔ Trade blocked — Pair ${symbol} is disabled for bot ${botId}`);
+    abortPlacement();
     return;
   }
   const newsCheck = isNewsBlackout(symbol, new Date(c.timestamp));
   if (newsCheck.blocked) {
     logger.info(`[DiscretionaryTrader] ⛔ Trade blocked — News Blackout Window active for ${symbol}: ${newsCheck.reason}`);
+    abortPlacement();
     return;
   }
   try {
     const profile = typeof orch.getProfileData === 'function' 
       ? await orch.getProfileData()
       : await db.prepare("SELECT t.risk_multiplier, COALESCE(t.metaapi_token, u.metaapi_token) as metaapi_token, t.metaapi_account_id, t.dwcb_enabled, t.dwcb_peak_balance, t.base_risk_balance, t.broker_symbol_map, t.institutional_enabled, t.institutional_daily_start_balance, t.institutional_daily_date, t.institutional_peak_balance FROM trading_profiles t LEFT JOIN users u ON t.user_id = u.id WHERE t.id = ?").get(orch.profileId);
-    if (!profile) return;
+    if (!profile) {
+      abortPlacement();
+      return;
+    }
     let token = profile.metaapi_token || orch.token;
     let accId = profile.metaapi_account_id || orch.accountId;
 
@@ -786,6 +780,7 @@ async function placeMageLimitOrder(orch: any, symbol: string, state: any, c: any
 
     if (!(global as any).__SIM_MOCK_ACCOUNT__ && (!orch.cachedEquity || orch.cachedEquity <= 0)) {
       logger.warn(`[MageEngine] ⚠️ Cached equity is 0 or missing. Aborting trade to prevent DWCB corruption.`);
+      abortPlacement();
       return;
     }
     const effectiveBalance = (global as any).__SIM_MOCK_ACCOUNT__
@@ -834,6 +829,7 @@ async function placeMageLimitOrder(orch: any, symbol: string, state: any, c: any
               reasoning: `Institutional halt: ${(peakToDrawPct * 100).toFixed(1)}% Absolute Drawdown Reached.`,
             }
           });
+          abortPlacement();
           return;
         }
 
@@ -871,6 +867,7 @@ async function placeMageLimitOrder(orch: any, symbol: string, state: any, c: any
               reasoning: `Institutional halt: ${(dailyCapPct * 100).toFixed(1)}% Daily Loss Limit Reached.`,
             }
           });
+          abortPlacement();
           return;
         }
       }
@@ -878,6 +875,7 @@ async function placeMageLimitOrder(orch: any, symbol: string, state: any, c: any
 
     if (profile.dwcb_enabled === 1 && dwcbMultiplier <= 0) {
       logger.error(`[DiscretionaryTrader] 🛑 DWCB halt triggered on Mage (dwcbMultiplier <= 0) on ${symbol}. Trade aborted.`);
+      abortPlacement();
       return;
     }
     const { isEncrypted, decrypt } = await import('../../core/crypto.js').then(
@@ -901,16 +899,18 @@ async function placeMageLimitOrder(orch: any, symbol: string, state: any, c: any
     const userRiskDial = state.botConfigs.get(botId)?.risk ?? state.riskPct ?? 1;
 
     let riskPct = baseMonteCarloRisk * userRiskDial * (profile.risk_multiplier || 1);
-    if (riskPct > 0.50 && baseMonteCarloRisk <= 1.0) {
-      riskPct = 0.50;
-    } else if (riskPct > 50 && baseMonteCarloRisk > 1.0) {
-      riskPct = 50;
+    const MAX_PERMITTED_RISK_PCT = 3.0;
+    if (riskPct > MAX_PERMITTED_RISK_PCT) {
+      riskPct = MAX_PERMITTED_RISK_PCT;
     }
 
     const riskFraction = riskPct / 100;
-    const balance = effectiveBalance;
+    const balance = (profile.base_risk_balance && Number(profile.base_risk_balance) > 0)
+      ? Number(profile.base_risk_balance)
+      : effectiveBalance;
     if (!balance || balance <= 0) {
       logger.error(`[MageEngine] ❌ Invalid live equity (${balance}). Aborting trade placement for safety on ${symbol}.`);
+      abortPlacement();
       return;
     }
     const riskAmount = balance * riskFraction * dwcbMultiplier * institutionalMultiplier;
@@ -937,6 +937,7 @@ async function placeMageLimitOrder(orch: any, symbol: string, state: any, c: any
     );
     if (!consensusCheck.approved) {
       logger.info(`[MageEngine] 🛡️ ${consensusCheck.reason}`);
+      abortPlacement();
       return;
     }
 
@@ -948,6 +949,7 @@ async function placeMageLimitOrder(orch: any, symbol: string, state: any, c: any
     );
     if (!check.approved) {
       logger.info(`[DiscretionaryTrader] ⛔ Global Trade Gate blocked Mage on ${symbol}: ${check.reason}`);
+      abortPlacement();
       return;
     }
     
@@ -1015,6 +1017,7 @@ async function placeMageLimitOrder(orch: any, symbol: string, state: any, c: any
           if (hitSl || hitTp) {
             logger.info(`[MageEngine] 🛑 Direct Market Order Aborted: Live price (${currentPrice}) already hit ${hitSl ? 'Stop Loss' : 'Take Profit'}!`);
             globalTradeGate.release(orch.profileId, preRegKey);
+            abortPlacement();
             return;
           }
 
@@ -1364,6 +1367,9 @@ export async function checkMageLimitFill(orch: any, sessionPair: string, state: 
             leadProfileId: orch.profileId,
             isFilled: true,
           });
+
+          // Explicitly update existing lead trade object in GlobalTradeGate
+          globalTradeGate.markLeadTradeFilled(targetBotId.toUpperCase(), baseSymbol, sessionName, dateStr, pos.openPrice);
         }
       } catch (e) {
         logger.error(`[DiscretionaryTrader] Error checking Mage limit for ${sig}:`, e);

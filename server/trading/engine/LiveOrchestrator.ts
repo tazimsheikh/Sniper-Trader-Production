@@ -349,7 +349,7 @@ export class LiveOrchestrator {
 
   async handleIncomingLeadTrade(leadTrade: any) {
     if (!this.running) return;
-    const botType = (leadTrade.botType || "").toUpperCase();
+    const botType = (leadTrade.botType || leadTrade.botId || "").toUpperCase();
     const symbol = leadTrade.symbol || leadTrade.pair;
     const session = leadTrade.session || "default";
 
@@ -366,7 +366,7 @@ export class LiveOrchestrator {
           const sig = cfg.signature || "default";
           if (cfg.session && cfg.session !== session && session !== "default") continue;
           const os = state.orbStates ? state.orbStates[sig] : null;
-          if (!os || os.fired || os.limitOrderId || os.mageTradeTakenToday) continue;
+          if (!os || os.limitOrderId) continue;
           if (state.activeTrades && state.activeTrades.some((t: any) => t.clientId === sig)) continue;
 
           const lastCandle = state.m5Buffer && state.m5Buffer.length > 0 
@@ -378,13 +378,15 @@ export class LiveOrchestrator {
           const pipSize = cfg?.pipSize || optCfg?.pipSize || this.getPipValue(symbol);
           const spreadPts = (optCfg && optCfg.spread !== undefined) ? optCfg.spread * pipSize : 0;
           const currentPrice = isBuy ? lastCandle.close + spreadPts : lastCandle.close;
-          const proximityThreshold = Math.max(2.5 * pipSize, (optCfg?.spread || 1) * 2.5 * pipSize, 0.10 * Math.abs(leadTrade.entryPrice - leadTrade.slPrice));
+          const proximityThreshold = Math.max(3.5 * pipSize, (optCfg?.spread || 1) * 2.5 * pipSize, 0.15 * Math.abs(leadTrade.entryPrice - leadTrade.slPrice));
           const distFromLead = isBuy ? (currentPrice - leadTrade.entryPrice) : (leadTrade.entryPrice - currentPrice);
           const totalTpDist = Math.abs(leadTrade.tpPrice - leadTrade.entryPrice);
           const pctTowardsTp = distFromLead > 0 ? (distFromLead / (totalTpDist || 1)) : 0;
           const hitSl = isBuy ? (currentPrice <= leadTrade.slPrice) : (currentPrice >= leadTrade.slPrice);
 
-          if (!hitSl && pctTowardsTp < 0.10 && distFromLead <= proximityThreshold) {
+          const isWithinSafeProximity = !hitSl && pctTowardsTp < 0.15 && (distFromLead <= proximityThreshold || (isBuy ? currentPrice <= leadTrade.entryPrice : currentPrice >= leadTrade.entryPrice));
+
+          if (isWithinSafeProximity) {
             logger.info(
               `[MageEngine][P#${this.profileId}] ⚡ Instant Reactive Catch-Up triggered for ${symbol} ${leadTrade.direction} (Lead from P#${leadTrade.leadProfileId} at ${leadTrade.entryPrice}, Live: ${currentPrice})`,
             );
@@ -412,7 +414,7 @@ export class LiveOrchestrator {
           const sig = cfg.signature || "default";
           if (cfg.session && cfg.session !== session && session !== "default") continue;
           const ss = state.sageStates ? state.sageStates[sig] : null;
-          if (!ss || ss.limitOrderId || (state.sageTradeTakenToday && state.sageTradeTakenToday[sig])) continue;
+          if (!ss || ss.limitOrderId) continue;
           if (state.activeTrades && state.activeTrades.some((t: any) => t.clientId === sig)) continue;
 
           const lastCandle = state.m5Buffer && state.m5Buffer.length > 0 
@@ -423,13 +425,15 @@ export class LiveOrchestrator {
           const optCfg = PairConfigManager.getRepresentativeConfig(sessionPair);
           const pipSize = cfg?.pipSize || optCfg?.pipSize || this.getPipValue(symbol);
           const currentPrice = lastCandle.close;
-          const proximityThreshold = Math.max(2.5 * pipSize, (optCfg?.spread || 1) * 2.5 * pipSize, 0.10 * Math.abs(leadTrade.entryPrice - leadTrade.slPrice));
+          const proximityThreshold = Math.max(3.5 * pipSize, (optCfg?.spread || 1) * 2.5 * pipSize, 0.15 * Math.abs(leadTrade.entryPrice - leadTrade.slPrice));
           const distFromLead = isBuy ? (currentPrice - leadTrade.entryPrice) : (leadTrade.entryPrice - currentPrice);
           const totalTpDist = Math.abs(leadTrade.tpPrice - leadTrade.entryPrice);
           const pctTowardsTp = distFromLead > 0 ? (distFromLead / (totalTpDist || 1)) : 0;
           const hitSl = isBuy ? (currentPrice <= leadTrade.slPrice) : (currentPrice >= leadTrade.slPrice);
 
-          if (!hitSl && pctTowardsTp < 0.10 && distFromLead <= proximityThreshold) {
+          const isWithinSafeProximity = !hitSl && pctTowardsTp < 0.15 && (distFromLead <= proximityThreshold || (isBuy ? currentPrice <= leadTrade.entryPrice : currentPrice >= leadTrade.entryPrice));
+
+          if (isWithinSafeProximity) {
             logger.info(
               `[SageEngine][P#${this.profileId}] ⚡ Instant Reactive Catch-Up triggered for ${symbol} ${leadTrade.direction} (Lead from P#${leadTrade.leadProfileId} at ${leadTrade.entryPrice}, Live: ${currentPrice})`,
             );
@@ -1924,6 +1928,7 @@ export class LiveOrchestrator {
       if (state && state.activeTrades) {
         const trade = state.activeTrades.find(t => String(t.metaOrderId) === String(pos.id));
         if (trade) {
+          globalTradeGate.markLeadTradeFilled(trade.botId || "ALGO", symbol, undefined, undefined, pos.openPrice || trade.entryPrice);
           // Position matches our active trade, check if sl/tp differs significantly (i.e. >1 pip mismatch)
           const pipSize = state.config.pair.includes("BTC") ? 10 :
                           state.config.pair.includes("ETH") ? 1 :

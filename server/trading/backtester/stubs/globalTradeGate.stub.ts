@@ -37,6 +37,7 @@ export const globalTradeGate = {
   registerSessionDirection: (..._args: any[]) => {},
   getActiveLeadTrade: () => undefined,
   onLeadTrade: (..._args: any[]) => {},
+  markLeadTradeFilled: (..._args: any[]) => {},
   clearOldSessionLocks: () => {},
 };
 export default { globalTradeGate };

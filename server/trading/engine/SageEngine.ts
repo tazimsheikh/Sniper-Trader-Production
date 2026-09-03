@@ -271,15 +271,6 @@ export async function _runSageBotForConfig(orch: any, sessionPair: string, state
       }
     }
 
-    // Check the daily trade gate AFTER the session reset so the reset can clear it.
-    if (state.sageTradeTakenToday && state.sageTradeTakenToday[sig]) {
-      return;
-    }
-
-    if (ss.fired || ss.limitOrderId || ss.isPlacing) {
-      /* silently ignore to avoid spam */ return;
-    }
-
     const baseSymbol = PairConfigManager.getBaseSymbol(sessionPair);
     const sessionName = config?.session || state.config?.session || "default";
 
@@ -289,22 +280,24 @@ export async function _runSageBotForConfig(orch: any, sessionPair: string, state
       leadTrade &&
       (!leadTrade.session || leadTrade.session === sessionName) &&
       leadTrade.leadProfileId !== orch.profileId &&
-      !ss.fired &&
       !ss.limitOrderId &&
+      !ss.isPlacing &&
       (!state.activeTrades || !state.activeTrades.find((t: any) => t.clientId === sig))
     ) {
       const isBuy = leadTrade.direction === "BUY";
       const optCfg = PairConfigManager.getRepresentativeConfig(sessionPair);
       const pipSize = config?.pipSize || optCfg?.pipSize || getDynamicPipSize(baseSymbol);
       const currentPrice = c.close;
-      const proximityThreshold = Math.max(2.5 * pipSize, (optCfg?.spread || 1) * 2.5 * pipSize, 0.10 * Math.abs(leadTrade.entryPrice - leadTrade.slPrice));
+      const proximityThreshold = Math.max(3.5 * pipSize, (optCfg?.spread || 1) * 2.5 * pipSize, 0.15 * Math.abs(leadTrade.entryPrice - leadTrade.slPrice));
       
       const distFromLead = isBuy ? (currentPrice - leadTrade.entryPrice) : (leadTrade.entryPrice - currentPrice);
       const totalTpDist = Math.abs(leadTrade.tpPrice - leadTrade.entryPrice);
       const pctTowardsTp = distFromLead > 0 ? (distFromLead / (totalTpDist || 1)) : 0;
       const hitSl = isBuy ? (currentPrice <= leadTrade.slPrice) : (currentPrice >= leadTrade.slPrice);
 
-      if (!hitSl && pctTowardsTp < 0.10 && distFromLead <= proximityThreshold) {
+      const isWithinSafeProximity = !hitSl && pctTowardsTp < 0.15 && (distFromLead <= proximityThreshold || (isBuy ? currentPrice <= leadTrade.entryPrice : currentPrice >= leadTrade.entryPrice));
+
+      if (isWithinSafeProximity) {
         logger.info(
           `[SageEngine][P#${orch.profileId}] 🔄 Cross-Account Smart Catch-Up triggered for ${baseSymbol} ${leadTrade.direction} (Lead from P#${leadTrade.leadProfileId} at ${leadTrade.entryPrice}, Live: ${currentPrice}, Slippage: ${(distFromLead / pipSize).toFixed(1)} pips)`,
         );
@@ -318,6 +311,15 @@ export async function _runSageBotForConfig(orch: any, sessionPair: string, state
         });
         return;
       }
+    }
+
+    // Check the daily trade gate AFTER the session reset so the reset can clear it.
+    if (state.sageTradeTakenToday && state.sageTradeTakenToday[sig]) {
+      return;
+    }
+
+    if (ss.fired || ss.limitOrderId || ss.isPlacing) {
+      /* silently ignore to avoid spam */ return;
     }
 
     // 🚫 Prop Firm Compliance: Rollover Circuit Breaker (16:55 to 17:05 EST) + Toxic Filters 🚫
@@ -626,9 +628,16 @@ export async function _runSageBotForConfig(orch: any, sessionPair: string, state
 export async function placeSageLimitOrder(orch: any, sessionPair: string, state: any, config: any, sig: string, c: any, botId: string = "sage") {
   const symbol = sessionPair;
   const ss = state.sageStates[sig];
-  if (!ss || !ss.fired || ss.limitOrderId) return;
+  if (!ss || !ss.fired || ss.limitOrderId || ss.isPlacing) return;
+  ss.isPlacing = true;
+
+  const abortPlacement = () => {
+    ss.isPlacing = false;
+  };
+
   if (state.botConfigs && state.botConfigs.get(botId)?.enabled === false) {
     logger.info(`[DiscretionaryTrader] ⛔ Trade blocked — Pair ${sessionPair} is disabled for bot ${botId}`);
+    abortPlacement();
     return;
   }
   const baseSymbol = PairConfigManager.getBaseSymbol(sessionPair);
@@ -639,7 +648,10 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
 
   let orderRes: any = null;
   const newsCheck = isNewsBlackout(baseSymbol, new Date(c.timestamp));
-  if (newsCheck.blocked) return;
+  if (newsCheck.blocked) {
+    abortPlacement();
+    return;
+  }
 
   try {
     const profile = typeof orch.getProfileData === 'function' 
@@ -647,6 +659,7 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
       : await db.prepare("SELECT t.risk_multiplier, COALESCE(t.metaapi_token, u.metaapi_token) as metaapi_token, t.metaapi_account_id, t.dwcb_enabled, t.dwcb_peak_balance, t.base_risk_balance, t.broker_symbol_map, t.institutional_enabled, t.institutional_daily_start_balance, t.institutional_daily_date, t.institutional_peak_balance FROM trading_profiles t LEFT JOIN users u ON t.user_id = u.id WHERE t.id = ?").get(orch.profileId);
     if (!profile) {
       logger.info("[PLACE_LIMIT] no profile");
+      abortPlacement();
       return;
     }
 
@@ -684,6 +697,7 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
           reasoning: `Spread (${currentSpreadPips.toFixed(1)} pips) > maxSpreadLimit (${maxSpread}).`,
         }
       });
+      abortPlacement();
       return;
     }
 
@@ -742,6 +756,7 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
               reasoning: `Institutional halt: ${(peakToDrawPct * 100).toFixed(1)}% Absolute Drawdown Reached.`,
             }
           });
+          abortPlacement();
           return;
         }
 
@@ -780,6 +795,7 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
               reasoning: `Institutional halt: ${(dailyCapPct * 100).toFixed(1)}% Daily Loss Limit Reached.`,
             }
           });
+          abortPlacement();
           return;
         }
       }
@@ -789,21 +805,25 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
       sageProfile &&
       sageProfile.dwcb_enabled === 1 &&
       dwcbMultiplier <= 0
-    )
+    ) {
+      abortPlacement();
       return;
+    }
 
     // DYNAMIC MONTE CARLO RISK SIZING
     const baseMonteCarloRisk = sageCfg.riskPct !== undefined ? sageCfg.riskPct : 0.01;
     const userRiskDial = state.botConfigs.get(botId)?.risk ?? state.riskPct ?? 1;
     
     let sageRisk = baseMonteCarloRisk * userRiskDial * (profile.risk_multiplier || 1);
-    if (sageRisk > 0.50 && baseMonteCarloRisk <= 1.0) sageRisk = 0.50;
-    else if (sageRisk > 50 && baseMonteCarloRisk > 1.0) sageRisk = 50;
+    const MAX_PERMITTED_RISK_PCT = 3.0;
+    if (sageRisk > MAX_PERMITTED_RISK_PCT) {
+      sageRisk = MAX_PERMITTED_RISK_PCT;
+    }
 
     // Base Risk: use fixed user-defined balance if set, otherwise fall back to live equity (compounding)
     const riskBasis =
-      sageProfile?.base_risk_balance > 0
-        ? sageProfile.base_risk_balance
+      profile?.base_risk_balance && Number(profile.base_risk_balance) > 0
+        ? Number(profile.base_risk_balance)
         : effectiveBalance;
     const riskFraction = sageRisk / 100;
     const riskAmountUsd = riskBasis * riskFraction * dwcbMultiplier * institutionalMultiplier;
@@ -837,6 +857,7 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
     );
     if (!consensusCheck.approved) {
       logger.info(`[SageEngine] 🛡️ ${consensusCheck.reason}`);
+      abortPlacement();
       return;
     }
 
@@ -848,6 +869,7 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
     );
     if (!check.approved) {
       logger.info(`[DiscretionaryTrader] ⛔ Global Trade Gate blocked Sage on ${symbol}: ${check.reason}`);
+      abortPlacement();
       return;
     }
 
@@ -911,6 +933,7 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
         if (hitSl || hitTp) {
           logger.info(`[SageEngine] 🛑 Direct Market Order Aborted: Live price (${latestPrice}) already hit ${hitSl ? 'Stop Loss' : 'Take Profit'}!`);
           globalTradeGate.release(orch.profileId, preRegKey);
+          abortPlacement();
           return;
         }
 
@@ -1554,6 +1577,11 @@ export async function checkSageLimitFill(orch, sessionPair, state, c, targetBotI
               reasoning: `SAGE Poller caught missed entry at ${pos.openPrice}`,
             }
           });
+
+          // Mark lead trade as filled in GlobalTradeGate for peer accounts
+          const sessionName = sageCfg?.session || state.config?.session || "default";
+          const dateStr = ss.currentDateStr || new Date(c.timestamp).toISOString().split("T")[0];
+          globalTradeGate.markLeadTradeFilled(targetBotId.toUpperCase(), baseSymbol, sessionName, dateStr, pos.openPrice);
         }
       } catch (e) {
         logger.error(`[DiscretionaryTrader] SAGE limit fill check failed:`, e);
