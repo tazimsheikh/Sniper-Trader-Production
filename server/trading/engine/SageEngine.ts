@@ -282,6 +282,8 @@ export async function _runSageBotForConfig(orch: any, sessionPair: string, state
       leadTrade.leadProfileId !== orch.profileId &&
       !ss.limitOrderId &&
       !ss.isPlacing &&
+      !ss.fired &&
+      !(state.sageTradeTakenToday && state.sageTradeTakenToday[sig]) &&
       (!state.activeTrades || !state.activeTrades.find((t: any) => t.clientId === sig))
     ) {
       const isBuy = leadTrade.direction === "BUY";

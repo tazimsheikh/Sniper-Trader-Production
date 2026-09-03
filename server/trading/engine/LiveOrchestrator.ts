@@ -1871,11 +1871,16 @@ export class LiveOrchestrator {
             if (trade.clientId) {
               if (state.sageStates && state.sageStates[trade.clientId]) {
                 state.sageStates[trade.clientId].limitOrderId = null;
-                state.sageStates[trade.clientId].fired = false;
+                // KEEP fired = true and sageTradeTakenToday = true so manually closed or exited trades NEVER re-enter in the same session!
+                state.sageStates[trade.clientId].fired = true;
                 state.sageStates[trade.clientId].fired_fill_check = false;
+                if (!state.sageTradeTakenToday) state.sageTradeTakenToday = {};
+                state.sageTradeTakenToday[trade.clientId] = true;
               }
               if (state.orbStates && state.orbStates[trade.clientId]) {
                 state.orbStates[trade.clientId].limitOrderId = null;
+                state.orbStates[trade.clientId].fired = true;
+                state.orbStates[trade.clientId].mageTradeTakenToday = true;
               }
             }
 
@@ -1887,9 +1892,10 @@ export class LiveOrchestrator {
                 logger.error(`[DiscretionaryTrader] Failed to mark trade ${metaOrderId} as CLOSED in DB:`, e.message);
               }
             }
-            // Release the GlobalTradeGate slot so the bot can take new trades
+            // Release the GlobalTradeGate slot so the bot can take new trades, and remove lead trade lock
             try {
               globalTradeGate.release(this.profileId, metaOrderId);
+              globalTradeGate.closeLeadTrade(this.profileId, sp);
             } catch (_) {}
           }
         }

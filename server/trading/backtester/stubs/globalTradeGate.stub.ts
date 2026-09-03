@@ -38,6 +38,7 @@ export const globalTradeGate = {
   getActiveLeadTrade: () => undefined,
   onLeadTrade: (..._args: any[]) => {},
   markLeadTradeFilled: (..._args: any[]) => {},
+  closeLeadTrade: (..._args: any[]) => {},
   clearOldSessionLocks: () => {},
 };
 export default { globalTradeGate };

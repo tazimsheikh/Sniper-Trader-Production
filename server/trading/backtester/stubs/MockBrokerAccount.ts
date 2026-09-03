@@ -795,7 +795,7 @@ export class MockBrokerAccount {
           }
           if (pos.clientId && orchestratorState.sageStates?.[pos.clientId]) {
             orchestratorState.sageStates[pos.clientId].limitOrderId = null;
-            orchestratorState.sageStates[pos.clientId].fired = false;
+            orchestratorState.sageStates[pos.clientId].fired = true;
             orchestratorState.sageStates[pos.clientId].fired_fill_check = false;
           }
         }
@@ -825,7 +825,7 @@ export class MockBrokerAccount {
           }
           if (pos.clientId && orchestratorState.sageStates?.[pos.clientId]) {
             orchestratorState.sageStates[pos.clientId].limitOrderId = null;
-            orchestratorState.sageStates[pos.clientId].fired = false;
+            orchestratorState.sageStates[pos.clientId].fired = true;
             orchestratorState.sageStates[pos.clientId].fired_fill_check = false;
           }
         }
@@ -854,7 +854,7 @@ export class MockBrokerAccount {
           }
           if (pos.clientId && orchestratorState.sageStates?.[pos.clientId]) {
             orchestratorState.sageStates[pos.clientId].limitOrderId = null;
-            orchestratorState.sageStates[pos.clientId].fired = false;
+            orchestratorState.sageStates[pos.clientId].fired = true;
             orchestratorState.sageStates[pos.clientId].fired_fill_check = false;
           }
         }
@@ -883,7 +883,7 @@ export class MockBrokerAccount {
           }
           if (pos.clientId && orchestratorState.sageStates?.[pos.clientId]) {
             orchestratorState.sageStates[pos.clientId].limitOrderId = null;
-            orchestratorState.sageStates[pos.clientId].fired = false;
+            orchestratorState.sageStates[pos.clientId].fired = true;
             orchestratorState.sageStates[pos.clientId].fired_fill_check = false;
           }
         }

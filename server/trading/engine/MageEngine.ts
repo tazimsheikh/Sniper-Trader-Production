@@ -289,6 +289,8 @@ export async function _runMageBotForConfig(orch: any, symbol: string, state: any
     leadTrade.leadProfileId !== orch.profileId &&
     !os.limitOrderId &&
     !os.isPlacing &&
+    !os.fired &&
+    !os.mageTradeTakenToday &&
     (!state.activeTrades || !state.activeTrades.find((t: any) => t.clientId === sig || t.magic === magic))
   ) {
     const isBuy = leadTrade.direction === "BUY";

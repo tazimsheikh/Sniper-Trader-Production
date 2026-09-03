@@ -346,6 +346,21 @@ class GlobalTradeGate {
   }
 
   /**
+   * Closes and removes the active lead trade for a profile/pair when position is closed on broker.
+   */
+  closeLeadTrade(leadProfileId: number, symbol: string) {
+    const cleanPair = PairConfigManager.getBaseSymbol(symbol).toUpperCase();
+    for (const [key, lock] of this.sessionDirectionLocks.entries()) {
+      if (lock.leadProfileId === leadProfileId && (key.includes(`_${cleanPair}_`) || key.endsWith(`_${cleanPair}`))) {
+        this.sessionDirectionLocks.delete(key);
+        logger.info(
+          `[GlobalTradeGate] 🔓 Closed and removed lead trade lock for ${key} (Profile #${leadProfileId})`,
+        );
+      }
+    }
+  }
+
+  /**
    * Periodic cleanup of session direction locks older than 24 hours.
    */
   clearOldSessionLocks(olderThanHours = 24) {
