@@ -27,6 +27,7 @@ async function main() {
     if (!startDate || !endDate || startDate === "DYNAMIC" || endDate === "DYNAMIC") {
         const fs = await import('fs');
         const path = await import('path');
+        const csvDir = path.join(process.cwd(), 'data', 'csv');
         const basePrefix = pair.split('_')[0].split('.')[0].toLowerCase();
         const pairPrefix = pair.split('_')[0].toLowerCase();
         const csvFiles = fs.readdirSync(csvDir).filter((f) => (f.toLowerCase().startsWith(pairPrefix) || f.toLowerCase().startsWith(basePrefix)) && f.endsWith(".csv"));

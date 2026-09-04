@@ -195,7 +195,7 @@ export async function runMathBacktest(
 
     if (inWindow && config.delayStartMinutes !== undefined) {
       const isStartHour =
-        (isNY && c.estHour === (orbStartHour < 8 ? orbStartHour : 8)) ||
+        (isNY && c.estHour === ((config.orbStartHour ?? 8) < 8 ? (config.orbStartHour ?? 8) : 8)) ||
         (isLondon && c.estHour === 2) ||
         (isAsia && c.estHour === 20);
       if (isStartHour && c.minute < config.delayStartMinutes) inWindow = false;

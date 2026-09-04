@@ -734,6 +734,7 @@ export async function runVisionBacktest(
 
     // Process DWCB Compounding locally
     const rMultiple = blendedPips / riskPips;
+    const currentDd = localPeak > 0 ? (localPeak - localBalance) / localPeak : 0;
     const boundedDD = Math.max(0, Math.min(currentDd, 0.29));
     const dwcbMultiplier = Math.max(0, 1 - Math.pow(boundedDD / 0.29, 2));
     const riskAmount = localBalance * 0.1 * dwcbMultiplier;

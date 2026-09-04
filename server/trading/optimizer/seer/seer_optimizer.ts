@@ -300,7 +300,7 @@ if (isMainThread && process.argv[1] && (process.argv[1] === currentFile || path.
 
         const triggerCache = new Map<string, any[]>();
         
-        const getCachedTriggers = (minBody: number, wickRatio: number, candles: any[], ema: any, bb: any[], rsi: any[], isOos: boolean = false) => {
+        const getCachedTriggers = (minBody: number, wickRatio: number, candles: any[], ema: any, bb: any, rsi: any, isOos: boolean = false) => {
           const key = `${isOos ? 'OOS' : 'IS'}_${minBody}_${wickRatio}`;
           if (!triggerCache.has(key)) {
             const t = [];
