@@ -169,9 +169,6 @@ export function getSymbolSpec(symbol: string) {
     .replace("=X", "")
     .replace("=F", "");
   const INDEX_ALIASES: Record<string, string> = {
-    SP500: "SPX500",
-    US500: "SPX500",
-    SPX: "SPX500",
     US30: "US30",
     DJ30: "US30",
     WS30: "US30",
@@ -185,13 +182,9 @@ export function getSymbolSpec(symbol: string) {
     DE40: "GER40",
     GER30: "GER40",
     DE30: "GER40",
-    JPN225: "JPN225",
-    JP225: "JPN225",
     UK100: "UK100",
     FTSE100: "UK100",
     GOLD: "XAUUSD",
-    USOIL: "XTIUSD",
-    WTI: "XTIUSD",
   };
 
   const canonicalSymbol = INDEX_ALIASES[cleanSymbol] || cleanSymbol.split("_")[0].split(".")[0];
@@ -289,6 +282,7 @@ export function getFallbackPipValue(brokerSymbol: string, referencePrice?: numbe
     .toUpperCase();
 
   // 1. Major US Indices & Equities (1 point = $1.00 per standard 1.0 contract lot)
+  // US30, NAS100, USTEC, NDX, DJ30, WS30, DOW30
   if (
     clean.includes("US30") ||
     clean.includes("DJ30") ||
@@ -297,12 +291,7 @@ export function getFallbackPipValue(brokerSymbol: string, referencePrice?: numbe
     clean.includes("DOW") ||
     clean.includes("NAS100") ||
     clean.includes("USTEC") ||
-    clean.includes("NDX") ||
-    clean.includes("SPX500") ||
-    clean.includes("SP500") ||
-    clean.includes("US500") ||
-    clean.includes("BTC") ||
-    clean.includes("ETH")
+    clean.includes("NDX")
   ) {
     return 1.0;
   }
@@ -319,18 +308,9 @@ export function getFallbackPipValue(brokerSymbol: string, referencePrice?: numbe
     return 1.10;
   }
 
-  // 3. Asian Indices (JPN225 / NIKKEI)
-  if (clean.includes("JPN") || clean.includes("JP225") || clean.includes("NIKKEI")) {
-    return 0.65;
-  }
 
   // 4. Commodities: Gold (XAUUSD)
   if (clean.includes("XAU") || clean.includes("GOLD")) {
-    return 10.0;
-  }
-
-  // 5. Commodities: Crude Oil (XTIUSD / WTI / USOIL)
-  if (clean.includes("XTI") || clean.includes("OIL") || clean.includes("USOIL") || clean.includes("WTI")) {
     return 10.0;
   }
 
@@ -358,7 +338,7 @@ export function getFallbackPipValue(brokerSymbol: string, referencePrice?: numbe
     return 7.17;
   }
 
-  // 9. Forex Pairs - NZD Quote (EURNZD, GBPNZD, AUDNZD)
+  // 9. Forex Pairs - NZD Quote (NZDUSD, AUDNZD)
   if (clean.endsWith("NZD")) {
     return 6.00;
   }

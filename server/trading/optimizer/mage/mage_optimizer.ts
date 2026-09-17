@@ -59,8 +59,8 @@ export function parseMageConfig(setupStr: string): { session: string; config: Pa
 
 // Define the grids
 const MIN_SL_VALS = [1.5, 2.5, 5, 7.5, 10, 15, 20];
-const MAX_SL_VALS = [25, 30, 40, 50, 60, 80, 100, 150, 200];
-const MIN_BODY_VALS = [4, 5, 6, 7.5, 8, 10, 12, 15, 20, 24, 30, 40];
+const MAX_SL_VALS = [20, 25, 30, 40, 50, 60, 80, 100, 150, 200];
+const MIN_BODY_VALS = [4, 5, 6, 7.5, 8, 10, 12, 15, 20, 24, 25, 30, 40];
 const TRAILING_TRIGGERS = [0.5, 1.0, 1.5, 2.0, 3.0];
 const TRAILING_STEPS = [0.5, 1.0, 1.5, 2.0];
 const FORCE_CLOSE_HOURS = [4, 8, 12, 16, 24];
@@ -147,9 +147,6 @@ const ALL_PAIRS = Array.from(
     "GBPJPY",
     "GBPAUD",
     "EURCAD",
-    "XTIUSD",
-    "BTCUSD.Daily",
-    "ETHUSD.Daily"
   ];
   const indexA = priority.indexOf(a);
   const indexB = priority.indexOf(b);
@@ -241,7 +238,7 @@ if (isMainThread && process.argv[1] === currentFile) {
 
     const MAJORS = ["GBPUSD", "EURUSD"];
     const JPY_CROSSES = ["GBPJPY", "CHFJPY", "CADJPY", "EURJPY", "AUDJPY", "USDJPY"];
-    const VOLATILE_CROSSES = ["GBPAUD", "EURAUD", "EURCAD", "GBPCAD", "EURNZD", "GBPNZD"];
+    const VOLATILE_CROSSES = ["GBPAUD", "EURAUD", "EURCAD", "GBPCAD"];
     const MINOR_PAIRS = ["AUDUSD", "NZDUSD", "USDCAD", "USDCHF"];
     
     if (MAJORS.includes(symbol)) {
@@ -258,7 +255,7 @@ if (isMainThread && process.argv[1] === currentFile) {
       forceCloseHoursGrid = [4, 8, 12, 16, 24];
     } else if (VOLATILE_CROSSES.includes(symbol)) {
       minSlGrid = [15, 20, 25, 30, 40];
-      maxSlGrid = [30, 40, 50, 60, 70, 80, 100, 150];
+      maxSlGrid = [20, 30, 40, 50, 60, 70, 80, 100, 150];
       minBodyGrid = [4, 5, 6, 7.5, 10, 12, 15];
       trailingTriggersGrid = [0.5, 1.0, 1.5, 2.0, 3.0];
       forceCloseHoursGrid = [4, 8, 12, 16, 24];
@@ -303,7 +300,7 @@ if (isMainThread && process.argv[1] === currentFile) {
     } else if (symbol.includes("XAU") || symbol.includes("XTI")) {
       minSlGrid = [10, 12, 15, 20, 30, 40]; // 10 pips = $1.00 on Gold; exact dump match
       maxSlGrid = [40, 60, 80, 120, 150, 200];
-      minBodyGrid = [15, 20, 24, 35, 50];
+      minBodyGrid = [15, 20, 24, 25, 35, 50];
       trailingTriggersGrid = [1.0, 1.5, 2.0, 3.0];
       forceCloseHoursGrid = [4, 8, 12, 16, 24];
     }
@@ -355,7 +352,7 @@ if (isMainThread && process.argv[1] === currentFile) {
         { h: 8, m: 0 },
       ];
     }
-    if (symbol === "EURNZD" || symbol === "GBPNZD" || symbol === "EURAUD" || symbol === "GBPAUD" || symbol === "AUDUSD" || symbol === "NZDUSD") {
+    if (symbol === "EURAUD" || symbol === "GBPAUD" || symbol === "AUDUSD" || symbol === "NZDUSD") {
       startTimesMap.asia = [
         ...startTimesMap.asia,
         { h: 22, m: 0 },
@@ -476,27 +473,30 @@ if (isMainThread && process.argv[1] === currentFile) {
 
     for (const session of sessions) {
       const isAsiaSession = session === "asia";
-      const isCrypto = symbol.includes("BTC") || symbol.includes("ETH");
-      const isIndex = ["US30", "NAS100", "SPX500", "GER40", "UK100", "JPN225"].some(idx => symbol.includes(idx));
+      const isIndex = ["US30", "NAS100", "GER40", "UK100"].some(idx => symbol.includes(idx));
       const isJpyCross = symbol.includes("JPY");
 
       let useHtfSar = true;
-      if (isCrypto) useHtfSar = false;
       if (isIndex && isAsiaSession) useHtfSar = false;
       if (isJpyCross && !symbol.includes("GBP")) useHtfSar = false; // CHFJPY false, GBPJPY true
       if (symbol === "NZDUSD") useHtfSar = false;
 
       let reqCloseHalf = false;
       if (isIndex && !isAsiaSession) reqCloseHalf = true;
-      if (symbol === "USDCAD" || symbol === "GBPJPY" || symbol === "BTCUSD") reqCloseHalf = true;
+      if (symbol === "USDCAD" || symbol === "GBPJPY") reqCloseHalf = true;
 
       const wbr = (symbol.includes("EURUSD") || (symbol.includes("CHFJPY") && !isAsiaSession)) ? 1.75 : 1.5;
+
+      const cleanSym = symbol.replace(/\.Daily$/i, "").split("_")[0];
+      const isMidpointAsset = cleanSym === "GBPJPY" || cleanSym === "XAUUSD" || cleanSym === "GER40";
+      const slMode = isMidpointAsset ? "MIDPOINT" : "OPPOSITE_BOUNDARY";
 
       const liveStaticValues = {
         useHtfSarFilter: useHtfSar,
         requireCloseLocationHalf: reqCloseHalf,
         minWbr: wbr,
-        maxH1EmaSlope: 20
+        maxH1EmaSlope: 20,
+        slMode: slMode,
       };
 
       const startTimes = startTimesMap[session];

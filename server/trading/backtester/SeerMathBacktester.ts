@@ -149,6 +149,7 @@ export async function runMathBacktest(
   if (enableTrace) console.log(`🕯️  ${m5Candles.length.toLocaleString()} M5 candles loaded`);
 
   const dailyTracker = new DailyContextTracker();
+  const htfData = HTFContextTracker.precomputeHTFData(m5Candles);
   
   const records: VisionTradeRecord[] = [];
   let day3High = -Infinity;
@@ -234,6 +235,9 @@ export async function runMathBacktest(
     }
 
     if (mathResult) {
+      if (config.vetoCounterH1Structure && HTFContextTracker.isCounterToH1Structure(htfData, i, mathResult.direction)) {
+        continue;
+      }
       sessionTradeTaken = true;
       triggerSetup = {
         setupType: mathResult.setupType,
@@ -279,14 +283,13 @@ export async function runMathBacktest(
     const direction = evalDecision.decision === 'NO_TRADE' ? expectedDirection : evalDecision.decision;
     let isSkipped = evalDecision.decision === 'NO_TRADE' || evalDecision.confidence < CONFIDENCE_THRESHOLD;
     const entry = evalDecision.entry || (direction === 'SELL' ? c.close : c.close + askSpread);
-    const isVolatile = pair.includes('XAU') || pair.includes('NAS') || pair.includes('US30') || pair.includes('GER40') || pair.includes('GBPJPY') || pair.includes('GBPCAD') || pair.includes('GBPNZD') || pair.includes('EURNZD');
+    const isVolatile = pair.includes('XAU') || pair.includes('NAS') || pair.includes('US30') || pair.includes('GER40') || pair.includes('GBPJPY') || pair.includes('GBPCAD');
 
     let minSlDist: number;
     if (config.minSlDist !== undefined) {
       minSlDist = config.minSlDist * pipSize;
     } else {
       minSlDist = (isVolatile ? 40 : 20) * pipSize;
-      if (pair.includes('XTI')) minSlDist = 15.0 * pipSize;
     }
 
     let maxSlDist: number;
@@ -437,7 +440,7 @@ export async function runMathBacktest(
        blendedPips = (partialPips * 0.5) + (finalPips * 0.5);
     }
 
-    const rMultiple = blendedPips / riskPips;
+    const rMultiple = riskPips > 0 ? blendedPips / riskPips : 0;
 
     if (isSkipped) {
       record.outcome = 'SKIPPED';

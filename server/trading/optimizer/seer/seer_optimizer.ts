@@ -67,9 +67,8 @@ if (!fs.existsSync(dumpDir)) fs.mkdirSync(dumpDir, { recursive: true });
 const csvDir = path.join(process.cwd(), "data", "csv");
 const ALL_PAIRS = Array.from(
   new Set(fs.readdirSync(csvDir).filter((f) => f.endsWith(".csv")).map((f) => f.split("_")[0])),
-).filter((p) => !p.includes("BTC") && !p.includes("ETH"))
- .sort((a, b) => {
-    const priority = ["XAUUSD", "NAS100.Daily", "EURUSD", "GBPJPY", "GBPAUD", "EURCAD", "XTIUSD"];
+).sort((a, b) => {
+    const priority = ["XAUUSD", "NAS100.Daily", "EURUSD", "GBPJPY", "GBPAUD", "EURCAD"];
     const indexA = priority.indexOf(a);
     const indexB = priority.indexOf(b);
     if (indexA !== -1 && indexB !== -1) return indexA - indexB;
@@ -151,7 +150,7 @@ if (isMainThread && process.argv[1] && (process.argv[1] === currentFile || path.
 
     const MAJORS = ["GBPUSD", "EURUSD"];
     const JPY_CROSSES = ["GBPJPY", "CHFJPY", "CADJPY", "EURJPY", "AUDJPY", "USDJPY"];
-    const VOLATILE_CROSSES = ["GBPAUD", "EURAUD", "EURCAD", "GBPCAD", "EURNZD", "GBPNZD"];
+    const VOLATILE_CROSSES = ["GBPAUD", "EURAUD", "EURCAD", "GBPCAD"];
     const MINOR_PAIRS = ["AUDUSD", "NZDUSD", "USDCAD", "USDCHF"];
     
     if (MAJORS.includes(symbol)) {

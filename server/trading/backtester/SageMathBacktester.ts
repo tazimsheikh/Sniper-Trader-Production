@@ -41,16 +41,12 @@ export async function runSageMathBacktest(
   enableTrace: boolean = false,
 ) {
   const normalizedPair = pair.split("_")[0].split(".")[0].trim().toUpperCase();
-  const isCrypto = pair.includes("BTC") || pair.includes("ETH");
   const isIndex =
     pair.includes("NAS") ||
     pair.includes("US30") ||
     pair.includes("GER40") ||
-    pair.includes("XTIUSD") ||
-    pair.includes(".Daily") ||
-    pair.includes("SPX500") ||
-    pair.includes("JPN225");
-  const isForex = !isCrypto && !isIndex;
+    pair.includes(".Daily");
+  const isForex = !isIndex;
   const sageConfigs = overrideConfigs || PairConfigManager.getSageConfigs(pair);
   if (!sageConfigs || sageConfigs.length === 0) throw new Error(`Unknown pair: ${pair}`);
 
@@ -183,7 +179,8 @@ export async function runSageMathBacktest(
     }
     const estDate = getFixedEstDate(new Date(r.timestamp));
     const dStr = estDate.toISOString().split("T")[0];
-    m1Typed.isEOD_standard[i] = isEODSession(r.estHour, r.minute) ? 1 : 0;
+    const isWeekendGap = i + 1 < m1Length && (m1Rows[i + 1].timestamp - r.timestamp > 24 * 3600 * 1000);
+    m1Typed.isEOD_standard[i] = (isEODSession(r.estHour, r.minute) || isWeekendGap) ? 1 : 0;
     m1Typed.isNewsForceClose[i] = isNewsForceClose(dStr, r.estHour, r.minute) ? 1 : 0;
   }
 

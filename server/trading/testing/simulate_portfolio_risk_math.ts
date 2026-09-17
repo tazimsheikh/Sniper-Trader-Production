@@ -16,6 +16,7 @@ import * as path from "path";
 import { runMathBacktest as runMageMathBacktest, clearMageBacktestCache } from "../backtester/MageMathBacktester.js";
 import { runSageMathBacktest, clearSageBacktestCache } from "../backtester/SageMathBacktester.js";
 import { runSeerMathBacktest, clearSeerBacktestCache } from "../backtester/SeerMathBacktester.js";
+import { clearCsvCache } from "../backtester/loadCsv.js";
 import { PairConfigManager, MAGE_PAIR_CONFIG, SAGE_PAIR_CONFIG, SEER_PAIR_CONFIG } from "../config/PairConfig.js";
 import { OPTIMIZER_CONFIG } from "../config/OptimizerPairConfig.js";
 import { getFixedEstDate } from "../engine/LiveOrchestrator.js";
@@ -84,8 +85,7 @@ function parseSetupToConfig(setupStr: string, symbol: string, isSage: boolean): 
       trailingSlTrigger: trig,
       trailingSlStep: step,
       forceCloseHours: fc,
-      htfAlignmentRequired: true,
-      maxH1EmaSlope: 20,
+      htfAlignmentRequired: false,
     };
   } else {
     const fc = findNum("FC") ?? 24;
@@ -115,8 +115,6 @@ function parseSetupToConfig(setupStr: string, symbol: string, isSage: boolean): 
       trailingSlTrigger: trig,
       trailingSlStep: step,
       forceCloseHours: fc,
-      htfAlignmentRequired: true,
-      maxH1EmaSlope: 20,
     };
   }
 }
@@ -165,6 +163,12 @@ export async function loadPortfolioTrades(startDate: string, endDate: string): P
           const match = liveCfgs.find((c: any) =>
             c.orbStartHour === parsed.orbStartHour &&
             c.orbStartMin === parsed.orbStartMin &&
+            c.orbMinutes === parsed.orbMinutes &&
+            c.session === parsed.session &&
+            c.exitMode === parsed.exitMode
+          ) || liveCfgs.find((c: any) =>
+            c.orbStartHour === parsed.orbStartHour &&
+            c.orbStartMin === parsed.orbStartMin &&
             c.orbMinutes === parsed.orbMinutes
           );
           cfg = match ? { ...match } : parsed;
@@ -193,6 +197,7 @@ export async function loadPortfolioTrades(startDate: string, endDate: string): P
         } catch (e: any) {
           console.error(`[Loader] Error on ${cleanSym} (${comp.botType}):`, e.message);
         }
+        clearCsvCache();
       }
     }
   } else {
@@ -462,6 +467,274 @@ async function runMonthlyModule(trades: any[]) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// MODULE 2D: Week-by-Week Portfolio Performance Breakdown
+// ─────────────────────────────────────────────────────────────────────────────
+async function runWeeklyModule(trades: any[]) {
+  console.log("\n======================================================================================================================================================");
+  console.log(" 📅 MODULE 2D: WEEK-BY-WEEK PORTFOLIO PERFORMANCE TABLE");
+  console.log("======================================================================================================================================================");
+
+  function getTradingWeek(date: Date) {
+    const d = new Date(date.getTime());
+    const day = d.getUTCDay();
+    const diffToMonday = day === 0 ? 1 : (1 - day);
+    const monday = new Date(d.getTime() + diffToMonday * 86400000);
+    const friday = new Date(monday.getTime() + 4 * 86400000);
+    const mIso = monday.toISOString().substring(0, 10);
+    const fIso = friday.toISOString().substring(0, 10);
+    
+    const target = new Date(monday.getTime());
+    target.setUTCDate(target.getUTCDate() + 3);
+    const firstJan = new Date(Date.UTC(target.getUTCFullYear(), 0, 1));
+    const weekNum = Math.ceil((((target.getTime() - firstJan.getTime()) / 86400000) + 1) / 7);
+    const year = target.getUTCFullYear();
+    const weekKey = `${year}-W${String(weekNum).padStart(2, "0")}`;
+    return { weekKey, mondayStr: mIso, fridayStr: fIso, label: `${weekKey} (${mIso} → ${fIso})` };
+  }
+
+  const weeklyBuckets: Record<string, { label: string; trades: any[] }> = {};
+  for (const t of trades) {
+    const dStr = t.exitTime || t.entryTime || t.date || t.time || "";
+    if (!dStr) continue;
+    const cleanStr = dStr.includes("T") ? dStr : dStr.replace(" ", "T");
+    const d = new Date(cleanStr);
+    if (isNaN(d.getTime())) continue;
+    const { weekKey, label } = getTradingWeek(d);
+    if (!weeklyBuckets[weekKey]) weeklyBuckets[weekKey] = { label, trades: [] };
+    weeklyBuckets[weekKey].trades.push(t);
+  }
+
+  const sortedWeeks = Object.keys(weeklyBuckets).sort();
+  console.log("------------------------------------------------------------------------------------------------------------------------------------------------------");
+  console.log(" WEEK KEY & SPAN                    | TRADES | WINS | LOSS |  BE  |  WIN %  | LOSS %  |  BE %   | RAW NET R   | WEIGHTED NET R | WEEK MAX DD (R) | CUMULATIVE NET R | STATUS");
+  console.log("------------------------------------------------------------------------------------------------------------------------------------------------------");
+
+  let cumRawR = 0;
+  let cumWeightedR = 0;
+  let cumPeakWeightedR = 0;
+  let cumMaxDdWeightedR = 0;
+
+  let winWeeks = 0;
+  let lossWeeks = 0;
+  let beWeeks = 0;
+  let bestWeek = { label: "", rawR: -Infinity };
+  let worstWeek = { label: "", rawR: Infinity };
+
+  for (const wKey of sortedWeeks) {
+    const { label, trades: wTrades } = weeklyBuckets[wKey];
+    let wRawR = 0;
+    let wWeightedR = 0;
+    let wWins = 0;
+    let wLosses = 0;
+    let wBe = 0;
+    let wPeakWeightedR = 0;
+    let wMaxDdWeightedR = 0;
+
+    for (const t of wTrades) {
+      const r = t.rMultiple || 0;
+      const wR = r * (t.riskMultiplier || 1.0);
+      wRawR += r;
+      wWeightedR += wR;
+      if (r > 0.0001) {
+        wWins++;
+      } else if (r < -0.0001) {
+        wLosses++;
+      } else {
+        wBe++;
+      }
+
+      if (wWeightedR > wPeakWeightedR) wPeakWeightedR = wWeightedR;
+      const dd = wPeakWeightedR - wWeightedR;
+      if (dd > wMaxDdWeightedR) wMaxDdWeightedR = dd;
+
+      cumRawR += r;
+      cumWeightedR += wR;
+      if (cumWeightedR > cumPeakWeightedR) cumPeakWeightedR = cumWeightedR;
+      const cDd = cumPeakWeightedR - cumWeightedR;
+      if (cDd > cumMaxDdWeightedR) cumMaxDdWeightedR = cDd;
+    }
+
+    if (wRawR > 0.05) winWeeks++;
+    else if (wRawR < -0.05) lossWeeks++;
+    else beWeeks++;
+
+    if (wRawR > bestWeek.rawR) bestWeek = { label, rawR: wRawR };
+    if (wRawR < worstWeek.rawR) worstWeek = { label, rawR: wRawR };
+
+    const winPct = wTrades.length > 0 ? (wWins / wTrades.length) * 100 : 0;
+    const lossPct = wTrades.length > 0 ? (wLosses / wTrades.length) * 100 : 0;
+    const bePct = wTrades.length > 0 ? (wBe / wTrades.length) * 100 : 0;
+    const rawRStr = (wRawR >= 0 ? "+" : "") + wRawR.toFixed(2) + " R";
+    const wRStr = (wWeightedR >= 0 ? "+" : "") + wWeightedR.toFixed(2) + " R";
+    const cumRStr = (cumWeightedR >= 0 ? "+" : "") + cumWeightedR.toFixed(2) + " R";
+    const status = wRawR > 0.05 ? "🟢 WIN" : (wRawR < -0.05 ? "🔴 LOSS" : "⚪ FLAT");
+
+    console.log(
+      ` ${label.padEnd(34)} | ${String(wTrades.length).padStart(6)} | ${String(wWins).padStart(4)} | ${String(wLosses).padStart(4)} | ${String(wBe).padStart(4)} | ${winPct.toFixed(1).padStart(6)}% | ${lossPct.toFixed(1).padStart(6)}% | ${bePct.toFixed(1).padStart(6)}% | ${rawRStr.padStart(11)} | ${wRStr.padStart(14)} | ${wMaxDdWeightedR.toFixed(2).padStart(13)} R | ${cumRStr.padStart(14)} | ${status}`
+    );
+  }
+
+  const totalWeeks = sortedWeeks.length;
+  const weekWinRate = totalWeeks > 0 ? (winWeeks / totalWeeks) * 100 : 0;
+  console.log("------------------------------------------------------------------------------------------------------------------------------------------------------");
+  console.log(` 📊 WEEKLY CONSISTENCY SUMMARY:`);
+  console.log(`    Total Weeks Traded : ${totalWeeks}`);
+  console.log(`    Profitable Weeks   : ${winWeeks} (${weekWinRate.toFixed(1)}%) | Losing Weeks: ${lossWeeks} | Flat/BE Weeks: ${beWeeks}`);
+  console.log(`    Best Single Week   : ${bestWeek.label} (${(bestWeek.rawR >= 0 ? "+" : "") + bestWeek.rawR.toFixed(2)} R)`);
+  console.log(`    Worst Single Week  : ${worstWeek.label} (${(worstWeek.rawR >= 0 ? "+" : "") + worstWeek.rawR.toFixed(2)} R)`);
+  console.log(`    Total Raw Net R    : ${(cumRawR >= 0 ? "+" : "") + cumRawR.toFixed(2)} R | Weighted Net R: ${(cumWeightedR >= 0 ? "+" : "") + cumWeightedR.toFixed(2)} R`);
+  console.log("======================================================================================================================================================\n");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MODULE 2E: Forensic Dip & Historical Drawdown Audit
+// ─────────────────────────────────────────────────────────────────────────────
+async function runDipAuditModule(trades: any[]) {
+  console.log("\n====================================================================================================");
+  console.log(" 🔬 MODULE 2E: FORENSIC AUDIT OF RECENT 4-WEEK DIP (2026-08-17 → 2026-09-11)");
+  console.log("====================================================================================================");
+
+  const dipTrades = trades.filter((t: any) => {
+    const dStr = t.exitTime || t.entryTime || t.date || t.time || "";
+    return dStr >= "2026-08-17" && dStr <= "2026-09-11 23:59:59";
+  });
+
+  console.log(`\n📦 Total Trades in Recent Dip: ${dipTrades.length}`);
+  const totalDipRawR = dipTrades.reduce((s, t) => s + (t.rMultiple || 0), 0);
+  const totalDipWeightedR = dipTrades.reduce((s, t) => s + ((t.rMultiple || 0) * (t.riskMultiplier || 1.0)), 0);
+  const dipWins = dipTrades.filter(t => (t.rMultiple || 0) > 0.0001).length;
+  const dipLosses = dipTrades.filter(t => (t.rMultiple || 0) < -0.0001).length;
+  const dipBe = dipTrades.length - dipWins - dipLosses;
+  const dipWinPct = dipTrades.length > 0 ? (dipWins / dipTrades.length) * 100 : 0;
+
+  console.log(`   Raw Net R        : ${totalDipRawR.toFixed(2)} R`);
+  console.log(`   Weighted Net R   : ${totalDipWeightedR.toFixed(2)} R`);
+  console.log(`   Win / Loss / BE  : ${dipWins} Wins (${dipWinPct.toFixed(1)}%) | ${dipLosses} Losses | ${dipBe} BE`);
+
+  // 1. Bot Breakdown
+  const botMap: Record<string, { trades: number; wins: number; losses: number; be: number; rawR: number; weightedR: number }> = {};
+  for (const t of dipTrades) {
+    const b = t.bot || "UNKNOWN";
+    if (!botMap[b]) botMap[b] = { trades: 0, wins: 0, losses: 0, be: 0, rawR: 0, weightedR: 0 };
+    botMap[b].trades++;
+    const r = t.rMultiple || 0;
+    const wR = r * (t.riskMultiplier || 1.0);
+    botMap[b].rawR += r;
+    botMap[b].weightedR += wR;
+    if (r > 0.0001) botMap[b].wins++;
+    else if (r < -0.0001) botMap[b].losses++;
+    else botMap[b].be++;
+  }
+
+  console.log("\n🤖 1. PERFORMANCE BY BOT IN DIP:");
+  console.table(Object.entries(botMap).map(([b, st]) => ({
+    Bot: b,
+    Trades: st.trades,
+    Wins: st.wins,
+    Losses: st.losses,
+    "Win %": ((st.wins / st.trades) * 100).toFixed(1) + "%",
+    "Raw Net R": (st.rawR >= 0 ? "+" : "") + st.rawR.toFixed(2) + " R",
+    "Weighted Net R": (st.weightedR >= 0 ? "+" : "") + st.weightedR.toFixed(2) + " R",
+  })));
+
+  // 2. Pair Breakdown
+  const symMap: Record<string, { trades: number; wins: number; losses: number; be: number; rawR: number; weightedR: number }> = {};
+  for (const t of dipTrades) {
+    const s = t.symbol || t.pair;
+    if (!symMap[s]) symMap[s] = { trades: 0, wins: 0, losses: 0, be: 0, rawR: 0, weightedR: 0 };
+    symMap[s].trades++;
+    const r = t.rMultiple || 0;
+    const wR = r * (t.riskMultiplier || 1.0);
+    symMap[s].rawR += r;
+    symMap[s].weightedR += wR;
+    if (r > 0.0001) symMap[s].wins++;
+    else if (r < -0.0001) symMap[s].losses++;
+    else symMap[s].be++;
+  }
+
+  console.log("\n📊 2. PERFORMANCE BY PAIR IN DIP (Sorted Worst to Best):");
+  const sortedSyms = Object.entries(symMap).sort((a, b) => a[1].rawR - b[1].rawR);
+  console.table(sortedSyms.map(([s, st]) => ({
+    Pair: s,
+    Trades: st.trades,
+    Wins: st.wins,
+    Losses: st.losses,
+    "Win %": ((st.wins / st.trades) * 100).toFixed(1) + "%",
+    "Raw Net R": (st.rawR >= 0 ? "+" : "") + st.rawR.toFixed(2) + " R",
+    "Weighted Net R": (st.weightedR >= 0 ? "+" : "") + st.weightedR.toFixed(2) + " R",
+  })));
+
+  // 3. Historical Drawdown Comparison
+  console.log("\n📉 3. HISTORICAL DRAWDOWN CYCLES IN DATASET (> 4.0 Raw R):");
+  const sortedAll = [...trades].sort((a, b) => {
+    const da = new Date(a.exitTime || a.entryTime || a.date || a.time || 0).getTime();
+    const db = new Date(b.exitTime || b.entryTime || b.date || b.time || 0).getTime();
+    return da - db;
+  });
+
+  let runningR = 0, peakR = 0, maxDD = 0;
+  let currentDDBegan = "";
+  let currentDDPeakDate = "";
+  let currentDD = 0;
+  let currentDDTroughDate = "";
+  let currentDDTroughR = 0;
+  const drawdowns: { peakDate: string; troughDate: string; recoveryDate: string; depthR: number; peakR: number; troughR: number }[] = [];
+
+  for (const t of sortedAll) {
+    const r = t.rMultiple || 0;
+    runningR += r;
+    const dStr = (t.exitTime || t.entryTime || t.date || "").substring(0, 10);
+    if (runningR >= peakR) {
+      if (currentDD >= 4.0) {
+        drawdowns.push({
+          peakDate: currentDDPeakDate,
+          troughDate: currentDDTroughDate,
+          recoveryDate: dStr,
+          depthR: currentDD,
+          peakR,
+          troughR: currentDDTroughR,
+        });
+      }
+      peakR = runningR;
+      currentDD = 0;
+      currentDDBegan = "";
+      currentDDPeakDate = dStr;
+    } else {
+      const dd = peakR - runningR;
+      if (dd > currentDD) {
+        currentDD = dd;
+        currentDDTroughDate = dStr;
+        currentDDTroughR = runningR;
+        if (!currentDDBegan) currentDDBegan = dStr;
+      }
+      if (dd > maxDD) maxDD = dd;
+    }
+  }
+
+  if (currentDD >= 3.0) {
+    drawdowns.push({
+      peakDate: currentDDPeakDate,
+      troughDate: currentDDTroughDate,
+      recoveryDate: "ONGOING",
+      depthR: currentDD,
+      peakR,
+      troughR: currentDDTroughR,
+    });
+  }
+
+  console.table(drawdowns.map((d, i) => ({
+    "DD #": i + 1,
+    "Peak Date": d.peakDate,
+    "Trough Date": d.troughDate,
+    "Recovery Date": d.recoveryDate,
+    "Drawdown Depth": d.depthR.toFixed(2) + " R",
+    "Peak Net R": "+" + d.peakR.toFixed(1) + " R",
+    "Trough Net R": "+" + d.troughR.toFixed(1) + " R",
+  })));
+  console.log("====================================================================================================\n");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // MODULE 2B: Per-Pair Month-by-Month Net R Contribution Matrix
 // ─────────────────────────────────────────────────────────────────────────────
 async function runPerPairMonthlyMatrixModule(trades: any[]) {
@@ -622,6 +895,189 @@ async function runPerPairMonthlyMatrixModule(trades: any[]) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// MODULE 2C: Per-Pair Monthly Trades, Net R & Drawdown Deep Audit
+// ─────────────────────────────────────────────────────────────────────────────
+async function runPerPairDeepMonthlyAuditModule(trades: any[]) {
+  console.log("\n====================================================================================================");
+  console.log(" 🔬 MODULE 2C: PER-PAIR MONTHLY TRADES, NET R & DRAWDOWN DEEP AUDIT (Last 1 Year)");
+  console.log("====================================================================================================");
+
+  const symbols = Array.from(new Set(trades.map(t => (t.symbol || t.pair || "").replace(/\.daily$/i, "")))).sort();
+  const monthlyBuckets: Record<string, boolean> = {};
+  for (const t of trades) {
+    const dStr = (t.exitTime || t.entryTime || t.date || t.time || "").substring(0, 7);
+    if (dStr && dStr.length === 7) monthlyBuckets[dStr] = true;
+  }
+  const months = Object.keys(monthlyBuckets).sort();
+
+  interface PairMonthData {
+    trades: number;
+    wins: number;
+    losses: number;
+    netR: number;
+    maxDd: number;
+  }
+
+  const pairMonthlyMap: Record<string, Record<string, PairMonthData>> = {};
+  const pairYearSummary: Record<string, {
+    trades: number;
+    wins: number;
+    losses: number;
+    netR: number;
+    maxDd: number;
+    grossWinR: number;
+    grossLossR: number;
+  }> = {};
+
+  for (const sym of symbols) {
+    pairMonthlyMap[sym] = {};
+    for (const m of months) {
+      pairMonthlyMap[sym][m] = { trades: 0, wins: 0, losses: 0, netR: 0, maxDd: 0 };
+    }
+    pairYearSummary[sym] = { trades: 0, wins: 0, losses: 0, netR: 0, maxDd: 0, grossWinR: 0, grossLossR: 0 };
+  }
+
+  for (const sym of symbols) {
+    const symTrades = trades.filter(t => (t.symbol || t.pair || "").replace(/\.daily$/i, "") === sym);
+    symTrades.sort((a, b) => {
+      const tA = new Date(a.exitTime || a.entryTime || a.date || a.time || 0).getTime();
+      const tB = new Date(b.exitTime || b.entryTime || b.date || b.time || 0).getTime();
+      return tA - tB;
+    });
+
+    let runningR = 0;
+    let peakR = 0;
+    let yearMaxDd = 0;
+
+    for (const t of symTrades) {
+      const r = t.rMultiple || 0;
+      const m = (t.exitTime || t.entryTime || t.date || t.time || "").substring(0, 7);
+
+      pairYearSummary[sym].trades++;
+      pairYearSummary[sym].netR += r;
+      if (r > 0.0001) {
+        pairYearSummary[sym].wins++;
+        pairYearSummary[sym].grossWinR += r;
+      } else if (r < -0.0001) {
+        pairYearSummary[sym].losses++;
+        pairYearSummary[sym].grossLossR += Math.abs(r);
+      }
+
+      runningR += r;
+      if (runningR > peakR) peakR = runningR;
+      const dd = peakR - runningR;
+      if (dd > yearMaxDd) yearMaxDd = dd;
+
+      if (pairMonthlyMap[sym][m]) {
+        pairMonthlyMap[sym][m].trades++;
+        pairMonthlyMap[sym][m].netR += r;
+        if (r > 0.0001) pairMonthlyMap[sym][m].wins++;
+        else if (r < -0.0001) pairMonthlyMap[sym][m].losses++;
+      }
+    }
+    pairYearSummary[sym].maxDd = yearMaxDd;
+
+    // Calculate monthly peak-to-trough Drawdown within each month
+    for (const m of months) {
+      const mTrades = symTrades.filter(t => (t.exitTime || t.entryTime || t.date || t.time || "").substring(0, 7) === m);
+      let mRunningR = 0;
+      let mPeakR = 0;
+      let mMaxDd = 0;
+      for (const mt of mTrades) {
+        const r = mt.rMultiple || 0;
+        mRunningR += r;
+        if (mRunningR > mPeakR) mPeakR = mRunningR;
+        const dd = mPeakR - mRunningR;
+        if (dd > mMaxDd) mMaxDd = dd;
+      }
+      pairMonthlyMap[sym][m].maxDd = mMaxDd;
+    }
+  }
+
+  // ── TABLE 1: Master 1-Year Summary Per Pair ──
+  console.log("\n📋 1-YEAR AGGREGATE SUMMARY PER PAIR:");
+  const summaryRows = symbols.map(sym => {
+    const s = pairYearSummary[sym];
+    const winPct = s.trades > 0 ? ((s.wins / s.trades) * 100).toFixed(1) + "%" : "0.0%";
+    const pf = s.grossLossR > 0 ? (s.grossWinR / s.grossLossR).toFixed(2) : (s.grossWinR > 0 ? "∞" : "0.00");
+    const retDd = s.maxDd > 0 ? (s.netR / s.maxDd).toFixed(2) : "∞";
+    return {
+      Pair: sym,
+      Trades: s.trades,
+      Wins: s.wins,
+      Losses: s.losses,
+      "Win %": winPct,
+      "1-Yr Net R": (s.netR >= 0 ? "+" : "") + s.netR.toFixed(2) + " R",
+      "1-Yr Max DD": s.maxDd.toFixed(2) + " R",
+      "Profit Factor": pf,
+      "Ret / DD Ratio": retDd,
+    };
+  });
+  summaryRows.sort((a, b) => parseFloat(b["1-Yr Net R"]) - parseFloat(a["1-Yr Net R"]));
+  console.table(summaryRows);
+
+  const colW = 8;
+  const headerSyms = symbols.map(s => s.padStart(colW)).join(" | ");
+
+  // ── TABLE 2: Monthly Trade Counts by Pair ──
+  console.log("\n📈 MONTHLY TRADE COUNTS MATRIX (Trades Taken / Month):");
+  console.log(` MONTH   | ${headerSyms} |    TOTAL`);
+  console.log(`---------+-${symbols.map(() => "--------").join("-+-")}---+---------`);
+  for (const m of months) {
+    let mTotal = 0;
+    const cols = symbols.map(s => {
+      const cnt = pairMonthlyMap[s][m].trades;
+      mTotal += cnt;
+      return (cnt > 0 ? String(cnt) : "-").padStart(colW);
+    });
+    console.log(` ${m} | ${cols.join(" | ")} | ${String(mTotal).padStart(8)}`);
+  }
+  const totalTradesCols = symbols.map(s => String(pairYearSummary[s].trades).padStart(colW));
+  const grandTotalTrades = Object.values(pairYearSummary).reduce((sum, s) => sum + s.trades, 0);
+  console.log(`---------+-${symbols.map(() => "--------").join("-+-")}---+---------`);
+  console.log(` 1-YR TOT| ${totalTradesCols.join(" | ")} | ${String(grandTotalTrades).padStart(8)}`);
+
+  // ── TABLE 3: Monthly Net R by Pair ──
+  console.log("\n💰 MONTHLY NET R MATRIX (Net R Generated / Month):");
+  console.log(` MONTH   | ${headerSyms} |    TOTAL`);
+  console.log(`---------+-${symbols.map(() => "--------").join("-+-")}---+---------`);
+  for (const m of months) {
+    let mNetR = 0;
+    const cols = symbols.map(s => {
+      const r = pairMonthlyMap[s][m].netR;
+      mNetR += r;
+      if (pairMonthlyMap[s][m].trades === 0) return "-".padStart(colW);
+      return ((r >= 0 ? "+" : "") + r.toFixed(1) + "R").padStart(colW);
+    });
+    console.log(` ${m} | ${cols.join(" | ")} | ${((mNetR >= 0 ? "+" : "") + mNetR.toFixed(1) + "R").padStart(8)}`);
+  }
+  const totalNetRCols = symbols.map(s => ((pairYearSummary[s].netR >= 0 ? "+" : "") + pairYearSummary[s].netR.toFixed(1) + "R").padStart(colW));
+  const grandTotalNetR = Object.values(pairYearSummary).reduce((sum, s) => sum + s.netR, 0);
+  console.log(`---------+-${symbols.map(() => "--------").join("-+-")}---+---------`);
+  console.log(` 1-YR TOT| ${totalNetRCols.join(" | ")} | ${((grandTotalNetR >= 0 ? "+" : "") + grandTotalNetR.toFixed(1) + "R").padStart(8)}`);
+
+  // ── TABLE 4: Monthly Max Drawdown by Pair ──
+  console.log("\n⚠️  MONTHLY MAX DRAWDOWN MATRIX (Peak-to-Trough R Drop within Each Month):");
+  console.log(` MONTH   | ${headerSyms} |  MAX PAIR DD`);
+  console.log(`---------+-${symbols.map(() => "--------").join("-+-")}---+-------------`);
+  for (const m of months) {
+    let maxPairDdInMonth = 0;
+    const cols = symbols.map(s => {
+      const dd = pairMonthlyMap[s][m].maxDd;
+      if (dd > maxPairDdInMonth) maxPairDdInMonth = dd;
+      if (pairMonthlyMap[s][m].trades === 0) return "-".padStart(colW);
+      return (dd.toFixed(1) + "R").padStart(colW);
+    });
+    console.log(` ${m} | ${cols.join(" | ")} | ${(maxPairDdInMonth.toFixed(1) + "R").padStart(12)}`);
+  }
+  const totalMaxDdCols = symbols.map(s => (pairYearSummary[s].maxDd.toFixed(1) + "R").padStart(colW));
+  const peakYearPairDd = Math.max(...Object.values(pairYearSummary).map(s => s.maxDd));
+  console.log(`---------+-${symbols.map(() => "--------").join("-+-")}---+-------------`);
+  console.log(` 1-YR MAX| ${totalMaxDdCols.join(" | ")} | ${(peakYearPairDd.toFixed(1) + "R").padStart(12)}`);
+  console.log("====================================================================================================\n");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // MODULE 3: Isolated Single-Month Compounding Performance Audit (10% Risk)
 // ─────────────────────────────────────────────────────────────────────────────
 async function runCohortsModule(trades: any[]) {
@@ -776,22 +1232,42 @@ async function runInstitutionalGridModule(trades: any[]) {
         consecutiveDayClamp = 0.25;
       }
 
-      const effectiveRisk = baseRisk * (t.riskMultiplier || 1.0) * institutionalMultiplier * consecutiveDayClamp;
+      // 🛡️ Pre-Trade Daily Headroom Protection (Preventative Sizing)
+      const currentDailyLoss = Math.max(0, (startOfDayBal - bal) / startOfDayBal);
+      const remainingHeadroom = Math.max(0, dailyCapPct - currentDailyLoss);
+
+      // If remaining headroom is smaller than 0.15% (e.g. >=90% of daily cap consumed), halt new entries for the day
+      if (remainingHeadroom <= 0.0015 || currentDailyLoss >= dailyCapPct * 0.90) {
+        dayHalted = true;
+        daysCircuited++;
+        continue;
+      }
+
+      // Clamp incoming trade risk so that even a maximum worst-case -1.0R loss CANNOT breach the daily cap
+      const maxRiskAllowedByDailyCap = remainingHeadroom * 0.85; // 15% safety buffer for adverse slippage
+
+      const nominalRisk = baseRisk * (t.riskMultiplier || 1.0) * institutionalMultiplier * consecutiveDayClamp;
+      const effectiveRisk = Math.min(nominalRisk, maxRiskAllowedByDailyCap);
       const riskCapital = bal * effectiveRisk;
       const r = t.rMultiple || 0;
       bal += riskCapital * r;
       tradesTaken++;
 
-      const dailyLoss = (startOfDayBal - bal) / startOfDayBal;
-      if (dailyLoss > maxDailyLossSeen) maxDailyLossSeen = dailyLoss;
+      const postTradeDailyLoss = (startOfDayBal - bal) / startOfDayBal;
+      if (postTradeDailyLoss > maxDailyLossSeen) maxDailyLossSeen = postTradeDailyLoss;
 
-      if (dailyLoss >= dailyCapPct) {
+      if (postTradeDailyLoss >= dailyCapPct * 0.90) {
         dayHalted = true;
         daysCircuited++;
+      }
+
+      if (postTradeDailyLoss > dailyCapPct + 0.0001) {
+        accountHalted = true; // Breached daily cap!
       }
     }
 
     const netRetPct = ((bal - 100.0) / 100.0) * 100;
+    const isBreached = accountHalted || (maxDailyLossSeen > dailyCapPct + 0.0001);
     return {
       baseRisk: (baseRisk * 100).toFixed(1) + "%",
       dailyCap: (dailyCapPct * 100).toFixed(1) + "%",
@@ -801,7 +1277,7 @@ async function runInstitutionalGridModule(trades: any[]) {
       maxDailyDd: (maxDailyLossSeen * 100).toFixed(2) + "%",
       maxPeakDd: (maxPeakDdPct * 100).toFixed(2) + "%",
       circuitedDays: daysCircuited,
-      status: accountHalted ? "🔴 BREACHED" : "🟢 SAFE"
+      status: isBreached ? "🔴 BREACHED" : "🟢 SAFE"
     };
   }
 
@@ -819,7 +1295,7 @@ async function runInstitutionalGridModule(trades: any[]) {
 
   // 4. Fine-Grained Optimal Risk Finder (0.5% resolution from 1% to 60%)
   console.log("\n====================================================================================================");
-  console.log(" 🎯 MAX RISK SCANNER: HIGHEST ASSIGNABLE RISK WITHOUT BREACHING TRAILING DD");
+  console.log(" 🎯 MAX RISK SCANNER: HIGHEST ASSIGNABLE RISK WITHOUT BREACHING DAILY OR TRAILING DD");
   console.log("====================================================================================================");
 
   const fineRisks: number[] = [];
@@ -843,7 +1319,7 @@ async function runInstitutionalGridModule(trades: any[]) {
 
     for (const r of fineRisks) {
       const res = evaluateInstitutionalScenario(r, acc.dailyCap, acc.peakToDraw);
-      if (res.status === "🟢 SAFE") {
+      if (res.status === "🟢 SAFE" && parseFloat(res.maxDailyDd) <= (acc.dailyCap * 100 + 0.01)) {
         highestSafeRisk = r;
         bestResult = res;
       }
@@ -899,6 +1375,14 @@ async function main() {
 
   const trades = await loadPortfolioTrades(startDate, endDate);
 
+  const isFlatRisk = args.includes("--flat-risk") || args.includes("--flat") || args.includes("--flat-1pct") || args.includes("--1pct");
+  if (isFlatRisk) {
+    console.log(`⚡ [MODE OVERRIDE] Flat 1.0% Risk Mode Activated: Ignoring individual PairConfig riskPct, setting flat 1% to all trades.\n`);
+    trades.forEach(t => t.riskMultiplier = 0.01);
+  } else {
+    console.log(`⚖️  [MODE] Normal Weighted Risk Mode: Using individual riskPct from PairConfig.\n`);
+  }
+
   console.log(`📦 Loaded ${trades.length} Math Trades (${startDate} → ${endDate})\n`);
 
   if (arg === "modes" || arg === "--modes") {
@@ -906,6 +1390,13 @@ async function main() {
   } else if (arg === "monthly" || arg === "--monthly") {
     await runMonthlyModule(trades);
     await runPerPairMonthlyMatrixModule(trades);
+    await runPerPairDeepMonthlyAuditModule(trades);
+  } else if (arg === "weekly" || arg === "--weekly" || arg === "weeks" || arg === "--weeks") {
+    await runWeeklyModule(trades);
+  } else if (arg === "dip" || arg === "--dip" || arg === "audit-dip") {
+    await runDipAuditModule(trades);
+  } else if (arg === "pair-audit" || arg === "--pair-audit" || arg === "pairs" || arg === "--pairs") {
+    await runPerPairDeepMonthlyAuditModule(trades);
   } else if (arg === "cohorts" || arg === "--cohorts") {
     await runCohortsModule(trades);
   } else if (arg === "institutional" || arg === "--institutional" || arg === "grid" || arg === "--grid") {
@@ -914,7 +1405,9 @@ async function main() {
     // Run all modules
     await runRiskModesModule(trades);
     await runMonthlyModule(trades);
+    await runWeeklyModule(trades);
     await runPerPairMonthlyMatrixModule(trades);
+    await runPerPairDeepMonthlyAuditModule(trades);
     await runCohortsModule(trades);
     await runInstitutionalGridModule(trades);
   }

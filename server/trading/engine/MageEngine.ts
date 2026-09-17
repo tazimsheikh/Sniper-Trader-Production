@@ -460,7 +460,7 @@ export async function _runMageBotForConfig(orch: any, symbol: string, state: any
     .toUpperCase();
   const isForex = PairConfigManager.isForex(normalizedSymbol);
   const maxSlPips = _mCfg.maxSlDist!;
-  if (orRangePips + (spreadPts / pipSize) > maxSlPips) {
+  if (!_mCfg.slMode && orRangePips + (spreadPts / pipSize) > maxSlPips) {
     logger.verbose(`[MageEngine] ${symbol} Rejected: ORB Range (${orRangePips.toFixed(1)}) + spread (${spreadPts / pipSize}) > maxSlPips (${maxSlPips}) at ${new Date(c.timestamp).toISOString()}`);
     orch.addEyeFeedEvent({
       type: "REJECT",
@@ -508,8 +508,10 @@ export async function _runMageBotForConfig(orch: any, symbol: string, state: any
     const prevEstDate = getFixedEstDate(new Date(lastM5.timestamp));
     const prevM5Mins = prevEstDate.getUTCHours() * 60 + prevEstDate.getUTCMinutes();
 
-    if (prevM5Mins < startMins + orDurationMins) {
-      logger.verbose(`[MageEngine] ${symbol} Wait: Let ORB finish building (prevM5Mins=${prevM5Mins} < req=${startMins + orDurationMins})`);
+    const judasDelay = _mCfg.judasDelayMins ?? 0;
+    const reqMins = startMins + orDurationMins + judasDelay;
+    if (prevM5Mins < reqMins) {
+      logger.verbose(`[MageEngine] ${symbol} Wait: Let ORB finish building (prevM5Mins=${prevM5Mins} < req=${reqMins})`);
       return;
     }
 
@@ -631,7 +633,7 @@ export async function _runMageBotForConfig(orch: any, symbol: string, state: any
       const rOrLow = roundPrice(os.orLow, PairConfigManager.getBaseSymbol(symbol));
       const boxSize = roundPrice(Math.abs(rOrHigh - rOrLow), PairConfigManager.getBaseSymbol(symbol));
       const orRangePips = boxSize / pipSize;
-      if (isForex && _mCfg.maxSlDist !== undefined && (orRangePips + 10) > _mCfg.maxSlDist + 0.001) {
+      if (isForex && !_mCfg.slMode && _mCfg.maxSlDist !== undefined && (orRangePips + 10) > _mCfg.maxSlDist + 0.001) {
         logger.info(`[MageEngine] ⛔ Aborted on ${symbol}: OR range + 10 (${(orRangePips + 10).toFixed(1)}) > maxSlDist (${_mCfg.maxSlDist}).`);
         return;
       }
@@ -644,10 +646,25 @@ export async function _runMageBotForConfig(orch: any, symbol: string, state: any
       const entryPrice = roundPrice(entryPriceRaw, PairConfigManager.getBaseSymbol(symbol));
       os.limitPrice = entryPrice;
       const slBuffer = 0;
-      let proposedSl =
-        direction === "BUY"
-          ? rOrLow - slBuffer
-          : rOrHigh + spreadPts + slBuffer;
+      const slMode = (_mCfg.slMode || "OPPOSITE_BOUNDARY").toUpperCase();
+      let proposedSl = 0;
+      if (slMode === "MIDPOINT") {
+        const midpoint = (rOrHigh + rOrLow) / 2.0;
+        proposedSl = direction === "BUY" ? midpoint : midpoint + spreadPts;
+      } else if (slMode === "BREAKOUT_BAR_LOW") {
+        const buffer = 2 * pipSize;
+        const barLow = actionCandle.low ?? rOrLow;
+        const barHigh = actionCandle.high ?? rOrHigh;
+        proposedSl = direction === "BUY" ? barLow - buffer : barHigh + buffer + spreadPts;
+      } else if (slMode === "BOX_30PCT") {
+        proposedSl = direction === "BUY" ? rOrHigh - 0.30 * boxSize : rOrLow + 0.30 * boxSize + spreadPts;
+      } else {
+        // Default: "OPPOSITE_BOUNDARY"
+        proposedSl =
+          direction === "BUY"
+            ? rOrLow - slBuffer
+            : rOrHigh + spreadPts + slBuffer;
+      }
       if (_mCfg.minSlDist !== void 0) {
         if (
           direction === "SELL" &&
@@ -759,17 +776,22 @@ async function placeMageLimitOrder(orch: any, symbol: string, state: any, c: any
   try {
     const profile = typeof orch.getProfileData === 'function' 
       ? await orch.getProfileData()
-      : await db.prepare("SELECT t.risk_multiplier, COALESCE(t.metaapi_token, u.metaapi_token) as metaapi_token, t.metaapi_account_id, t.dwcb_enabled, t.dwcb_peak_balance, t.base_risk_balance, t.broker_symbol_map, t.institutional_enabled, t.institutional_daily_start_balance, t.institutional_daily_date, t.institutional_peak_balance FROM trading_profiles t LEFT JOIN users u ON t.user_id = u.id WHERE t.id = ?").get(orch.profileId);
+      : await db.prepare("SELECT t.risk_multiplier, COALESCE(t.metaapi_token, u.metaapi_token) as metaapi_token, t.metaapi_account_id, t.dwcb_enabled, t.dwcb_peak_balance, t.base_risk_balance, t.broker_symbol_map, t.institutional_enabled, t.institutional_daily_cap, t.institutional_peak_to_draw, t.institutional_daily_start_balance, t.institutional_daily_date, t.institutional_peak_balance FROM trading_profiles t LEFT JOIN users u ON t.user_id = u.id WHERE t.id = ?").get(orch.profileId);
     if (!profile) {
       abortPlacement();
       return;
     }
+    const cryptoModule: any = await import('../../core/crypto.js');
+    const { isEncrypted, decrypt } = cryptoModule;
     let token = profile.metaapi_token || orch.token;
     let accId = profile.metaapi_account_id || orch.accountId;
+    if (isEncrypted(token)) token = decrypt(token);
+    if (isEncrypted(accId)) accId = decrypt(accId);
 
     if (!(global as any).__SIM_MOCK_ACCOUNT__ && (!orch.cachedEquity || orch.cachedEquity <= 0)) {
       try {
-        const conn = await getSharedConnection(token, accId);
+        const rawToken = isEncrypted(profile.metaapi_token) ? decrypt(profile.metaapi_token) : profile.metaapi_token;
+        const conn = await getSharedConnection(rawToken, accId);
         const accInfo = await conn.getAccountInformation();
         if (accInfo && accInfo.equity > 0) {
           orch.cachedEquity = accInfo.equity;
@@ -814,6 +836,7 @@ async function placeMageLimitOrder(orch: any, symbol: string, state: any, c: any
       let currentInstPeak = profile.institutional_peak_balance;
       if (!currentInstPeak || effectiveBalance > currentInstPeak) {
         currentInstPeak = effectiveBalance;
+        profile.institutional_peak_balance = currentInstPeak;
         await db.prepare("UPDATE trading_profiles SET institutional_peak_balance = ? WHERE id = ?").run(currentInstPeak, orch.profileId);
       } else {
         const absDrawdown = (currentInstPeak - effectiveBalance) / currentInstPeak;
@@ -852,6 +875,8 @@ async function placeMageLimitOrder(orch: any, symbol: string, state: any, c: any
       if (dailyDate !== brokerTradingDayStr || !dailyStartBal) {
         dailyStartBal = effectiveBalance;
         dailyDate = brokerTradingDayStr;
+        profile.institutional_daily_start_balance = dailyStartBal;
+        profile.institutional_daily_date = dailyDate;
         await db.prepare("UPDATE trading_profiles SET institutional_daily_start_balance = ?, institutional_daily_date = ? WHERE id = ?").run(dailyStartBal, dailyDate, orch.profileId);
       } else {
         const dailyDrawdown = (dailyStartBal - effectiveBalance) / dailyStartBal;
@@ -878,11 +903,6 @@ async function placeMageLimitOrder(orch: any, symbol: string, state: any, c: any
       abortPlacement();
       return;
     }
-    const { isEncrypted, decrypt } = await import('../../core/crypto.js').then(
-      (s) => {
-        return { isEncrypted: s.isEncrypted, decrypt: s.decrypt };
-      },
-    );
     token = isEncrypted(profile.metaapi_token)
       ? decrypt(profile.metaapi_token)
       : profile.metaapi_token;
@@ -1005,9 +1025,120 @@ async function placeMageLimitOrder(orch: any, symbol: string, state: any, c: any
         const optCfg = PairConfigManager.getRepresentativeConfig(symbol);
         const spreadPts = (optCfg && optCfg.spread !== undefined) ? optCfg.spread * pipSize : 0;
         const currentPrice = roundPrice(isBuy ? c.close + spreadPts : c.close, brokerSymbol);
-        const proximityThreshold = Math.max(2.5 * pipSize, (optCfg?.spread || 1) * 2.5 * pipSize, 0.10 * Math.abs(pEntry - pSl));
+        const proximityThreshold = Math.max(3.5 * pipSize, (optCfg?.spread || 1) * 2.5 * pipSize, 0.15 * Math.abs(pEntry - pSl));
         const distFromEntry = isBuy ? (currentPrice - pEntry) : (pEntry - currentPrice);
         const isWithinProximity = Math.abs(distFromEntry) <= proximityThreshold || (isBuy ? currentPrice <= pEntry : currentPrice >= pEntry);
+
+        const isSplitEntry = !!_mCfg.splitEntryEnabled;
+        if (isSplitEntry) {
+          const marketWeight = _mCfg.splitEntryMarketRiskPct ?? 0.50;
+          const limitWeight = _mCfg.splitEntryLimitRiskPct ?? 0.50;
+
+          // 1. Tranche 1 (Market Momentum Entry)
+          const slDistPips1 = Math.abs(currentPrice - pSl) / pipSize;
+          const rawVolume1 = (riskAmount * marketWeight) / (slDistPips1 * liveSpec.pipValuePerLot);
+          const calculatedVolume1 = quantizeLots(rawVolume1, liveSpec.volumeStep, liveSpec.minVolume, liveSpec.maxVolume);
+
+          // 2. Tranche 2 (Limit Retest Entry)
+          const rOrHigh = roundPrice(os.orHigh, brokerSymbol);
+          const rOrLow = roundPrice(os.orLow, brokerSymbol);
+          const boxSize = roundPrice(Math.abs(rOrHigh - rOrLow), brokerSymbol);
+          const retestPct = _mCfg.splitEntryRetestPct ?? (_mCfg.orbPullbackPct > 0 ? _mCfg.orbPullbackPct : 0.0);
+          const pLimitEntryRaw = isBuy ? (rOrHigh - boxSize * retestPct) : (rOrLow + boxSize * retestPct);
+          const pLimitEntry = roundPrice(pLimitEntryRaw, brokerSymbol);
+          const slDistPips2 = Math.abs(pLimitEntry - pSl) / pipSize;
+          const rawVolume2 = (riskAmount * limitWeight) / (slDistPips2 * liveSpec.pipValuePerLot);
+          const calculatedVolume2 = quantizeLots(rawVolume2, liveSpec.volumeStep, liveSpec.minVolume, liveSpec.maxVolume);
+
+          const staticSpec = getSymbolSpec(brokerSymbol);
+          const stopsLevelPts = liveSpec?.stopsLevel || (staticSpec as any).stopsLevel || 0;
+          const safePrices1 = calculateStopsLevelSafePrices(
+            os.breakoutDir as "BUY" | "SELL",
+            currentPrice,
+            pSl,
+            pTp,
+            stopsLevelPts,
+            liveSpec?.tickSize || staticSpec.tickSize || 0.00001,
+            liveSpec?.digits ?? staticSpec.digits ?? 5
+          );
+          const roundedSafeSl1 = roundPrice(safePrices1.pSl, brokerSymbol);
+          const roundedSafeTp1 = roundPrice(safePrices1.pTp, brokerSymbol);
+
+          const isSim = (global as any).isSimulator || (global as any).__SIM_MOCK_ACCOUNT__;
+          const t1ClientId = `${shortClientId}_T1`;
+          const t2ClientId = `${shortClientId}_T2`;
+          if (!orch.sigMap) orch.sigMap = {};
+          orch.sigMap[t1ClientId] = sig;
+          orch.sigMap[t2ClientId] = sig;
+
+          // Place Market Order (Tranche 1)
+          const marketOpts = isSim
+            ? { magic, clientId: t1ClientId, entryPrice: currentPrice, limitPrice: currentPrice, riskWeight: marketWeight }
+            : { magic, clientId: t1ClientId, riskWeight: marketWeight };
+
+          logger.info(`[MageEngine] ⚡ Executing Dual-Tranche MARKET T1 ${os.breakoutDir} on ${brokerSymbol} (Lots: ${calculatedVolume1}, Weight: ${marketWeight}, Live: ${currentPrice}, SL: ${roundedSafeSl1}, TP: ${roundedSafeTp1})`);
+          let resMarket: any;
+          if (os.breakoutDir === "BUY") {
+            resMarket = await conn.createMarketBuyOrder(brokerSymbol, calculatedVolume1, roundedSafeSl1, roundedSafeTp1 || undefined, marketOpts);
+          } else {
+            resMarket = await conn.createMarketSellOrder(brokerSymbol, calculatedVolume1, roundedSafeSl1, roundedSafeTp1 || undefined, marketOpts);
+          }
+
+          // Place Limit Order (Tranche 2)
+          logger.info(`[MageEngine] ⏳ Executing Dual-Tranche LIMIT T2 ${os.breakoutDir} on ${brokerSymbol} (Lots: ${calculatedVolume2}, Weight: ${limitWeight}, Target: ${pLimitEntry}, SL: ${pSl}, TP: ${pTp})`);
+          let resLimit: any;
+          const limitOpts = { magic, clientId: t2ClientId, riskWeight: limitWeight };
+          if (os.breakoutDir === "BUY") {
+            resLimit = await conn.createLimitBuyOrder(brokerSymbol, calculatedVolume2, pLimitEntry, pSl, pTp || undefined, limitOpts);
+          } else {
+            resLimit = await conn.createLimitSellOrder(brokerSymbol, calculatedVolume2, pLimitEntry, pSl, pTp || undefined, limitOpts);
+          }
+
+          os.isPlacing = false;
+          os.limitOrderId = resLimit?.orderId || null;
+          os.limitPlacedAt = c.timestamp;
+          os.fired = true;
+          os.tradeTakenDate = os.currentDateStr;
+          os.tradeTakenOnOrbDay = os.currentDateStr;
+          os.mageTradeTakenToday = true;
+
+          globalTradeGate.release(orch.profileId, preRegKey);
+          if (resMarket?.orderId) {
+            globalTradeGate.register(orch.profileId, resMarket.orderId, symbol, os.breakoutDir, "ALGO");
+          }
+          if (resLimit?.orderId) {
+            globalTradeGate.register(orch.profileId, resLimit.orderId, symbol, os.breakoutDir, "ALGO");
+          }
+
+          // Attach Tranche 1 to activeTrades
+          if (resMarket && resMarket.orderId) {
+            if (!state.activeTrades) state.activeTrades = [];
+            const newTradeRec = {
+              dbId: 0,
+              metaOrderId: resMarket.orderId,
+              clientId: t1ClientId,
+              botId: botId.toUpperCase(),
+              direction: os.breakoutDir,
+              entryPrice: currentPrice,
+              intendedEntryPrice: currentPrice,
+              entrySlippage: 0,
+              slPrice: roundedSafeSl1,
+              originalSl: roundedSafeSl1,
+              tpPrice: roundedSafeTp1,
+              riskPips: slDistPips1,
+              highestPrice: currentPrice,
+              lowestPrice: currentPrice,
+              isTrailing: false,
+              volume: calculatedVolume1,
+              hasTakenPartial: false,
+              openTime: c.timestamp || Date.now(),
+            };
+            state.activeTrades.push(newTradeRec);
+            state.activeTrade = newTradeRec;
+          }
+
+          return; // Placement complete for Dual-Tranche!
+        }
 
         const executeAsMarket = !forceLimit && (pullbackPct === 0 || isWithinProximity);
 
@@ -1144,23 +1275,29 @@ async function placeMageLimitOrder(orch: any, symbol: string, state: any, c: any
 
         // Immediate Trailing & Active Trade Attachment for Direct Market Orders
         if (executeAsMarket && res && res.orderId) {
+          let matchedPos: any = null;
           try {
             const currentPositions = await conn.getPositions();
-            const stillOpen = currentPositions.some((p: any) => String(p.id) === String(res.orderId));
-            if (!stillOpen) {
+            matchedPos = currentPositions.find((p: any) => String(p.id) === String(res.orderId));
+            const stillOpen = !!matchedPos;
+            if (!stillOpen && currentPositions.length > 0) {
               logger.info(`[MageEngine] ⚡ Market Order ${res.orderId} was already closed by broker on entry candle.`);
               return;
             }
           } catch (_e) {}
 
-          const openPrice = isBuy ? (c.close + spreadPts) : c.close;
-          const openTimeMs = c.timestamp || Date.now();
+          const realFillPrice = matchedPos?.openPrice 
+            ? roundPrice(matchedPos.openPrice, brokerSymbol) 
+            : (isBuy ? (c.close + spreadPts) : c.close);
+          const openPrice = realFillPrice;
+          const openTimeMs = matchedPos?.time ? new Date(matchedPos.time).getTime() : (c.timestamp || Date.now());
+          const actualRiskPips = Math.abs(openPrice - pSl) / pipSize;
           try {
             await db.prepare(`
               UPDATE bot_trade_states 
-              SET status = 'OPEN', meta_order_id = ?, entry_price = ?, sl_price = ?, tp_price = ?, lots = ?
+              SET status = 'OPEN', meta_order_id = ?, entry_price = ?, sl_price = ?, tp_price = ?, lots = ?, initial_risk_pips = ?
               WHERE (client_id = ? OR meta_order_id = ?) AND status = 'PLACING'
-            `).run(res.orderId, openPrice, pSl, pTp, calculatedVolume, shortClientId, res.orderId);
+            `).run(res.orderId, openPrice, pSl, pTp, calculatedVolume, actualRiskPips, shortClientId, res.orderId);
           } catch (e: any) {}
 
           if (!state.activeTrades) state.activeTrades = [];
@@ -1171,12 +1308,13 @@ async function placeMageLimitOrder(orch: any, symbol: string, state: any, c: any
             botId: botId.toUpperCase(),
             direction: os.breakoutDir,
             entryPrice: openPrice,
+            realFillPrice: openPrice,
             intendedEntryPrice: pEntry,
             entrySlippage: isBuy ? (openPrice - pEntry) : (pEntry - openPrice),
             slPrice: pSl,
             originalSl: pSl,
             tpPrice: pTp,
-            riskPips: Math.abs(openPrice - pSl) / pipSize,
+            riskPips: actualRiskPips,
             highestPrice: openPrice,
             lowestPrice: openPrice,
             isTrailing: false,
@@ -1188,7 +1326,7 @@ async function placeMageLimitOrder(orch: any, symbol: string, state: any, c: any
             state.activeTrades.push(newTradeRec);
           }
           if (!state.activeTrade) state.activeTrade = newTradeRec;
-          logger.info(`[MageEngine] ⚡ Market Order OPEN & Attached for Trailing on ${brokerSymbol} at ${openPrice}`);
+          logger.info(`[MageEngine] ⚡ Market Order OPEN & Attached for Trailing on ${brokerSymbol} at ${openPrice} (Real Fill, Risk: ${actualRiskPips.toFixed(1)} pips)`);
         }
 
         // Register Canonical Session Direction in GlobalTradeGate for Consensus & Cross-Account Catch-Up
@@ -1274,7 +1412,7 @@ export async function checkMageLimitFill(orch: any, sessionPair: string, state: 
   if (!state.orbStates) return;
   for (const sig of Object.keys(state.orbStates)) {
     const os = state.orbStates[sig];
-    if (os && os.limitOrderId && (!state.activeTrades || !state.activeTrades.find((t: any) => t.clientId === sig || t.metaOrderId === os.limitOrderId))) {
+    if (os && os.limitOrderId && (!state.activeTrades || !state.activeTrades.find((t: any) => String(t.metaOrderId) === String(os.limitOrderId)))) {
       try {
         const baseSymbol = PairConfigManager.getBaseSymbol(sessionPair);
         let positions: any[] = [];
@@ -1294,9 +1432,9 @@ export async function checkMageLimitFill(orch: any, sessionPair: string, state: 
         const pos = positions.find(
           (p: any) => {
             if (p.symbol !== baseSymbol || p.type !== dirType) return false;
-            if (p.id === os.limitOrderId) return true;
-            if (p.clientId === sig) return true;
-            if (orch.sigMap && orch.sigMap[p.clientId] === sig) return true;
+            if (String(p.id) === String(os.limitOrderId)) return true;
+            if (p.clientId === sig || p.clientId === `${sig}_T2`) return true;
+            if (orch.sigMap && (orch.sigMap[p.clientId] === sig || orch.sigMap[p.clientId] === `${sig}_T2`)) return true;
             return false;
           }
         );
@@ -1409,7 +1547,7 @@ export async function evaluateMageTrailingOnTick(
     for (const sig of Object.keys(state.orbStates)) {
       const os = state.orbStates[sig];
       // Check if it's a pending limit order with no active trade attached
-      if (os && os.limitOrderId && (!state.activeTrades || !state.activeTrades.find((t: any) => t.clientId === sig || t.metaOrderId === os.limitOrderId))) {
+      if (os && os.limitOrderId && (!state.activeTrades || !state.activeTrades.find((t: any) => String(t.metaOrderId) === String(os.limitOrderId)))) {
         let tpSwept = false;
         let slSwept = false;
         
@@ -1429,6 +1567,25 @@ export async function evaluateMageTrailingOnTick(
 
         const searchConfigs = (orch as any).__CUSTOM_MAGE_CONFIGS__ || PairConfigManager.getMageConfigs(sessionPair) || (state.config?.mageConfig ? [state.config.mageConfig] : []);
         const sigCfg = searchConfigs.find((x: any) => x.signature === sig || (x.signature && sig.includes(x.signature))) || searchConfigs[0];
+
+        // Dual-Tranche Retest Cancellation: If Tranche 1 has reached BE or closed
+        if (sigCfg?.splitEntryEnabled) {
+          const t1Trade = (state.activeTrades || []).find((t: any) =>
+            (t.clientId === `${sig}_T1` || (orch.sigMap && orch.sigMap[t.clientId] === `${sig}_T1`) || (orch.sigMap && orch.sigMap[t.clientId] === sig) || (t.clientId && t.clientId.endsWith('_T1')))
+            && String(t.metaOrderId) !== String(os.limitOrderId)
+          );
+          if (t1Trade) {
+            const splitBeLock = sigCfg.splitRunnerBeLock ?? 0.10;
+            let beLock = sigCfg.adtelBeLock ?? 0.10;
+            if (sigCfg.exitMode === "ADTEL_AGGRESSIVE") beLock = 0.05;
+            else if (sigCfg.exitMode === "ADTEL_MODERATE") beLock = 0.10;
+            else if (sigCfg.exitMode === "ADTEL_CONSERVATIVE") beLock = 0.25;
+            const targetBe = (sigCfg.splitRunnerEnabled || sigCfg.exitMode === "SPLIT_RUNNER") ? splitBeLock : beLock;
+            if (t1Trade.hasTakenPartial || t1Trade.lastTrailingLevel >= targetBe || (os.breakoutDir === "BUY" ? t1Trade.slPrice >= t1Trade.entryPrice : t1Trade.slPrice <= t1Trade.entryPrice)) {
+              tpSwept = true;
+            }
+          }
+        }
         const fcHours = sigCfg?.forceCloseHours;
         let isTimedOut = false;
         if (fcHours !== undefined && os.limitPlacedAt && (c.timestamp - os.limitPlacedAt >= fcHours * 3600000)) {
@@ -1484,18 +1641,18 @@ export async function evaluateMageTrailingOnTick(
     let found: any = null;
     if (cid) {
       // 1. Exact match on clientId (covers backtester signatures)
-      found = searchConfigs.find((c: any) => cid.toLowerCase() === c.signature!.toLowerCase());
+      found = searchConfigs.find((c: any) => c.signature && cid.toLowerCase() === c.signature.toLowerCase());
       // 2. clientId starts with or contains signature
-      if (!found) found = searchConfigs.find((c: any) => cid.toLowerCase().startsWith(c.signature!.toLowerCase()) || cid.toLowerCase().includes(c.signature!.toLowerCase()));
+      if (!found) found = searchConfigs.find((c: any) => c.signature && (cid.toLowerCase().startsWith(c.signature.toLowerCase()) || cid.toLowerCase().includes(c.signature.toLowerCase())));
       // 2.5. Resolve shortClientId → real sig via orch.sigMap (covers production + shadow where clientId = "MAGE_0_<hash>")
       if (!found && orch.sigMap && orch.sigMap[cid]) {
         const resolvedSig = orch.sigMap[cid];
-        found = searchConfigs.find((c: any) => c.signature!.toLowerCase() === resolvedSig.toLowerCase());
+        found = searchConfigs.find((c: any) => c.signature && c.signature.toLowerCase() === resolvedSig.toLowerCase());
       }
     }
     if (!found && sig) {
       // 3. Fallback: match on botId string
-      found = searchConfigs.find((c: any) => c.signature.toLowerCase() === sig.toLowerCase() || sig.toLowerCase().includes(c.signature!.toLowerCase()));
+      found = searchConfigs.find((c: any) => c.signature && (c.signature.toLowerCase() === sig.toLowerCase() || sig.toLowerCase().includes(c.signature.toLowerCase())));
     }
     if (!found && searchConfigs.length > 0) {
       found = searchConfigs[0];
@@ -1527,15 +1684,23 @@ export async function evaluateMageTrailingOnTick(
         : `Mage Timeout Close (${fcHours}h max duration reached).`;
         
       logger.info(`[DiscretionaryTrader] ⛔ MAGE M1 Force Close (${isNewsForceClose ? "News Blackout" : fcHours + "h"}) for ${baseSymbol}.`);
+      const pyrClientId = `${trade.clientId || cid}_PYR`;
+      const childTrade = (state.activeTrades || []).find((t: any) => t.isPyramidChild && t.clientId === pyrClientId);
       try {
         await enqueueMetaApiRequest(async () => {
           const conn = await getSharedConnection(orch.token, orch.accountId);
           await conn.closePosition(trade.metaOrderId);
+          if (childTrade) {
+            await conn.closePosition(childTrade.metaOrderId).catch(() => {});
+          }
         }, `ClosePos:${baseSymbol}`, undefined, undefined, orch.profileId);
         const updateStmt = db.prepare(
           "UPDATE bot_trade_states SET status = 'CLOSED' WHERE id = ? OR meta_order_id = ?",
         );
         updateStmt.run(trade.dbId, String(trade.metaOrderId));
+        if (childTrade) {
+          updateStmt.run(childTrade.dbId, String(childTrade.metaOrderId));
+        }
         orch.addEyeFeedEvent({
           type: "FORCE_CLOSE",
           symbol: baseSymbol,
@@ -1546,11 +1711,13 @@ export async function evaluateMageTrailingOnTick(
             reasoning: closeReason
           }
         });
-        if (state.activeTrade?.metaOrderId === trade.metaOrderId) {
+        if (state.activeTrade?.metaOrderId === trade.metaOrderId || (childTrade && state.activeTrade?.metaOrderId === childTrade.metaOrderId)) {
           delete state.activeTrade;
         }
         if (state.activeTrades) {
-          state.activeTrades = state.activeTrades.filter((t: any) => String(t.metaOrderId) !== String(trade.metaOrderId));
+          state.activeTrades = state.activeTrades.filter((t: any) => 
+            String(t.metaOrderId) !== String(trade.metaOrderId) && (!childTrade || String(t.metaOrderId) !== String(childTrade.metaOrderId))
+          );
         }
         continue;
       } catch (e: any) {
@@ -1560,11 +1727,18 @@ export async function evaluateMageTrailingOnTick(
           await db
             .prepare("UPDATE bot_trade_states SET status = 'CLOSED' WHERE id = ? OR meta_order_id = ?")
             .run(trade.dbId, String(trade.metaOrderId));
-          if (state.activeTrade?.metaOrderId === trade.metaOrderId) {
+          if (childTrade) {
+            await db
+              .prepare("UPDATE bot_trade_states SET status = 'CLOSED' WHERE id = ? OR meta_order_id = ?")
+              .run(childTrade.dbId, String(childTrade.metaOrderId));
+          }
+          if (state.activeTrade?.metaOrderId === trade.metaOrderId || (childTrade && state.activeTrade?.metaOrderId === childTrade.metaOrderId)) {
             delete state.activeTrade;
           }
           if (state.activeTrades) {
-            state.activeTrades = state.activeTrades.filter((t: any) => String(t.metaOrderId) !== String(trade.metaOrderId));
+            state.activeTrades = state.activeTrades.filter((t: any) => 
+              String(t.metaOrderId) !== String(trade.metaOrderId) && (!childTrade || String(t.metaOrderId) !== String(childTrade.metaOrderId))
+            );
           }
         } else {
           logger.error(`[DiscretionaryTrader] Failed to force close Mage position for ${baseSymbol}:`, e);
@@ -1581,23 +1755,20 @@ export async function evaluateMageTrailingOnTick(
     trade.highestPrice = peakHigh;
     trade.lowestPrice = peakLow;
     const highestReached = isBuy ? peakHigh : peakLow + spreadPts;
-    const actualRisk = Math.abs(trade.entryPrice - originalSl);
-    const intendedEntry = trade.intendedEntryPrice !== undefined ? trade.intendedEntryPrice : trade.entryPrice;
-    const intendedRisk = Math.abs(intendedEntry - originalSl);
-
+    const effectiveEntry = trade.realFillPrice || trade.entryPrice;
+    const actualRisk = Math.abs(effectiveEntry - originalSl);
     const actualR = isBuy
-      ? (highestReached - trade.entryPrice) / (actualRisk > 0 ? actualRisk : pipSize)
-      : (trade.entryPrice - highestReached) / (actualRisk > 0 ? actualRisk : pipSize);
+      ? (highestReached - effectiveEntry) / (actualRisk > 0 ? actualRisk : pipSize)
+      : (effectiveEntry - highestReached) / (actualRisk > 0 ? actualRisk : pipSize);
 
-    const theoreticalR = isBuy
-      ? (highestReached - intendedEntry) / (intendedRisk > 0 ? intendedRisk : actualRisk)
-      : (intendedEntry - highestReached) / (intendedRisk > 0 ? intendedRisk : actualRisk);
-
-    const currentR = Math.max(actualR, theoreticalR);
+    const isSim = (global as any).isSimulator || (global as any).__SIM_MOCK_ACCOUNT__;
+    const currentR = isSim && trade.intendedEntryPrice !== undefined
+      ? Math.max(actualR, isBuy ? (highestReached - trade.intendedEntryPrice) / (Math.abs(trade.intendedEntryPrice - originalSl) || pipSize) : (trade.intendedEntryPrice - highestReached) / (Math.abs(trade.intendedEntryPrice - originalSl) || pipSize))
+      : actualR;
 
     const tTrig = config.trailingSlTrigger;
     const botLabel = trade.botId === "discretionary_trader" ? "MANUAL" : "MAGE";
-    logger.verbose(`📈 Trailing Eval (${botLabel}) ${baseSymbol}: FloatingR=${currentR >= 0 ? "+" : ""}${currentR.toFixed(2)}R | BreakEvenTrigger=${tTrig}R | Step=${config.trailingSlStep}R | CurrentSL=${trade.slPrice} | Entry=${trade.entryPrice}`);
+    logger.verbose(`📈 Trailing Eval (${botLabel}) ${baseSymbol}: FloatingR=${currentR >= 0 ? "+" : ""}${currentR.toFixed(2)}R | BreakEvenTrigger=${tTrig}R | Step=${config.trailingSlStep}R | CurrentSL=${trade.slPrice} | Entry=${effectiveEntry}`);
 
     const nowMs = Date.now();
     if (!trade._lastTrailLogAt || nowMs - trade._lastTrailLogAt >= 60000) {
@@ -1606,10 +1777,153 @@ export async function evaluateMageTrailingOnTick(
       logger.info(`[MageEngine] 📊 Tracking Trade ${trade.metaOrderId} on ${baseSymbol} (${trade.direction}): Entry = ${trade.entryPrice}, Live = ${c.close} | Floating = ${currentR >= 0 ? "+" : ""}${currentR.toFixed(2)}R (${profitPts >= 0 ? "+" : ""}${profitPts.toFixed(1)} pts / ${actualRisk.toFixed(1)} pts) | Target BE = +${tTrig}R | SL = ${trade.slPrice}`);
     }
 
+    if (trade.isPyramidChild) {
+      continue;
+    }
+
     if (trade.lastTrailingLevel === undefined) trade.lastTrailingLevel = -1;
     let mageShouldUpdate = false;
     let mageNewSl = trade.slPrice;
     const tStep = config.trailingSlStep!;
+
+    const isPyramiding = !!config.pyramidingEnabled;
+    const pyrTriggerR = config.pyramidingTriggerR ?? 1.5;
+    const pyrLockR = config.pyramidingLockR ?? ((config.pyramidingTriggerR ?? 1.5) - 1.0 > 0 ? (config.pyramidingTriggerR ?? 1.5) - 1.0 : 0.5);
+    const pyrWeight = config.pyramidingRiskPct ?? 0.50;
+
+    if (isPyramiding && !trade.hasPyramided && gte(currentR, pyrTriggerR)) {
+      trade.hasPyramided = true;
+      // 1. Lock profit on Tranche 1
+      const lockPriceRaw = isBuy ? trade.entryPrice + pyrLockR * actualRisk : trade.entryPrice - pyrLockR * actualRisk;
+      const roundedLock = Number(lockPriceRaw.toFixed(brokerDigits));
+
+      if (isBuy ? roundedLock > trade.slPrice : roundedLock < trade.slPrice) {
+        mageNewSl = roundedLock;
+        trade.slPrice = roundedLock;
+        mageShouldUpdate = true;
+        trade.lastTrailingLevel = pyrLockR;
+      }
+
+      // 2. Execute Market Scale-In Tranche 2
+      const staticSpec = getSymbolSpec(baseSymbol);
+      const liveSpec = getLiveBrokerSpec(baseSymbol) || staticSpec;
+      const rawVolume2 = (trade.volume || 1.0) * pyrWeight;
+      const calculatedVolume2 = quantizeLots(rawVolume2, liveSpec?.volumeStep ?? 0.01, liveSpec?.minVolume ?? 0.01, liveSpec?.maxVolume ?? 100.0);
+      const currentPrice = roundPrice(isBuy ? c.close + spreadPts : c.close, baseSymbol);
+      const pyrClientId = `${trade.clientId || cid}_PYR`;
+      if (!orch.sigMap) orch.sigMap = {};
+      orch.sigMap[pyrClientId] = sig;
+      const magic = generateMagicNumber('MAGE', sig);
+
+      const isSim = (global as any).isSimulator || (global as any).__SIM_MOCK_ACCOUNT__;
+      const pyrOpts = isSim
+        ? { magic, clientId: pyrClientId, entryPrice: currentPrice, limitPrice: currentPrice, riskWeight: pyrWeight, intendedRiskPips: riskPips, isPyramidChild: true, hasPyramided: true }
+        : { magic, clientId: pyrClientId, riskWeight: pyrWeight, isPyramidChild: true, hasPyramided: true };
+
+      try {
+        const simBroker = (global as any).__SIM_MOCK_ACCOUNT__;
+        let resPyr: any;
+        if (simBroker) {
+          if (isBuy) {
+            resPyr = await simBroker.createMarketBuyOrder(baseSymbol, calculatedVolume2, roundedLock, trade.tpPrice || undefined, pyrOpts);
+          } else {
+            resPyr = await simBroker.createMarketSellOrder(baseSymbol, calculatedVolume2, roundedLock, trade.tpPrice || undefined, pyrOpts);
+          }
+        } else {
+          const profile = typeof orch.getProfileData === 'function' ? await orch.getProfileData() : null;
+          const token = profile?.metaapi_token || orch.token;
+          const accId = profile?.metaapi_account_id || orch.accountId;
+          const conn = await getSharedConnection(token, accId);
+          if (isBuy) {
+            resPyr = await conn.createMarketBuyOrder(baseSymbol, calculatedVolume2, roundedLock, trade.tpPrice || undefined, pyrOpts);
+          } else {
+            resPyr = await conn.createMarketSellOrder(baseSymbol, calculatedVolume2, roundedLock, trade.tpPrice || undefined, pyrOpts);
+          }
+        }
+
+        if (resPyr?.orderId) {
+          const newPyrTrade = {
+            dbId: 0,
+            metaOrderId: resPyr.orderId,
+            clientId: pyrClientId,
+            botId: trade.botId || "MAGE",
+            direction: trade.direction,
+            entryPrice: currentPrice,
+            intendedEntryPrice: currentPrice,
+            entrySlippage: 0,
+            slPrice: roundedLock,
+            originalSl: roundedLock,
+            tpPrice: trade.tpPrice,
+            riskPips: riskPips,
+            highestPrice: currentPrice,
+            lowestPrice: currentPrice,
+            isTrailing: true,
+            volume: calculatedVolume2,
+            hasTakenPartial: false,
+            openTime: c.timestamp || Date.now(),
+            isPyramidChild: true,
+            hasPyramided: true,
+            riskWeight: pyrWeight
+          };
+          if (!state.activeTrades) state.activeTrades = [];
+          if (!state.activeTrades.some((t: any) => String(t.metaOrderId) === String(resPyr.orderId))) {
+            state.activeTrades.push(newPyrTrade);
+          }
+          globalTradeGate.register(orch.profileId, resPyr.orderId, sessionPair, trade.direction, "ALGO");
+          logger.info(`[MageEngine] 🚀 Free-Roll Pyramiding Scale-In executed for ${baseSymbol} (${trade.direction}) at ${currentPrice}, SL locked at ${roundedLock} (+${pyrLockR}R), Volume=${calculatedVolume2}`);
+        }
+      } catch (pyrErr: any) {
+        logger.error(`[MageEngine] Failed to execute Pyramiding Scale-In order for ${baseSymbol}: ${pyrErr.message}`);
+      }
+    }
+
+    const isSplitRunner = !!config.splitRunnerEnabled || config.exitMode === "SPLIT_RUNNER";
+    const splitTargetR = config.splitRunnerTargetR ?? 1.5;
+    const splitBankPct = config.splitRunnerBankPct ?? 0.50;
+    const splitBeLock = config.splitRunnerBeLock ?? 0.10;
+
+    if (isSplitRunner && !trade.hasTakenPartial && currentR >= splitTargetR) {
+      trade.hasTakenPartial = true;
+      trade.partialR = splitTargetR;
+      trade.bankPct = splitBankPct;
+
+      const bePrice = isBuy
+        ? trade.entryPrice + splitBeLock * actualRisk
+        : trade.entryPrice - splitBeLock * actualRisk;
+      const roundedBe = Number(bePrice.toFixed(brokerDigits));
+
+      if (isBuy ? roundedBe > trade.slPrice : roundedBe < trade.slPrice) {
+        mageNewSl = roundedBe;
+        mageShouldUpdate = true;
+        trade.lastTrailingLevel = splitBeLock;
+      }
+
+      const simBroker = (global as any).__SIM_MOCK_ACCOUNT__;
+      const spec = getSymbolSpec(baseSymbol);
+      const volStep = spec?.volumeStep ?? 0.01;
+      const minVol = spec?.minVolume ?? 0.01;
+      const maxVol = spec?.maxVolume ?? 100.0;
+      const rawCloseVol = (trade.volume || 1.0) * splitBankPct;
+      const partialVol = quantizeLots(rawCloseVol, volStep, minVol, maxVol);
+
+      if (simBroker && typeof simBroker.closePositionPartially === "function" && trade.metaOrderId) {
+        simBroker.closePositionPartially(trade.metaOrderId, partialVol, { partialR: splitTargetR, bankPct: splitBankPct }).catch(() => {});
+      } else if (trade.metaOrderId) {
+        (async () => {
+          try {
+            const profile = typeof orch.getProfileData === 'function' ? await orch.getProfileData() : null;
+            const token = profile?.metaapi_token || orch.token;
+            const accId = profile?.metaapi_account_id || orch.accountId;
+            const conn = await getSharedConnection(token, accId);
+            await conn.closePositionPartially(trade.metaOrderId, partialVol);
+          } catch (e: any) {
+            logger.error(`[MageEngine] Failed to partially close live position ${trade.metaOrderId}: ${e.message}`);
+          }
+        })().catch(() => {});
+      }
+
+      logger.info(`[MageEngine] 🎯 Split Runner Target (${splitTargetR}R) reached on ${baseSymbol}! Banked ${(splitBankPct * 100).toFixed(0)}% volume, moved SL to BE+${splitBeLock}R (${roundedBe}).`);
+    }
 
     const isAdtel = !!(config.adtelEnabled || config.useAdtelTrailing || config.exitMode?.startsWith("ADTEL"));
 
@@ -1671,13 +1985,13 @@ export async function evaluateMageTrailingOnTick(
         }
       }
     } else if (config.trailingSlStep === 999) {
-      if (currentR >= tTrig && (isBuy ? trade.slPrice < trade.entryPrice : trade.slPrice > trade.entryPrice)) {
-        mageNewSl = trade.entryPrice;
+      if (currentR >= tTrig && (isBuy ? trade.slPrice < effectiveEntry : trade.slPrice > effectiveEntry)) {
+        mageNewSl = effectiveEntry;
         mageShouldUpdate = true;
       }
     } else if (isBuy) {
-      if (currentR >= tTrig && trade.slPrice < trade.entryPrice) {
-        mageNewSl = trade.entryPrice;
+      if (currentR >= tTrig && trade.slPrice < effectiveEntry) {
+        mageNewSl = effectiveEntry;
         mageShouldUpdate = true;
         trade.lastTrailingLevel = 0;
       }
@@ -1686,7 +2000,7 @@ export async function evaluateMageTrailingOnTick(
         const rLevelToLock = numSteps * tStep;
         if (rLevelToLock > trade.lastTrailingLevel) {
           trade.lastTrailingLevel = rLevelToLock;
-          const proposedSL = Number((trade.entryPrice + rLevelToLock * actualRisk).toFixed(brokerDigits));
+          const proposedSL = Number((effectiveEntry + rLevelToLock * actualRisk).toFixed(brokerDigits));
           if (proposedSL > trade.slPrice && proposedSL > mageNewSl) {
             mageNewSl = proposedSL;
             mageShouldUpdate = true;
@@ -1694,8 +2008,8 @@ export async function evaluateMageTrailingOnTick(
         }
       }
     } else {
-      if (currentR >= tTrig && trade.slPrice > trade.entryPrice) {
-        mageNewSl = trade.entryPrice;
+      if (currentR >= tTrig && trade.slPrice > effectiveEntry) {
+        mageNewSl = effectiveEntry;
         mageShouldUpdate = true;
         trade.lastTrailingLevel = 0;
       }
@@ -1704,7 +2018,7 @@ export async function evaluateMageTrailingOnTick(
         const rLevelToLock = numSteps * tStep;
         if (rLevelToLock > trade.lastTrailingLevel) {
           trade.lastTrailingLevel = rLevelToLock;
-          const proposedSL = Number((trade.entryPrice - rLevelToLock * actualRisk).toFixed(brokerDigits));
+          const proposedSL = Number((effectiveEntry - rLevelToLock * actualRisk).toFixed(brokerDigits));
           if (proposedSL < trade.slPrice && proposedSL < mageNewSl) {
             mageNewSl = proposedSL;
             mageShouldUpdate = true;
@@ -1735,6 +2049,24 @@ export async function evaluateMageTrailingOnTick(
             const conn = await getSharedConnection(orch.token, orch.accountId);
             await conn.modifyPosition(trade.metaOrderId, roundedSl, trade.tpPrice || null);
           }, `TrailMAGE:${sessionPair}`, undefined, undefined, orch.profileId);
+        }
+
+        const pyrClientId = `${trade.clientId || cid}_PYR`;
+        const childTrade = (state.activeTrades || []).find((t: any) => t.isPyramidChild && t.clientId === pyrClientId);
+        if (childTrade && childTrade.slPrice !== roundedSl) {
+          childTrade.slPrice = roundedSl;
+          (childTrade as any).lastSentSlPrice = roundedSl;
+          if (isSim) {
+            const simBroker = (global as any).__SIM_MOCK_ACCOUNT__;
+            if (simBroker && typeof simBroker.modifyPosition === "function") {
+              simBroker.modifyPosition(childTrade.metaOrderId, roundedSl, childTrade.tpPrice).catch(() => {});
+            }
+          } else {
+            enqueueMetaApiRequest(async () => {
+              const conn = await getSharedConnection(orch.token, orch.accountId);
+              await conn.modifyPosition(childTrade.metaOrderId, roundedSl, childTrade.tpPrice || null);
+            }, `TrailMAGE_PYR:${sessionPair}`, undefined, undefined, orch.profileId).catch(() => {});
+          }
         }
         logger.info(`[DiscretionaryTrader] 🛡️ MAGE Continuous 0.5R Trail: ${sessionPair} SL updated to ${roundedSl}`);
         orch.addEyeFeedEvent({
@@ -1793,7 +2125,7 @@ export async function cancelMagePendingOnNews(orch: any, sessionPair: string, st
 
   for (const sig of Object.keys(state.orbStates)) {
     const os = state.orbStates[sig];
-    if (os && os.limitOrderId && (!state.activeTrades || !state.activeTrades.find(t => t.clientId === sig || t.metaOrderId === os.limitOrderId))) {
+    if (os && os.limitOrderId && (!state.activeTrades || !state.activeTrades.find(t => String(t.metaOrderId) === String(os.limitOrderId)))) {
       try {
         const conn = await getSharedConnection(orch.token, orch.accountId);
         const orderId = os.limitOrderId;

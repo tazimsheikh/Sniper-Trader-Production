@@ -37,12 +37,11 @@ import { DISCRETIONARY_TRADER_PAIRS as SP } from "../index.js";
 
 
 const DiscretionaryTrader_PAIRS = [
-  "AUDJPY", "AUDUSD", "BTCUSD", "CADJPY", "CHFJPY",
-  "ETHUSD", "EURAUD", "EURCAD", "EURJPY", "EURNZD",
-  "EURUSD", "GBPAUD", "GBPCAD", "GBPJPY", "GBPNZD",
-  "GBPUSD", "GER40", "JPN225", "NAS100", "NZDUSD",
-  "SPX500", "US30", "USDCAD", "USDCHF", "USDJPY",
-  "XAUUSD", "XTIUSD"
+  "AUDJPY", "AUDUSD", "CADJPY", "CHFJPY",
+  "EURAUD", "EURCAD", "EURJPY", "EURUSD",
+  "GBPAUD", "GBPCAD", "GBPJPY", "GBPUSD",
+  "GER40",  "NAS100", "NZDUSD", "US30",
+  "USDCAD", "USDCHF", "USDJPY", "XAUUSD"
 ];
 
 // ── In-memory M1 accumulator per symbol ──────────────────────────────────────
@@ -199,13 +198,8 @@ export class TickFeed {
       GER40: ["GER40", "DAX40", "DE40", "GER30", "DE30", "GDAXI", "DAX", "DAX30", ".DE40", ".GER40"],
       US30: ["US30", "DJ30", "WS30", "DOW30", "DOWJONES", ".US30"],
       NAS100: ["NAS100", "US100", "USTEC", "NDX", "NDX100", "NQ100", ".NAS100"],
-      SPX500: ["SPX500", "US500", "SP500", "SPX", ".SPX500"],
-      JPN225: ["JPN225", "JP225", "NIKKEI225", ".JPN225"],
       UK100: ["UK100", "FTSE100", ".UK100"],
       XAUUSD: ["XAUUSD", "GOLD"],
-      XTIUSD: ["XTIUSD", "USOIL", "WTI", "OIL"],
-      BTCUSD: ["BTCUSD", "BITCOIN"],
-      ETHUSD: ["ETHUSD", "ETHEREUM"],
     };
 
     function getFallbackCandidates(baseSym: string): string[] {
@@ -280,13 +274,8 @@ export class TickFeed {
             GER40: /^(GER|DAX|DE|GDAXI)[34]?0?/i,
             US30: /^(US|DJ|WS|DOW)[34]?0?/i,
             NAS100: /^(NAS|US100|USTEC|NDX|NQ)/i,
-            SPX500: /^(US500|SP500|SPX|S&P)/i,
-            JPN225: /^(JPN|JP|NIKKEI)225/i,
             UK100: /^(UK|FTSE)100/i,
             XAUUSD: /^(XAUUSD|GOLD)/i,
-            XTIUSD: /^(XTIUSD|USOIL|WTI|OIL)/i,
-            BTCUSD: /^(BTCUSD|BITCOIN)/i,
-            ETHUSD: /^(ETHUSD|ETHEREUM)/i,
           };
           const pat = patternMap[cleanBase] || patternMap[base] || 
             (cleanBase.length === 6 ? new RegExp(`^${cleanBase}[^a-zA-Z0-9]?.*$`, 'i') : null);
@@ -532,7 +521,6 @@ export class TickFeed {
       let cleanSym = sym;
       if (cleanSym.endsWith("=X")) cleanSym = cleanSym.replace("=X", "");
       if (cleanSym === "GC=F") cleanSym = "XAUUSD";
-      if (cleanSym === "CL=F") cleanSym = "XTIUSD";
       if (cleanSym === "NQ=F") cleanSym = "NAS100";
 
       baseSym = cleanSym

@@ -353,9 +353,10 @@ export function initSocket(server: HttpServer) {
             // ✅ Persist active bots to DB so Docker restarts can auto-resume
             {
               const currentBots = Array.from(orch.activeBots);
+              const hasSeer = currentBots.includes("seer");
               await db2.prepare(
-                "UPDATE trading_profiles SET active_bots = ? WHERE id = ?"
-              ).run(JSON.stringify(currentBots), data.profileId);
+                "UPDATE trading_profiles SET active_bots = ?, ai_sniper_active = ? WHERE id = ?"
+              ).run(JSON.stringify(currentBots), hasSeer ? 1 : 0, data.profileId);
             }
             io?.to(`profile_${data.profileId}`).emit(
               "discretionary_trader:status",
@@ -367,9 +368,10 @@ export function initSocket(server: HttpServer) {
               // ✅ Persist updated (smaller) active_bots list to DB
               {
                 const currentBots = Array.from(orch.activeBots);
+                const hasSeer = currentBots.includes("seer");
                 await db2.prepare(
-                  "UPDATE trading_profiles SET active_bots = ? WHERE id = ?"
-                ).run(JSON.stringify(currentBots), data.profileId);
+                  "UPDATE trading_profiles SET active_bots = ?, ai_sniper_active = ? WHERE id = ?"
+                ).run(JSON.stringify(currentBots), hasSeer ? 1 : 0, data.profileId);
               }
               if (orch.activeBots.size === 0) {
                 orch.stop();

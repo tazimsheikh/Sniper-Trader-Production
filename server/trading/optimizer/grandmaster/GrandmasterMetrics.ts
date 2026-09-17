@@ -191,13 +191,13 @@ export function evaluateComponent(
   const isPotentialBlackSwan = maxDrawdownR <= BLACK_SWAN_MAX_DD && tradesCount >= BLACK_SWAN_MIN_TRADES;
   const minRequiredR = isPotentialBlackSwan ? 5 : 8;
 
-  // Low-frequency assets (Crypto, Indices, Energy, JPY Crosses) trade 4-9 times/year.
-  const isLowFreqAsset = /BTC|ETH|XTI|NAS100|US30|GER40|JPN225|SPX500|CADJPY|EURJPY/i.test(symbol);
+  // Low-frequency assets (Indices, JPY Crosses) trade 4-9 times/year.
+  const isLowFreqAsset = /NAS100|US30|GER40|CADJPY|EURJPY/i.test(symbol);
 
   const minRecentOneYearTrades = isLowFreqAsset ? 2 : 3;
   const minTotalTrades = isLowFreqAsset ? 3 : 10;
 
-  if (totalR < minRequiredR || maxDrawdownR > 70 || recentOneYearTrades < minRecentOneYearTrades || tradesCount < minTotalTrades)
+  if (totalR < minRequiredR || maxDrawdownR > 70 || recentOneYearTrades < minRecentOneYearTrades || tradesCount < minTotalTrades || recentOneYearR < 0.0)
     return null;
 
   // Calendar Year Consistency Guard:

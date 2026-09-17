@@ -8,7 +8,8 @@ export default function parseMageConfig(setupStr: string, pair: string) {
 
     const [, session, pb, minSl, maxSl, body, trig, step, fc, sh, sm, orb, act, exit] = m;
     
-    const optConfig = OPTIMIZER_CONFIG[pair.replace(".Daily", "")] || { spread: 2.0, pipSize: 0.001 };
+    const cleanSym = pair.replace(".Daily", "");
+    const optConfig = OPTIMIZER_CONFIG[cleanSym] || { spread: 2.0, pipSize: 0.001 };
     
     return {
         session,
@@ -26,6 +27,7 @@ export default function parseMageConfig(setupStr: string, pair: string) {
         trailingSlStep: parseFloat(step),
         forceCloseHours: parseInt(fc),
         spread: optConfig.spread,
-        pipSize: optConfig.pipSize
+        pipSize: optConfig.pipSize,
+        pyramidingEnabled: false,
     };
 }

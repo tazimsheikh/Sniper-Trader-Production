@@ -8,6 +8,7 @@ export interface HTFPrecomputedData {
   ema50: Float64Array;
   sar?: Float64Array;
   h1Candles?: AggregatedCandle[];
+  h1Structure?: Int8Array;
 }
 
 export class HTFContextTracker {
@@ -79,7 +80,69 @@ export class HTFContextTracker {
       h1IndexMap[i] = Math.max(0, h1Idx - 1);
     }
 
-    return { h1IndexMap, ema50, sar, h1Candles };
+    const h1Structure = new Int8Array(h1Candles.length); // 1 = BULLISH, -1 = BEARISH, 0 = NEUTRAL
+    const confirmedHighs: number[] = [];
+    const confirmedLows: number[] = [];
+
+    // Bill Williams 5-Bar Fractal sequentially on H1:
+    // A swing at index k is confirmed at index j where j = k + 2
+    for (let j = 4; j < h1Candles.length; j++) {
+      const k = j - 2;
+      const ck = h1Candles[k];
+      const prev1 = h1Candles[k - 1];
+      const prev2 = h1Candles[k - 2];
+      const next1 = h1Candles[k + 1];
+      const next2 = h1Candles[j]; // k + 2
+
+      if (ck.high > prev1.high && ck.high > prev2.high && ck.high > next1.high && ck.high > next2.high) {
+        confirmedHighs.push(ck.high);
+      }
+      if (ck.low < prev1.low && ck.low < prev2.low && ck.low < next1.low && ck.low < next2.low) {
+        confirmedLows.push(ck.low);
+      }
+
+      if (confirmedHighs.length >= 2 && confirmedLows.length >= 2) {
+        const lastH = confirmedHighs[confirmedHighs.length - 1];
+        const prevH = confirmedHighs[confirmedHighs.length - 2];
+        const lastL = confirmedLows[confirmedLows.length - 1];
+        const prevL = confirmedLows[confirmedLows.length - 2];
+
+        if (lastH > prevH && lastL > prevL) {
+          h1Structure[j] = 1; // BULLISH
+        } else if (lastH < prevH && lastL < prevL) {
+          h1Structure[j] = -1; // BEARISH
+        } else {
+          h1Structure[j] = 0; // NEUTRAL
+        }
+      }
+    }
+
+    return { h1IndexMap, ema50, sar, h1Candles, h1Structure };
+  }
+
+  public static getH1SwingStructure(
+    htfData: HTFPrecomputedData,
+    m5Index: number
+  ): "BULLISH" | "BEARISH" | "NEUTRAL" {
+    if (!htfData.h1Structure) return "NEUTRAL";
+    const h1Idx = htfData.h1IndexMap[m5Index];
+    if (h1Idx < 0 || h1Idx >= htfData.h1Structure.length) return "NEUTRAL";
+    const val = htfData.h1Structure[h1Idx];
+    return val === 1 ? "BULLISH" : val === -1 ? "BEARISH" : "NEUTRAL";
+  }
+
+  public static isCounterToH1Structure(
+    htfData: HTFPrecomputedData,
+    m5Index: number,
+    direction: "BUY" | "SELL"
+  ): boolean {
+    if (!htfData.h1Structure) return false;
+    const h1Idx = htfData.h1IndexMap[m5Index];
+    if (h1Idx < 0 || h1Idx >= htfData.h1Structure.length) return false;
+    const val = htfData.h1Structure[h1Idx];
+    if (direction === "BUY" && val === -1) return true;
+    if (direction === "SELL" && val === 1) return true;
+    return false;
   }
 
   public static isSarAcceleratingFast(

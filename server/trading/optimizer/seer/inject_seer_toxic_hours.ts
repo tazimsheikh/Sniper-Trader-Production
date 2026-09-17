@@ -9,7 +9,8 @@ import * as fs from "fs";
 import * as path from "path";
 import { PairConfigManager, SEER_PAIR_CONFIG } from "../../config/PairConfig.js";
 import { OPTIMIZER_CONFIG } from "../../config/OptimizerPairConfig.js";
-import { runSeerMathBacktest } from "../../backtester/SeerMathBacktester.js";
+import { runSeerMathBacktest, clearSeerBacktestCache } from "../../backtester/SeerMathBacktester.js";
+import { clearCsvCache } from "../../backtester/loadCsv.js";
 import { getFixedEstDate } from "../../backtester/math_core/MathCoreUtils.js";
 
 const HOUR_MIN_NET_R    = -2.0;  // hour total net R must be worse than this
@@ -246,7 +247,9 @@ export async function runSeerToxicFilterInjection() {
         bans.push({ pair, bot: "SEER", index: i, bannedHours: [], bannedDays: [] });
         console.log(`  → [${label}] no trades — clearing`);
       }
+      clearSeerBacktestCache(pair);
     }
+    clearCsvCache();
   }
 
   // ── Write to PairConfig.ts ────────────────────────────────────────────────
@@ -283,4 +286,7 @@ export async function runSeerToxicFilterInjection() {
   console.log(`🎉 SEER Toxic Filter Injection Complete!\n`);
 }
 
-runSeerToxicFilterInjection().catch(console.error);
+const isDirectRun = process.argv[1] && (process.argv[1].endsWith("inject_seer_toxic_hours.ts") || process.argv[1].endsWith("inject_seer_toxic_hours.js"));
+if (isDirectRun) {
+  runSeerToxicFilterInjection().catch(console.error);
+}

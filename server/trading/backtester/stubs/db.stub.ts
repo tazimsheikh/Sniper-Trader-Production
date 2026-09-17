@@ -22,6 +22,8 @@ const stmt = {
     dwcb_peak_balance: 0,
     base_risk_balance: null,
     institutional_enabled: 0,
+    institutional_daily_cap: 2.5,
+    institutional_peak_to_draw: 5.5,
     institutional_daily_start_balance: null,
     institutional_daily_date: null,
     institutional_peak_balance: null,

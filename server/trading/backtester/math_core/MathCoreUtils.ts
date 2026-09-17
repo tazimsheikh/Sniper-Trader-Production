@@ -6,6 +6,7 @@ export const gte = (a: number, b: number): boolean => (a - b) >= -PRICE_EPSILON;
 export const lte = (a: number, b: number): boolean => (b - a) >= -PRICE_EPSILON;
 
 import { isNewsForceClose } from "../../market/historicalNews.js";
+import { isEODSession } from "../../market/MathFilters.js";
 export function getFixedEstDate(date = new Date()): Date {
   if ((global as any).__SIM_TIME_PROVIDER__) {
     return (global as any).__SIM_TIME_PROVIDER__(date);
@@ -52,7 +53,8 @@ export function buildM1TypedArrays(m1Rows: any[], NFP_DATES: Set<string>, CPI_DA
     m1Typed.estHour[i] = h;
     m1Typed.minute[i] = m;
     
-    m1Typed.isEOD_standard[i] = 0;
+    const isWeekendGap = i + 1 < m1Length && (m1Rows[i + 1].timestamp - r.timestamp > 24 * 3600 * 1000);
+    m1Typed.isEOD_standard[i] = (isEODSession(h, m) || isWeekendGap) ? 1 : 0;
     
     if (i > 0) {
       const prevH = m1Rows[i - 1].estHour;

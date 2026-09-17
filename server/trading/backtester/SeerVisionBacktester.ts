@@ -195,22 +195,6 @@ export async function runVisionBacktest(
       continue;
     // Inside Day strictly banned for Gold
     if (setupType === "INSIDE_DAY" && pair.includes("XAUUSD")) continue;
-    // Crypto Surgical Bans (Due to aggressive trending structures)
-    if (
-      pair.includes("ETHUSD") &&
-      (setupType === "LHF_SHORT" ||
-        setupType === "FGD" ||
-        setupType === "DAY3_SHORT" ||
-        setupType === "DAY3_LONG")
-    )
-      continue;
-    if (
-      pair.includes("BTCUSD") &&
-      (setupType === "FRD" ||
-        setupType === "DAY3_SHORT" ||
-        setupType === "DAY3_LONG")
-    )
-      continue;
 
     // ── SURGICAL PAIR BANS (From PromptVault.ts) ────────
     // 1. GBPJPY & GBPCAD Inside Day false breaks strictly banned.
@@ -218,8 +202,8 @@ export async function runVisionBacktest(
       continue;
     // 2. USDJPY, EURJPY Asia session banned.
     if (isAsia && (pair === "USDJPY" || pair === "EURJPY")) continue;
-    // 3. EURUSD & EURNZD NY afternoon dead zone (after 14:00 EST) banned.
-    if (c.estHour >= 14 && (pair === "EURUSD" || pair === "EURNZD")) continue;
+    // 3. EURUSD NY afternoon dead zone (after 14:00 EST) banned.
+    if (c.estHour >= 14 && pair === "EURUSD") continue;
 
     const ema20 = emaArr[i];
     const prevC = m5Candles[i - 1];
@@ -496,19 +480,12 @@ export async function runVisionBacktest(
       pair.includes("US30") ||
       pair.includes("GER40") ||
       pair.includes("GBPJPY") ||
-      pair.includes("GBPNZD") ||
-      pair.includes("GBPCAD") ||
-      pair.includes("EURNZD");
+      pair.includes("GBPCAD");
     let minSlDist =
       config.minSlDist !== undefined
         ? config.minSlDist * pipSize
         : (isVolatile ? 40 : 20) * pipSize;
-    if (pair.includes("BTC") || pair.includes("ETH"))
-      minSlDist = 20.0 * pipSize;
     let maxPips = 40;
-    if (pair.includes("BTC"))
-      maxPips = 250; // $2500 max SL
-    else if (pair.includes("ETH")) maxPips = 150; // $150 max SL
     if (pair.includes("XAU")) maxPips = 100;
     else if (
       pair.includes("NAS") ||

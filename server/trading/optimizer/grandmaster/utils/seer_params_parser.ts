@@ -4,10 +4,10 @@ export default function paramsToConfig(setupStr: string, pair: string): PairConf
   const base = pair.replace(/\.daily$/i, "").toUpperCase();
   const optConfig = OPTIMIZER_CONFIG[pair] || OPTIMIZER_CONFIG[base] || { spread: 2.0, pipSize: 0.0001, tickSize: 0.00001 };
 
-  // Modern Format: {session}_Body{minBody}_Wick{wickRatio}_MinSL{minSl}_MaxSL{maxSl}_Trig{trailTrig}_Step{trailStep}_FC{fcHours}_Exit{exitMode}
-  const modernMatch = setupStr.match(/^(\w+)_Body([\d.]+)_Wick([\d.]+)_MinSL([\d.]+)_MaxSL([\d.]+)_Trig([\d.]+)_Step([\d.]+)_FC(\d+)_Exit(\w+)$/);
+  // Modern Format: {session}_Body{minBody}_Wick{wickRatio}_MinSL{minSl}_MaxSL{maxSl}_Trig{trailTrig}_Step{trailStep}_FC{fcHours}_Exit{exitMode}(_VetoH1{true|false})?
+  const modernMatch = setupStr.match(/^(\w+)_Body([\d.]+)_Wick([\d.]+)_MinSL([\d.]+)_MaxSL([\d.]+)_Trig([\d.]+)_Step([\d.]+)_FC(\d+)_Exit(\w+)(?:_VetoH1(true|false))?$/);
   if (modernMatch) {
-    const [, sSession, sBody, sWick, sMinSL, sMaxSL, sTrig, sStep, sFC, sExit] = modernMatch;
+    const [, sSession, sBody, sWick, sMinSL, sMaxSL, sTrig, sStep, sFC, sExit, sVetoH1] = modernMatch;
     const trigVal = parseFloat(sTrig);
     const stepVal = parseFloat(sStep);
     const session = (sSession === "NY_Forex" ? "ny" : sSession) as any;
@@ -22,6 +22,7 @@ export default function paramsToConfig(setupStr: string, pair: string): PairConf
       trailingSlStep: stepVal > 0 ? stepVal : undefined,
       forceCloseHours: parseInt(sFC, 10),
       exitMode: sExit as any,
+      vetoCounterH1Structure: sVetoH1 !== undefined ? sVetoH1 === "true" : undefined,
       spread: optConfig.spread,
       pipSize: optConfig.pipSize,
       tickSize: optConfig.tickSize,

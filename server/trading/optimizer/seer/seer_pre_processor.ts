@@ -175,11 +175,16 @@ export function deduplicateConfigs(
       return false;
     }
 
-    const oneYrDd = (c as any).oneYearMaxDrawdown || 0;
-    const r1Yr = (c as any).r1Year || 0;
-    const oneYrCalmar = oneYrDd > 0 ? r1Yr / oneYrDd : r1Yr;
-    if (r1Yr < 2.0 || oneYrCalmar < 2.0 || oneYrDd > 14.0) {
-      return false;
+    const oneYrDd = (c as any).oneYearMaxDrawdown;
+    const r1Yr = (c as any).r1Year !== undefined ? (c as any).r1Year : c.recentOneYearR;
+    if (r1Yr !== undefined) {
+      if (r1Yr < 0.0) return false;
+      if (oneYrDd !== undefined) {
+        const oneYrCalmar = oneYrDd > 0 ? r1Yr / oneYrDd : r1Yr;
+        if (r1Yr < 2.0 || oneYrCalmar < 2.0 || oneYrDd > 14.0) {
+          return false;
+        }
+      }
     }
 
     if (c.threeYearProfitFactor && c.threeYearProfitFactor < 1.15) {
@@ -254,6 +259,8 @@ export async function preProcessData(
   minTrades: number,
   skipAudit: boolean = false
 ): Promise<{ normalList: IndependentSynthesisComponent[]; rawValidCount: number }> {
+  const cleanSym = symbol.replace(/\.daily$/i, "").toUpperCase();
+
   for (const state of seerData) {
     if (!state) continue;
     state.dailyRArray = new Float64Array(globalDates.length);

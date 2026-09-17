@@ -4,7 +4,7 @@
 // Feeds 5.5 years of M1 CSV data through the REAL LiveOrchestrator.js
 // code by registering module stubs, bypassing all live infrastructure.
 //
-// Usage: runShadowBacktest('ETHUSD.Daily') 
+// Usage: runShadowBacktest('NAS100.Daily') 
 // ============================================================
 
 import { createRequire } from 'module';
@@ -218,13 +218,17 @@ export async function runShadowBacktest(
   let maxDrawdown = 0;
 
   let lastReportTs = 0;
-  for (const m1 of m1Candles) {
+  for (let i = 0; i < m1Candles.length; i++) {
+    const m1 = m1Candles[i];
     if (m1.timestamp - lastReportTs >= 30 * 86400000) {
         lastReportTs = m1.timestamp;
         console.log(`   ⏳ Progress: ${new Date(m1.timestamp).toISOString()}`);
     }
     const ts = m1.timestamp;
     if (!isFinite(ts)) continue;
+
+    const isWeekendGap = i + 1 < m1Candles.length && (m1Candles[i + 1].timestamp - m1.timestamp > 24 * 3600 * 1000);
+    (global as any).__SIM_IS_WEEKEND_GAP__ = isWeekendGap;
 
     // Set simulated time on global for force-close logic
     (global as any).__SIM_CURRENT_TIME__ = new Date(ts);

@@ -189,9 +189,41 @@ export function preComputeTriggers(
         : lte(actionCandle.low, orLow - sweepBuffer);
 
       if (!m5SweepHigh && !m5SweepLow) continue;
-      if (m5SweepHigh && m5SweepLow) continue;
 
-      const triggeredDir: "SELL" | "BUY" = m5SweepHigh ? "SELL" : "BUY";
+      let triggeredDir: "SELL" | "BUY" | null = null;
+      let isDoubleSweepResolved = false;
+
+      if (m5SweepHigh && m5SweepLow) {
+        const N = actionMinutes / 5;
+        const startIndex = Math.max(0, i - N + 1);
+        const actionStartTs = m5Candles[startIndex].timestamp;
+        const actionEndTs = actionCandle.timestamp + 5 * 60 * 1000;
+        let highHitTime = -1;
+        let lowHitTime = -1;
+        const targetHigh = isForex ? orHigh + sweepBuffer : orHigh + spreadPts + sweepBuffer;
+        const targetLow = orLow - sweepBuffer;
+
+        for (let m = 0; m < m1Rows.length; m++) {
+          const row = m1Rows[m];
+          if (row.timestamp < actionStartTs) continue;
+          if (row.timestamp >= actionEndTs) break;
+          if (gte(row.high, targetHigh) && highHitTime === -1) highHitTime = row.timestamp;
+          if (lte(row.low, targetLow) && lowHitTime === -1) lowHitTime = row.timestamp;
+        }
+
+        if (highHitTime !== -1 && lowHitTime !== -1) {
+          // Fade final sweep: if High was swept first, then Low was swept last -> BUY.
+          // If Low was swept first, then High was swept last -> SELL.
+          triggeredDir = highHitTime < lowHitTime ? "BUY" : "SELL";
+          isDoubleSweepResolved = true;
+        } else {
+          continue;
+        }
+      } else {
+        triggeredDir = m5SweepHigh ? "SELL" : "BUY";
+      }
+
+      if (!triggeredDir) continue;
 
       if (htfAlignmentRequired) {
         if (HTFContextTracker.isTrendParabolicFast(htfData, i, triggeredDir, maxH1EmaSlope, pipSize)) {
@@ -230,6 +262,7 @@ export function preComputeTriggers(
         actionCandleEstHour: actionCandle.estHour,
         actionCandleUtcDay: getFixedEstDate(new Date(actionCandle.timestamp)).getUTCDay(),
         actionCandleMonth: getFixedEstDate(new Date(actionCandle.timestamp)).getUTCMonth() + 1,
+        forcedDirection: isDoubleSweepResolved ? triggeredDir : undefined,
       });
     }
   }
@@ -262,14 +295,14 @@ export function evaluateExits(
 
   const slBuffer = 0; // Removed physical SL buffer for parity
   const isCrypto = pair.includes("BTC") || pair.includes("ETH");
-  const sweepBuffer = ((config as any).sweepPips ?? 0) * pipSize;
+  const sweepBuffer = (config.sweepPips ?? 0) * pipSize;
 
   for (const t of triggers) {
 
     if (tradedDates[t.tradingDayId]) continue;
 
     // PARITY: Match live engine's maxSpreadLimit filter
-    if ((config as any).maxSpreadLimit !== undefined && (spreadPts / pipSize) > (config as any).maxSpreadLimit) {
+    if (config.maxSpreadLimit !== undefined && (spreadPts / pipSize) > config.maxSpreadLimit) {
       continue;
     }
 
@@ -293,28 +326,31 @@ export function evaluateExits(
     const sweepLowTriggered = isForex
       ? lte(sweepLow, t.orLow - sweepBuffer)
       : lte(sweepLow, t.orLow - sweepBuffer);
-
-    if (sweepHighTriggered && sweepLowTriggered) continue; // Parity: ignore if both swept
-    if (!sweepHighTriggered && !sweepLowTriggered) continue;
-
-    const direction = sweepHighTriggered ? "SELL" : "BUY";
+    let direction: "SELL" | "BUY";
+    if (sweepHighTriggered && sweepLowTriggered) {
+      if (!t.forcedDirection) continue;
+      direction = t.forcedDirection;
+    } else {
+      if (!sweepHighTriggered && !sweepLowTriggered) continue;
+      direction = sweepHighTriggered ? "SELL" : "BUY";
+    }
     
     // WBR Filter: wickPips / bodyPips >= minWbr (default 1.5)
-    const acOpen = (t as any).actionCandleOpen;
+    const acOpen = t.actionCandleOpen ?? 0;
     const acClose = t.actionCandleClose;
-    const bodyTop = Math.max(acOpen, acClose);
-    const bodyBottom = Math.min(acOpen, acClose);
+    const bodyTop = Math.max(acOpen, acClose ?? 0);
+    const bodyBottom = Math.min(acOpen, acClose ?? 0);
     const bodyPips = Math.max((bodyTop - bodyBottom) / pipSize, 0.1);
     const wickPips = direction === "SELL" 
       ? (sweepHigh - bodyTop) / pipSize 
       : (bodyBottom - sweepLow) / pipSize;
       
-    const minWbr = (config as any).minWbr ?? 1.5;
+    const minWbr = config.minWbr ?? 1.5;
     if ((wickPips / bodyPips) < minWbr) {
       continue; // Strict rejection rule: skip full-bodied momentum candles
     }
 
-    if ((config as any).requireCloseLocationHalf && acClose !== undefined) {
+    if (config.requireCloseLocationHalf && acClose !== undefined) {
       const candleRange = sweepHigh - sweepLow;
       if (candleRange > 0) {
         const closePercentile = (acClose - sweepLow) / candleRange;
@@ -326,9 +362,9 @@ export function evaluateExits(
     if (config.maxBodyPips !== undefined && t.cBodyPips > config.maxBodyPips)
       continue;
 
-    const maxSweepMultiplier = (config as any).maxSweepMultiplier ?? 3;
+    const maxSweepMultiplier = config.maxSweepMultiplier ?? 3;
     // Always use the config's sweep buffer in evaluateExits to support Super-Set Caching from the optimizer
-    const activeSweepBuffer = ((config as any).sweepPips ?? 0) * pipSize;
+    const activeSweepBuffer = (config.sweepPips ?? 0) * pipSize;
     const maxSweepBuffer = activeSweepBuffer * maxSweepMultiplier;
 
     // Minimum Sweep Filter (Crucial for Super-Set Caching where triggers might only have 0-pip sweeps)
@@ -339,15 +375,15 @@ export function evaluateExits(
     if (direction === "BUY" && t.actionCandleLow !== undefined && !gte(t.actionCandleLow, t.orLow - maxSweepBuffer)) continue;
     if (direction === "SELL" && t.actionCandleHigh !== undefined && !lte(t.actionCandleHigh, t.orHigh + maxSweepBuffer)) continue;
 
-    if ((config as any).requireCloseInside && t.actionCandleClose !== undefined) {
+    if (config.requireCloseInside && t.actionCandleClose !== undefined) {
       if (direction === "BUY" && !gte(t.actionCandleClose, t.orLow)) continue;
       if (direction === "SELL" && !lte(t.actionCandleClose, t.orHigh)) continue;
     }
 
     // Reversal Entry Thresholds
     const pct =
-      (config as any).rangeFilterPct ??
-      (config as any).entryPenetrationPct ??
+      config.rangeFilterPct ??
+      config.entryPenetrationPct ??
       0;
     const entryPenetration = pct / 100;
 
@@ -793,7 +829,7 @@ export function evaluateExits(
     config.entryPenetrationPct !== undefined
       ? `${config.entryPenetrationPct}%`
       : "0%";
-  const setupStr = `${sessionName}_${pbStr}_MinSL${config.minSlDist}_MaxSL${config.maxSlDist}_Sweep${(config as any).sweepPips}_MaxSwp${(config as any).maxSweepMultiplier ?? 3}_ReqCls${(config as any).requireCloseInside ?? false}_Exit${config.exitMode}_Trig${config.trailingSlTrigger}_Step${config.trailingSlStep}_FC${(config as any).forceCloseHours}_StartH${(config as any).orbStartHour}_StartM${(config as any).orbStartMin}_OrbMins${(config as any).orbMinutes}_ActMins${config.actionMinutes ?? 5}`;
+  const setupStr = `${sessionName}_${pbStr}_MinSL${config.minSlDist}_MaxSL${config.maxSlDist}_Sweep${config.sweepPips}_MaxSwp${config.maxSweepMultiplier ?? 3}_ReqCls${config.requireCloseInside ?? false}_Exit${config.exitMode}_Trig${config.trailingSlTrigger}_Step${config.trailingSlStep}_FC${config.forceCloseHours}_StartH${config.orbStartHour}_StartM${config.orbStartMin}_OrbMins${config.orbMinutes}_ActMins${config.actionMinutes ?? 5}`;
 
   return {
     setup: setupStr,

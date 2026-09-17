@@ -64,7 +64,7 @@ export function parseSageConfig(setupStr: string): { session: string; config: Pa
 const BASE_MIN_SL_VALS = [5, 7, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 100, 120];
 const BASE_MAX_SL_VALS = [25, 30, 35, 40, 50, 60, 80, 100, 120, 150, 160, 200, 250, 300, 500];
 const SWEEP_BUFFERS = [2, 3, 5, 7, 10, 20, 30, 50];
-const ENTRY_PENETRATIONS = [0, 20];
+const ENTRY_PENETRATIONS = [0, 0.2, 20];
 const TRAILING_TRIGGERS = [0.25, 0.5, 1.0, 1.5, 2.0];
 const TRAILING_STEPS = [0.5, 1.0, 2.0];
 const FORCE_CLOSE_HOURS = [8, 12, 16];
@@ -162,9 +162,6 @@ const ALL_PAIRS = Array.from(
     "GBPJPY",
     "GBPAUD",
     "EURCAD",
-    "XTIUSD",
-    "BTCUSD.Daily",
-    "ETHUSD.Daily"
   ];
   const indexA = priority.indexOf(a);
   const indexB = priority.indexOf(b);
@@ -273,16 +270,11 @@ if (isMainThread && process.argv[1] && (process.argv[1] === currentFile || path.
     }
     console.log(`[WORKER] CSV dates determined: ${endDate}`);
 
-    const isCrypto = symbol.includes("BTC") || symbol.includes("ETH");
-    console.log(`[WORKER] Config loaded for ${symbol}. isCrypto: ${isCrypto}`);
     const isIndex =
       symbol.includes("US30") ||
       symbol.includes("GER40") ||
-      symbol.includes("XTIUSD") ||
       symbol.includes(".Daily") ||
-      symbol.includes("SPX500") ||
-      symbol.includes("NAS100") ||
-      symbol.includes("JPN225");
+      symbol.includes("NAS100");
     const isForex = PairConfigManager.isForex(symbol);
 
     let minSlGrid = BASE_MIN_SL_VALS;
@@ -300,7 +292,7 @@ if (isMainThread && process.argv[1] && (process.argv[1] === currentFile || path.
     const MAJORS = ["GBPUSD", "EURUSD"];
     const SLOW_FOREX = ["USDCAD", "USDCHF", "USDJPY"];
     const PACIFIC_PAIRS = ["AUDUSD", "NZDUSD"];
-    const VOLATILE_CROSSES = ["GBPAUD", "GBPNZD", "GBPJPY", "CADJPY", "CHFJPY", "EURCAD", "GBPCAD", "EURNZD", "EURJPY", "AUDJPY"];
+    const VOLATILE_CROSSES = ["GBPAUD", "GBPJPY", "CADJPY", "CHFJPY", "EURCAD", "GBPCAD", "EURJPY", "AUDJPY"];
 
     if (MAJORS.includes(symbol)) {
       minSlGrid = [5, 7, 10, 15, 20];
@@ -321,23 +313,11 @@ if (isMainThread && process.argv[1] && (process.argv[1] === currentFile || path.
       actionMinutesGrid = [10, 15, 30, 60];
       trailingTriggersGrid = [0.5, 1.0, 1.5, 2.0];
     } else if (VOLATILE_CROSSES.includes(symbol)) {
-      minSlGrid = [20, 30, 40, 50, 60, 70, 80];
+      minSlGrid = symbol === "AUDJPY" ? [30, 40, 50, 60, 70, 80] : [20, 30, 40, 50, 60, 70, 80];
       maxSlGrid = [40, 60, 80, 100];
       sweepGrid = [3, 5, 10, 20, 30, 50];
       actionMinutesGrid = [15, 30, 60];
       trailingTriggersGrid = [0.5, 1.0, 1.5, 2.0];
-    } else if (symbol.includes("BTC")) {
-      minSlGrid = [20, 30, 60, 100];
-      maxSlGrid = [150, 300, 500];
-      sweepGrid = [5, 10, 20, 50];
-      trailingTriggersGrid = [0.5, 1.0, 1.5, 2.0];
-      trailingStepsGrid = [0.5, 1.0, 2.0];
-    } else if (symbol.includes("ETH")) {
-      minSlGrid = [20, 30, 50, 80];
-      maxSlGrid = [100, 200, 300];
-      sweepGrid = [5, 10, 20, 50];
-      trailingTriggersGrid = [0.5, 1.0, 1.5, 2.0];
-      trailingStepsGrid = [0.5, 1.0, 2.0];
     } else if (
       symbol.includes("US30") ||
       symbol.includes("GER40") ||
@@ -347,21 +327,7 @@ if (isMainThread && process.argv[1] && (process.argv[1] === currentFile || path.
       maxSlGrid = [80, 150, 200, 300];
       sweepGrid = [5, 10, 20, 30, 50];
       actionMinutesGrid = [5, 10, 15, 30, 60];
-    } else if (symbol.includes("SPX")) {
-      minSlGrid = [5, 10, 20, 30];
-      maxSlGrid = [40, 80, 120, 200];
-      sweepGrid = [10, 20, 30, 50];
-      actionMinutesGrid = [5, 10, 15, 30, 60, 90];
-      entryPenetrationsGrid = [0, 20];
-      trailingTriggersGrid = [0.5, 1.0, 1.5, 2.0];
-    } else if (symbol.includes("JPN")) {
-      minSlGrid = [30, 50, 80, 120];
-      maxSlGrid = [100, 150, 200, 250];
-      sweepGrid = [10, 20, 30, 50];
-      actionMinutesGrid = [5, 10, 15, 30, 60];
-      entryPenetrationsGrid = [0, 20];
-      trailingTriggersGrid = [0.5, 1.0, 1.5, 2.0];
-    } else if (symbol.includes("XAU") || symbol.includes("XTI")) {
+    } else if (symbol.includes("XAU")) {
       minSlGrid = [10, 15, 30, 40];
       maxSlGrid = [40, 80, 120, 160, 200, 250];
       sweepGrid = [3, 5, 7, 10, 20, 30, 50];
@@ -372,24 +338,15 @@ if (isMainThread && process.argv[1] && (process.argv[1] === currentFile || path.
     let maxBodyGrid = [3, 8, undefined]; // Default Forex
     if (VOLATILE_CROSSES.includes(symbol)) {
       maxBodyGrid = [5, 15, 25, undefined]; // GBP crosses can have large sweep wicks that DO reverse — added 25
-    } else if (symbol.includes("BTC")) {
-      maxBodyGrid = [9, 20, undefined];
-    } else if (symbol.includes("ETH")) {
-      maxBodyGrid = [8, 19, undefined];
     } else if (symbol.includes("US30") || symbol.includes("GER40")) {
       maxBodyGrid = [12, 22, undefined];
     } else if (symbol.includes("NAS100")) {
       maxBodyGrid = [6, 15, undefined];
-    } else if (symbol.includes("SPX500")) {
-      maxBodyGrid = [4, 8, 12, undefined];
-    } else if (symbol.includes("JPN225")) {
-      maxBodyGrid = [10, 20, undefined];
     } else if (symbol.includes("XAU")) {
       maxBodyGrid = [50, 125, undefined];
     } else if (
       symbol.includes("GBPAUD") ||
-      symbol.includes("EURAUD") ||
-      symbol.includes("EURNZD")
+      symbol.includes("EURAUD")
     ) {
       maxBodyGrid = [5, 10, undefined];
     } else if (symbol.includes("GBPJPY")) {
@@ -452,7 +409,7 @@ if (isMainThread && process.argv[1] && (process.argv[1] === currentFile || path.
     }
 
     // Session overrides for NZD and AUD crosses (add early Asia Sydney/Wellington open)
-    if (symbol === "EURNZD" || symbol === "GBPNZD" || symbol === "EURAUD" || symbol === "GBPAUD" || symbol === "NZDUSD" || symbol === "AUDUSD") {
+    if (symbol === "EURAUD" || symbol === "GBPAUD" || symbol === "NZDUSD" || symbol === "AUDUSD") {
       startTimesMap.asia = [
         ...startTimesMap.asia,
         { h: 22, m: 0 },
@@ -564,19 +521,17 @@ if (isMainThread && process.argv[1] && (process.argv[1] === currentFile || path.
 
     for (const session of sessions) {
       const isAsiaSession = session === "asia";
-      const isCrypto = symbol.includes("BTC") || symbol.includes("ETH");
-      const isIndex = ["US30", "NAS100", "SPX500", "GER40", "UK100", "JPN225"].some(idx => symbol.includes(idx));
+      const isIndex = ["US30", "NAS100", "GER40"].some(idx => symbol.includes(idx));
       const isJpyCross = symbol.includes("JPY");
 
       let useHtfSar = true;
-      if (isCrypto) useHtfSar = false;
       if (isIndex && isAsiaSession) useHtfSar = false;
       if (isJpyCross && !symbol.includes("GBP")) useHtfSar = false; // CHFJPY false, GBPJPY true
       if (symbol === "NZDUSD") useHtfSar = false;
 
       let reqCloseHalf = false;
       if (isIndex && !isAsiaSession) reqCloseHalf = true;
-      if (symbol === "USDCAD" || symbol === "GBPJPY" || symbol === "BTCUSD") reqCloseHalf = true;
+      if (["USDCAD", "GBPJPY", "USDCHF", "AUDJPY"].includes(symbol)) reqCloseHalf = true;
 
       const wbr = (symbol.includes("EURUSD") || (symbol.includes("CHFJPY") && !isAsiaSession)) ? 1.75 : 1.5;
 

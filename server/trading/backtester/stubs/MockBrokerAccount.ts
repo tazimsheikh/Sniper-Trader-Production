@@ -25,6 +25,8 @@ export interface SimPosition {
   orLow?: number;
   limitPlacedAt?: number;
   trailLog?: { time: number; sl: number }[];
+  riskWeight?: number;
+  intendedRiskPips?: number;
 }
 
 export interface PendingLimitOrder {
@@ -37,15 +39,13 @@ export interface PendingLimitOrder {
   tp: number;
   volume: number;
   placedAt: number;
-  // clientId (sig) stored for Sage stop orders so checkPendingOrderFills
-  // can populate state.activeTrades[] directly at fill time, bypassing the
-  // checkSageLimitFill poller which breaks when ss.limitOrderId is  botId?: string;
   clientId?: string;
   orHigh?: number;
   orLow?: number;
   limitPlacedAt?: number;
   magic?: number;
   botId?: string;
+  riskWeight?: number;
 }
 
 export interface TradeRecord {
@@ -67,6 +67,7 @@ export interface TradeRecord {
   orLow?: number;
   limitPlacedAt?: number;
   trailLog?: { time: number; sl: number }[];
+  riskWeight?: number;
 }
 
 export class MockBrokerAccount {
@@ -145,7 +146,7 @@ export class MockBrokerAccount {
     
     const parts = clientId.split('_');
     for (const part of parts) {
-      if (part === "P0" || part === "Psimulator" || (part.startsWith("P") && part.length <= 4) || part === "S" || part === "M" || part === "SRC" || part === "SAGE" || part === "MAGE" || part === "SEER") continue;
+      if (part === "P0" || part === "Psimulator" || (part.startsWith("P") && part.length <= 4) || part === "S" || part === "M" || part === "SRC" || part === "SAGE" || part === "MAGE" || part === "SEER" || part === "T1" || part === "T2") continue;
       for (const key of Object.keys(orchestratorState.orbStates)) {
         if (getShortHash(key) === part || key.includes(part)) {
           return key;
@@ -208,7 +209,7 @@ export class MockBrokerAccount {
   async createLimitBuyOrder(symbol: string, lots: number, price: number, sl: number, tp: number, opts?: any) {
     const id = `SIM_${this.orderId++}`;
     
-    this.pendingOrders.set(id, { id, symbol, direction: 'BUY', orderType: 'LIMIT', limitPrice: price, sl, tp, volume: lots, placedAt: this.currentCandle?.timestamp || 0, clientId: opts?.clientId, botId: this.deduceBotId(opts), magic: opts?.magic, orHigh: opts?.orHigh, orLow: opts?.orLow });
+    this.pendingOrders.set(id, { id, symbol, direction: 'BUY', orderType: 'LIMIT', limitPrice: price, sl, tp, volume: lots, placedAt: this.currentCandle?.timestamp || 0, clientId: opts?.clientId, botId: this.deduceBotId(opts), magic: opts?.magic, orHigh: opts?.orHigh, orLow: opts?.orLow, riskWeight: opts?.riskWeight });
     const orchState = this.getOrchState(opts);
     if (orchState) this.checkPendingOrderFills(orchState, id);
     return { orderId: id };
@@ -216,7 +217,7 @@ export class MockBrokerAccount {
 
   async createLimitSellOrder(symbol: string, lots: number, price: number, sl: number, tp: number, opts?: any) {
     const id = `SIM_${this.orderId++}`;
-    this.pendingOrders.set(id, { id, symbol, direction: 'SELL', orderType: 'LIMIT', limitPrice: price, sl, tp, volume: lots, placedAt: this.currentCandle?.timestamp || 0, clientId: opts?.clientId, botId: this.deduceBotId(opts), magic: opts?.magic, orHigh: opts?.orHigh, orLow: opts?.orLow });
+    this.pendingOrders.set(id, { id, symbol, direction: 'SELL', orderType: 'LIMIT', limitPrice: price, sl, tp, volume: lots, placedAt: this.currentCandle?.timestamp || 0, clientId: opts?.clientId, botId: this.deduceBotId(opts), magic: opts?.magic, orHigh: opts?.orHigh, orLow: opts?.orLow, riskWeight: opts?.riskWeight });
     const orchState = this.getOrchState(opts);
     if (orchState) this.checkPendingOrderFills(orchState, id);
     return { orderId: id };
@@ -255,9 +256,9 @@ export class MockBrokerAccount {
     let price = opts?.entryPrice !== undefined ? opts.entryPrice : ((this.currentCandle?.open || 0) + this.spreadPts);
     const c = this.currentCandle;
     const botId = this.deduceBotId(opts);
-    const intendedEntry = opts?.limitPrice !== undefined ? opts.limitPrice : price;
+    const intendedEntry = opts?.intendedEntryPrice !== undefined ? opts.intendedEntryPrice : (opts?.limitPrice !== undefined ? opts.limitPrice : price);
 
-    this.positions.set(id, { id, symbol, type: 'POSITION_TYPE_BUY', openPrice: price, intendedEntryPrice: intendedEntry, sl, originalSl: sl, tp, volume: lots, time: this.simulatedTime.toISOString(), botId, clientId: opts?.clientId, magic: opts?.magic, orHigh: opts?.orHigh, orLow: opts?.orLow, trailLog: (global as any).__SIM_ENABLE_TRACE__ ? [] : undefined });
+    this.positions.set(id, { id, symbol, type: 'POSITION_TYPE_BUY', openPrice: price, intendedEntryPrice: intendedEntry, sl, originalSl: sl, tp, volume: lots, time: this.simulatedTime.toISOString(), botId, clientId: opts?.clientId, magic: opts?.magic, orHigh: opts?.orHigh, orLow: opts?.orLow, trailLog: (global as any).__SIM_ENABLE_TRACE__ ? [] : undefined, riskWeight: opts?.riskWeight, intendedRiskPips: opts?.intendedRiskPips });
     const orchState = (global as any).__SIM_ORCH_STATE__ || (opts?.orchState);
     if (orchState) {
       if (!orchState.activeTrades) orchState.activeTrades = [];
@@ -272,29 +273,36 @@ export class MockBrokerAccount {
         symbol,
         direction: 'BUY',
         entryPrice: price,
+        realFillPrice: price,
         intendedEntryPrice: intendedEntry,
         slPrice: sl,
         originalSl: sl,
         tpPrice: tp,
-        riskPips: Math.abs(price - sl) / (this.pipSize || 0.0001),
+        riskPips: opts?.intendedRiskPips || (Math.abs(price - sl) / (this.pipSize || 0.0001)),
         openTime: this.currentCandle?.timestamp || Date.now(),
         timestamp: this.currentCandle?.timestamp || Date.now(),
+        isPyramidChild: opts?.isPyramidChild,
+        hasPyramided: opts?.hasPyramided,
+        riskWeight: opts?.riskWeight
       });
       }
     }
 
-    if (c) {
-      const fillRiskPips = Math.abs((intendedEntry || price) - sl) / this.pipSize;
+    if (c && !opts?.isPyramidChild) {
+      const fillRiskPips = (opts?.intendedRiskPips !== undefined && opts.intendedRiskPips > 0)
+        ? opts.intendedRiskPips
+        : (Math.abs((intendedEntry || price) - sl) / this.pipSize);
       if (c.low <= sl) {
         const exitPrice = Math.min(c.open, sl);
-        const rMultiple = fillRiskPips > 0 ? (exitPrice - price) / this.pipSize / fillRiskPips : -1;
+        const rMultiple = (fillRiskPips > 0 ? (exitPrice - price) / this.pipSize / fillRiskPips : -1) * (opts?.riskWeight ?? 1.0);
         this.tradeLog.push({
           symbol: this.symbol, direction: 'BUY', entryPrice: price,
           exitPrice, slPrice: sl, originalSl: sl, tpPrice: tp, outcome: 'SL',
           rMultiple, openTime: c.timestamp, closeTime: c.timestamp,
           botId, clientId: opts?.clientId, magic: opts?.magic,
           orHigh: opts?.orHigh, orLow: opts?.orLow, limitPlacedAt: c.timestamp,
-          trailLog: (global as any).__SIM_ENABLE_TRACE__ ? [] : undefined
+          trailLog: (global as any).__SIM_ENABLE_TRACE__ ? [] : undefined,
+          riskWeight: opts?.riskWeight
         });
         this.positions.delete(id);
         const orch = (global as any).__SIM_ORCH__;
@@ -308,14 +316,15 @@ export class MockBrokerAccount {
           }
         }
       } else if (c.high >= tp) {
-        const rMultiple = fillRiskPips > 0 ? (tp - price) / this.pipSize / fillRiskPips : 0;
+        const rMultiple = (fillRiskPips > 0 ? (tp - price) / this.pipSize / fillRiskPips : 0) * (opts?.riskWeight ?? 1.0);
         this.tradeLog.push({
           symbol: this.symbol, direction: 'BUY', entryPrice: price,
           exitPrice: tp, slPrice: sl, originalSl: sl, tpPrice: tp, outcome: 'TP',
           rMultiple, openTime: c.timestamp, closeTime: c.timestamp,
           botId, clientId: opts?.clientId, magic: opts?.magic,
           orHigh: opts?.orHigh, orLow: opts?.orLow, limitPlacedAt: c.timestamp,
-          trailLog: (global as any).__SIM_ENABLE_TRACE__ ? [] : undefined
+          trailLog: (global as any).__SIM_ENABLE_TRACE__ ? [] : undefined,
+          riskWeight: opts?.riskWeight
         });
         this.positions.delete(id);
         const orch = (global as any).__SIM_ORCH__;
@@ -339,9 +348,9 @@ export class MockBrokerAccount {
     let price = opts?.entryPrice !== undefined ? opts.entryPrice : (this.currentCandle?.open || 0);
     const c = this.currentCandle;
     const botId = this.deduceBotId(opts);
-    const intendedEntry = opts?.limitPrice !== undefined ? opts.limitPrice : price;
+    const intendedEntry = opts?.intendedEntryPrice !== undefined ? opts.intendedEntryPrice : (opts?.limitPrice !== undefined ? opts.limitPrice : price);
 
-    this.positions.set(id, { id, symbol, type: 'POSITION_TYPE_SELL', openPrice: price, intendedEntryPrice: intendedEntry, sl, originalSl: sl, tp, volume: lots, time: this.simulatedTime.toISOString(), botId, clientId: opts?.clientId, magic: opts?.magic, orHigh: opts?.orHigh, orLow: opts?.orLow, trailLog: (global as any).__SIM_ENABLE_TRACE__ ? [] : undefined });
+    this.positions.set(id, { id, symbol, type: 'POSITION_TYPE_SELL', openPrice: price, intendedEntryPrice: intendedEntry, sl, originalSl: sl, tp, volume: lots, time: this.simulatedTime.toISOString(), botId, clientId: opts?.clientId, magic: opts?.magic, orHigh: opts?.orHigh, orLow: opts?.orLow, trailLog: (global as any).__SIM_ENABLE_TRACE__ ? [] : undefined, riskWeight: opts?.riskWeight, intendedRiskPips: opts?.intendedRiskPips });
     const orchState = (global as any).__SIM_ORCH_STATE__ || (opts?.orchState);
     if (orchState) {
       if (!orchState.activeTrades) orchState.activeTrades = [];
@@ -356,29 +365,36 @@ export class MockBrokerAccount {
           symbol,
           direction: 'SELL',
           entryPrice: price,
+          realFillPrice: price,
           intendedEntryPrice: intendedEntry,
           slPrice: sl,
           originalSl: sl,
           tpPrice: tp,
-          riskPips: Math.abs(price - sl) / (this.pipSize || 0.0001),
+          riskPips: opts?.intendedRiskPips || (Math.abs(price - sl) / (this.pipSize || 0.0001)),
           openTime: this.currentCandle?.timestamp || Date.now(),
           timestamp: this.currentCandle?.timestamp || Date.now(),
+          isPyramidChild: opts?.isPyramidChild,
+          hasPyramided: opts?.hasPyramided,
+          riskWeight: opts?.riskWeight
         });
       }
     }
 
-    if (c) {
-      const fillRiskPips = Math.abs((intendedEntry || price) - sl) / this.pipSize;
+    if (c && !opts?.isPyramidChild) {
+      const fillRiskPips = (opts?.intendedRiskPips !== undefined && opts.intendedRiskPips > 0)
+        ? opts.intendedRiskPips
+        : (Math.abs((intendedEntry || price) - sl) / this.pipSize);
       if (c.high + this.spreadPts >= sl) {
         const exitPrice = Math.max(c.open + this.spreadPts, sl);
-        const rMultiple = fillRiskPips > 0 ? (price - exitPrice) / this.pipSize / fillRiskPips : -1;
+        const rMultiple = (fillRiskPips > 0 ? (price - exitPrice) / this.pipSize / fillRiskPips : -1) * (opts?.riskWeight ?? 1.0);
         this.tradeLog.push({
           symbol: this.symbol, direction: 'SELL', entryPrice: price,
           exitPrice, slPrice: sl, originalSl: sl, tpPrice: tp, outcome: 'SL',
           rMultiple, openTime: c.timestamp, closeTime: c.timestamp,
           botId, clientId: opts?.clientId, magic: opts?.magic,
           orHigh: opts?.orHigh, orLow: opts?.orLow, limitPlacedAt: c.timestamp,
-          trailLog: (global as any).__SIM_ENABLE_TRACE__ ? [] : undefined
+          trailLog: (global as any).__SIM_ENABLE_TRACE__ ? [] : undefined,
+          riskWeight: opts?.riskWeight
         });
         this.positions.delete(id);
         const orch = (global as any).__SIM_ORCH__;
@@ -392,14 +408,15 @@ export class MockBrokerAccount {
           }
         }
       } else if (c.low + this.spreadPts <= tp) {
-        const rMultiple = fillRiskPips > 0 ? (price - tp) / this.pipSize / fillRiskPips : 0;
+        const rMultiple = (fillRiskPips > 0 ? (price - tp) / this.pipSize / fillRiskPips : 0) * (opts?.riskWeight ?? 1.0);
         this.tradeLog.push({
           symbol: this.symbol, direction: 'SELL', entryPrice: price,
           exitPrice: tp, slPrice: sl, originalSl: sl, tpPrice: tp, outcome: 'TP',
           rMultiple, openTime: c.timestamp, closeTime: c.timestamp,
           botId, clientId: opts?.clientId, magic: opts?.magic,
           orHigh: opts?.orHigh, orLow: opts?.orLow, limitPlacedAt: c.timestamp,
-          trailLog: (global as any).__SIM_ENABLE_TRACE__ ? [] : undefined
+          trailLog: (global as any).__SIM_ENABLE_TRACE__ ? [] : undefined,
+          riskWeight: opts?.riskWeight
         });
         this.positions.delete(id);
         const orch = (global as any).__SIM_ORCH__;
@@ -605,7 +622,8 @@ export class MockBrokerAccount {
           originalLimitPrice: originalLimitPrice,
           orLow: order.orLow,
           limitPlacedAt: order.placedAt,
-          trailLog: (global as any).__SIM_ENABLE_TRACE__ ? [] : undefined
+          trailLog: (global as any).__SIM_ENABLE_TRACE__ ? [] : undefined,
+          riskWeight: order.riskWeight
         };
         this.positions.set(orderId, pos);
         this.pendingOrders.delete(orderId);
@@ -638,6 +656,7 @@ export class MockBrokerAccount {
                 symbol: this.symbol,
                 direction: isBuy ? 'BUY' : 'SELL',
                 entryPrice: pos.openPrice,
+                realFillPrice: pos.openPrice,
                 intendedEntryPrice: originalLimitPrice || pos.intendedEntryPrice || pos.openPrice,
                 slPrice: pos.sl,
                 originalSl: pos.originalSl || pos.sl,
@@ -697,51 +716,55 @@ export class MockBrokerAccount {
 
           if (isBuy && c.low <= fillSl) {
             const exitPrice = Math.min(c.open, fillSl);
-            const rMultiple = fillRiskPips > 0 ? (exitPrice - fillEntryPrice) / this.pipSize / fillRiskPips : -1;
+            const rMultiple = (fillRiskPips > 0 ? (exitPrice - fillEntryPrice) / this.pipSize / fillRiskPips : -1) * (pos.riskWeight ?? 1.0);
             this.tradeLog.push({
               symbol: this.symbol, direction: 'BUY', entryPrice: fillEntryPrice,
               exitPrice, slPrice: fillSl, originalSl: pos.originalSl || fillSl, tpPrice: fillTp, outcome: 'SL',
               rMultiple, openTime: c.timestamp, closeTime: c.timestamp,
               botId: pos.botId, clientId: pos.clientId, magic: pos.magic,
-              orHigh: pos.orHigh, orLow: pos.orLow, limitPlacedAt: order.placedAt, trailLog: pos.trailLog
+              orHigh: pos.orHigh, orLow: pos.orLow, limitPlacedAt: order.placedAt, trailLog: pos.trailLog,
+              riskWeight: pos.riskWeight
             });
             this.positions.delete(orderId);
             targetState.activeTrades = (targetState.activeTrades || []).filter((t: any) => String(t.metaOrderId) !== String(orderId));
             sameCandleExit = true;
           } else if (!isBuy && c.high + this.spreadPts >= fillSl) {
             const exitPrice = Math.max(c.open + this.spreadPts, fillSl);
-            const rMultiple = fillRiskPips > 0 ? (fillEntryPrice - exitPrice) / this.pipSize / fillRiskPips : -1;
+            const rMultiple = (fillRiskPips > 0 ? (fillEntryPrice - exitPrice) / this.pipSize / fillRiskPips : -1) * (pos.riskWeight ?? 1.0);
             this.tradeLog.push({
               symbol: this.symbol, direction: 'SELL', entryPrice: fillEntryPrice,
               exitPrice, slPrice: fillSl, originalSl: pos.originalSl || fillSl, tpPrice: fillTp, outcome: 'SL',
               rMultiple, openTime: c.timestamp, closeTime: c.timestamp,
               botId: pos.botId, clientId: pos.clientId, magic: pos.magic,
-              orHigh: pos.orHigh, orLow: pos.orLow, limitPlacedAt: order.placedAt, trailLog: pos.trailLog
+              orHigh: pos.orHigh, orLow: pos.orLow, limitPlacedAt: order.placedAt, trailLog: pos.trailLog,
+              riskWeight: pos.riskWeight
             });
             this.positions.delete(orderId);
             targetState.activeTrades = (targetState.activeTrades || []).filter((t: any) => String(t.metaOrderId) !== String(orderId));
             sameCandleExit = true;
           } else if (isBuy && c.high >= fillTp) {
-            const rMultiple = fillRiskPips > 0 ? (fillTp - fillEntryPrice) / this.pipSize / fillRiskPips : 0;
+            const rMultiple = (fillRiskPips > 0 ? (fillTp - fillEntryPrice) / this.pipSize / fillRiskPips : 0) * (pos.riskWeight ?? 1.0);
             this.tradeLog.push({
               symbol: this.symbol, direction: 'BUY', entryPrice: fillEntryPrice,
               exitPrice: fillTp, slPrice: fillSl, originalSl: pos.originalSl || fillSl, tpPrice: fillTp, outcome: 'TP',
               rMultiple, openTime: c.timestamp, closeTime: c.timestamp,
               botId: pos.botId, clientId: pos.clientId, magic: pos.magic,
-              orHigh: pos.orHigh, orLow: pos.orLow, limitPlacedAt: order.placedAt, trailLog: pos.trailLog
+              orHigh: pos.orHigh, orLow: pos.orLow, limitPlacedAt: order.placedAt, trailLog: pos.trailLog,
+              riskWeight: pos.riskWeight
             });
             this.positions.delete(orderId);
             targetState.activeTrades = (targetState.activeTrades || []).filter((t: any) => String(t.metaOrderId) !== String(orderId));
             sameCandleExit = true;
           } else if (!isBuy && c.low + this.spreadPts <= fillTp) {
             
-            const rMultiple = fillRiskPips > 0 ? (fillEntryPrice - fillTp) / this.pipSize / fillRiskPips : 0;
+            const rMultiple = (fillRiskPips > 0 ? (fillEntryPrice - fillTp) / this.pipSize / fillRiskPips : 0) * (pos.riskWeight ?? 1.0);
             this.tradeLog.push({
               symbol: this.symbol, direction: 'SELL', entryPrice: fillEntryPrice,
               exitPrice: fillTp, slPrice: fillSl, originalSl: pos.originalSl || fillSl, tpPrice: fillTp, outcome: 'TP',
               rMultiple, openTime: c.timestamp, closeTime: c.timestamp,
               botId: pos.botId, clientId: pos.clientId, magic: pos.magic,
-              orHigh: pos.orHigh, orLow: pos.orLow, limitPlacedAt: order.placedAt, trailLog: pos.trailLog
+              orHigh: pos.orHigh, orLow: pos.orLow, limitPlacedAt: order.placedAt, trailLog: pos.trailLog,
+              riskWeight: pos.riskWeight
             });
             this.positions.delete(orderId);
             targetState.activeTrades = (targetState.activeTrades || []).filter((t: any) => String(t.metaOrderId) !== String(orderId));
@@ -767,21 +790,25 @@ export class MockBrokerAccount {
     // Iterate over broker positions directly so no position is ever orphaned or unmanaged
     for (const pos of Array.from(this.positions.values())) {
       const isBuy = pos.type === 'POSITION_TYPE_BUY';
-      const actualRiskPips = (pos as any).intendedRiskPips || (Math.abs(pos.openPrice - (pos.originalSl || pos.sl)) / this.pipSize);
+      const actualRiskPips = (pos.botId === 'SAGE' ? undefined : (pos as any).intendedRiskPips) || (Math.abs(pos.openPrice - (pos.originalSl || pos.sl)) / this.pipSize);
       const effectiveRiskPips = actualRiskPips > 0 ? actualRiskPips : 1;
 
       if (isBuy && c.low <= pos.sl) {
         const exitPrice = (c.open < pos.sl) ? c.open : pos.sl;
         let rMultiple = ((exitPrice - pos.openPrice) / this.pipSize) / effectiveRiskPips;
         if ((pos as any).hasTakenPartial) {
-          rMultiple = (1.5 * 0.5) + (rMultiple * 0.5);
+          const partR = (pos as any).partialR ?? 1.5;
+          const bPct = (pos as any).bankPct ?? 0.5;
+          rMultiple = (partR * bPct) + (rMultiple * (1.0 - bPct));
         }
+        rMultiple = rMultiple * (pos.riskWeight ?? 1.0);
         this.tradeLog.push({
           symbol: this.symbol, direction: 'BUY', entryPrice: pos.openPrice,
           exitPrice: exitPrice, slPrice: pos.sl, originalSl: pos.originalSl || pos.sl, tpPrice: pos.tp, outcome: 'SL',
           rMultiple, openTime: new Date(pos.time).getTime(), closeTime: c.timestamp,
           botId: pos.botId, clientId: pos.clientId, magic: pos.magic,
-          orHigh: pos.orHigh, orLow: pos.orLow, limitPlacedAt: pos.limitPlacedAt, trailLog: pos.trailLog
+          orHigh: pos.orHigh, orLow: pos.orLow, limitPlacedAt: pos.limitPlacedAt, trailLog: pos.trailLog,
+          riskWeight: pos.riskWeight
         });
         this.positions.delete(pos.id);
         const orch = (global as any).__SIM_ORCH__;
@@ -804,14 +831,18 @@ export class MockBrokerAccount {
         const exitPrice = (c.open + this.spreadPts > pos.sl) ? (c.open + this.spreadPts) : pos.sl;
         let rMultiple = ((pos.openPrice - exitPrice) / this.pipSize) / effectiveRiskPips;
         if ((pos as any).hasTakenPartial) {
-          rMultiple = (1.5 * 0.5) + (rMultiple * 0.5);
+          const partR = (pos as any).partialR ?? 1.5;
+          const bPct = (pos as any).bankPct ?? 0.5;
+          rMultiple = (partR * bPct) + (rMultiple * (1.0 - bPct));
         }
+        rMultiple = rMultiple * (pos.riskWeight ?? 1.0);
         this.tradeLog.push({
           symbol: this.symbol, direction: 'SELL', entryPrice: pos.openPrice,
           exitPrice: exitPrice, slPrice: pos.sl, originalSl: pos.originalSl || pos.sl, tpPrice: pos.tp, outcome: 'SL',
           rMultiple, openTime: new Date(pos.time).getTime(), closeTime: c.timestamp,
           botId: pos.botId, clientId: pos.clientId, magic: pos.magic,
-          orHigh: pos.orHigh, orLow: pos.orLow, limitPlacedAt: pos.limitPlacedAt, trailLog: pos.trailLog
+          orHigh: pos.orHigh, orLow: pos.orLow, limitPlacedAt: pos.limitPlacedAt, trailLog: pos.trailLog,
+          riskWeight: pos.riskWeight
         });
         this.positions.delete(pos.id);
         const orch = (global as any).__SIM_ORCH__;
@@ -833,14 +864,18 @@ export class MockBrokerAccount {
       } else if (pos.tp && isBuy && c.high >= pos.tp) {
         let rMultiple = (pos.tp - pos.openPrice) / this.pipSize / effectiveRiskPips;
         if ((pos as any).hasTakenPartial) {
-          rMultiple = (1.5 * 0.5) + (rMultiple * 0.5);
+          const partR = (pos as any).partialR ?? 1.5;
+          const bPct = (pos as any).bankPct ?? 0.5;
+          rMultiple = (partR * bPct) + (rMultiple * (1.0 - bPct));
         }
+        rMultiple = rMultiple * (pos.riskWeight ?? 1.0);
         this.tradeLog.push({
           symbol: this.symbol, direction: 'BUY', entryPrice: pos.openPrice,
           exitPrice: pos.tp, slPrice: pos.sl, originalSl: pos.originalSl || pos.sl, tpPrice: pos.tp, outcome: 'TP',
           rMultiple, openTime: new Date(pos.time).getTime(), closeTime: c.timestamp,
           botId: pos.botId, clientId: pos.clientId, magic: pos.magic,
-          orHigh: pos.orHigh, orLow: pos.orLow, limitPlacedAt: pos.limitPlacedAt, trailLog: pos.trailLog
+          orHigh: pos.orHigh, orLow: pos.orLow, limitPlacedAt: pos.limitPlacedAt, trailLog: pos.trailLog,
+          riskWeight: pos.riskWeight
         });
         this.positions.delete(pos.id);
         const orch = (global as any).__SIM_ORCH__;
@@ -862,14 +897,17 @@ export class MockBrokerAccount {
       } else if (pos.tp && !isBuy && c.low + this.spreadPts <= pos.tp) {
         let rMultiple = (pos.openPrice - pos.tp) / this.pipSize / effectiveRiskPips;
         if ((pos as any).hasTakenPartial) {
-          rMultiple = (1.5 * 0.5) + (rMultiple * 0.5);
+          const partR = (pos as any).partialR ?? 1.5;
+          const bPct = (pos as any).bankPct ?? 0.5;
+          rMultiple = (partR * bPct) + (rMultiple * (1.0 - bPct));
         }
+        rMultiple = rMultiple * (pos.riskWeight ?? 1.0);
         this.tradeLog.push({
           symbol: this.symbol, direction: 'SELL', entryPrice: pos.openPrice,
           exitPrice: pos.tp, slPrice: pos.sl, originalSl: pos.originalSl || pos.sl, tpPrice: pos.tp, outcome: 'TP',
           rMultiple, openTime: new Date(pos.time).getTime(), closeTime: c.timestamp,
           botId: pos.botId, clientId: pos.clientId, magic: pos.magic,
-          orHigh: pos.orHigh, orLow: pos.orLow, limitPlacedAt: pos.limitPlacedAt, trailLog: pos.trailLog
+          orHigh: pos.orHigh, orLow: pos.orLow, limitPlacedAt: pos.limitPlacedAt, trailLog: pos.trailLog,
         });
         this.positions.delete(pos.id);
         const orch = (global as any).__SIM_ORCH__;
@@ -945,14 +983,17 @@ export class MockBrokerAccount {
     const pipSize = this.pipSize;
 
     const initialLimit = pos.originalLimitPrice || pos.openPrice;
-    const riskPips = Math.abs(initialLimit - pos.originalSl) / pipSize;
+    const riskPips = (pos as any).intendedRiskPips || (Math.abs(initialLimit - pos.originalSl) / pipSize);
     const profitPips = isBuy
       ? (exitPrice - pos.openPrice) / pipSize
       : (pos.openPrice - exitPrice) / pipSize;
     let rMultiple = riskPips > 0 ? profitPips / riskPips : 0;
     if ((pos as any).hasTakenPartial) {
-      rMultiple = (1.5 * 0.5) + (rMultiple * 0.5);
+      const partR = (pos as any).partialR ?? 1.5;
+      const bPct = (pos as any).bankPct ?? 0.5;
+      rMultiple = (partR * bPct) + (rMultiple * (1.0 - bPct));
     }
+    rMultiple = rMultiple * (pos.riskWeight ?? 1.0);
 
     const estDateProvider = (global as any).__SIM_TIME_PROVIDER__;
     const estDate = estDateProvider ? estDateProvider(new Date(c.timestamp)) : new Date(c.timestamp);
@@ -977,7 +1018,8 @@ export class MockBrokerAccount {
       orHigh: pos.orHigh,
       orLow: pos.orLow,
       limitPlacedAt: (pos as any).limitPlacedAt,
-      trailLog: pos.trailLog
+      trailLog: pos.trailLog,
+      riskWeight: pos.riskWeight
     });
 
     this.positions.delete(positionId);
@@ -1003,10 +1045,12 @@ export class MockBrokerAccount {
     }
   }
 
-  async closePositionPartially(positionId: string, volume: number, opts: any) {
+  async closePositionPartially(positionId: string, volume: number, opts?: any) {
     const pos = this.positions.get(positionId);
     if (pos) {
       (pos as any).hasTakenPartial = true;
+      if (opts?.partialR !== undefined) (pos as any).partialR = opts.partialR;
+      if (opts?.bankPct !== undefined) (pos as any).bankPct = opts.bankPct;
       pos.volume = Math.max(0.01, pos.volume - volume);
     }
     return { positionId };

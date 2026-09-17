@@ -75,8 +75,6 @@ const FOREX_PAIRS = new Set([
   "GBPCAD",
   "USDJPY",
   "AUDJPY",
-  "EURNZD",
-  "GBPNZD",
 ]);
 export function getFixedEstDate(date = new Date()) {
   if ((global as any).__SIM_TIME_PROVIDER__) {
@@ -355,8 +353,9 @@ export class LiveOrchestrator {
 
     // 1. Mage Reactive Catch-Up
     if (botType === "MAGE") {
+      const leadBaseSymbol = PairConfigManager.getBaseSymbol(symbol);
       const matchingPairs = Array.from(this.states.keys()).filter(
-        (k) => PairConfigManager.getBaseSymbol(k) === symbol,
+        (k) => PairConfigManager.getBaseSymbol(k) === leadBaseSymbol,
       );
       for (const sessionPair of matchingPairs) {
         const state = this.states.get(sessionPair);
@@ -403,8 +402,9 @@ export class LiveOrchestrator {
 
     // 2. Sage Reactive Catch-Up
     if (botType === "SAGE") {
+      const leadBaseSymbol = PairConfigManager.getBaseSymbol(symbol);
       const matchingPairs = Array.from(this.states.keys()).filter(
-        (k) => PairConfigManager.getBaseSymbol(k) === symbol,
+        (k) => PairConfigManager.getBaseSymbol(k) === leadBaseSymbol,
       );
       for (const sessionPair of matchingPairs) {
         const state = this.states.get(sessionPair);
@@ -445,6 +445,32 @@ export class LiveOrchestrator {
             await placeSageLimitOrder(this, sessionPair, state, cfg, sig, lastCandle, "sage");
           }
         }
+      }
+    }
+
+    // 3. Seer Reactive Catch-Up
+    if (botType === "SEER") {
+      const leadBaseSymbol = PairConfigManager.getBaseSymbol(symbol);
+      const matchingPairs = Array.from(this.states.keys()).filter(
+        (k) => PairConfigManager.getBaseSymbol(k) === leadBaseSymbol,
+      );
+      for (const sessionPair of matchingPairs) {
+        const state = this.states.get(sessionPair);
+        if (!state) continue;
+        const seerConfigs = PairConfigManager.getSeerConfigs(sessionPair) || [];
+        if (seerConfigs.length === 0) continue;
+        
+        if (state.activeTrades && state.activeTrades.some((t: any) => t.clientId === "SEER")) continue;
+        if (state.seerTradeTakenToday) continue;
+
+        logger.info(
+          `[SeerEngine][P#${this.profileId}] ⚡ Instant Reactive Catch-Up broadcast received for ${symbol} ${leadTrade.direction} (Lead from P#${leadTrade.leadProfileId})`
+        );
+        
+        const prevDay = state.dailyContextTracker?.getPrevDayContext() || { isFirstRedDay: true };
+        await runPreFlightFilter(this, sessionPair, state, prevDay, "CATCH_UP").catch((e: any) => 
+          logger.error(`[SeerEngine][P#${this.profileId}] Error in Seer reactive catch-up: ${e.message}`)
+        );
       }
     }
   }
@@ -1926,9 +1952,32 @@ export class LiveOrchestrator {
   handlePositionUpdate(pos) {
     if (!this.running || !this.warmedUp) return;
     const symbol = pos.symbol;
-    const matchingPairs = Array.from(this.states.keys()).filter(
-      (k) => PairConfigManager.getBaseSymbol(k) === symbol,
+    
+    let customMap: any = null;
+    try {
+      const profile = Array.from(LiveOrchestrator.instances.values()).find(o => o === this);
+      if (this.customMap) customMap = this.customMap;
+    } catch(e) {}
+    
+    const posBaseSymbol = PairConfigManager.getBaseSymbol(symbol);
+    let matchingPairs = Array.from(this.states.keys()).filter(
+      (k) => PairConfigManager.getBaseSymbol(k) === posBaseSymbol || k === symbol
     );
+    
+    // Fallback for custom mapped symbols (e.g., DX40 -> GER40)
+    if (matchingPairs.length === 0 && customMap) {
+      for (const sp of this.states.keys()) {
+        const internalBase = PairConfigManager.getBaseSymbol(sp);
+        if (customMap[internalBase] === symbol) {
+          matchingPairs.push(sp);
+        }
+      }
+    }
+    
+    if (matchingPairs.length === 0) {
+      matchingPairs = [symbol];
+    }
+
     for (const sp of matchingPairs) {
       const state = this.states.get(sp);
       if (state && state.activeTrades) {
@@ -1940,6 +1989,20 @@ export class LiveOrchestrator {
                           state.config.pair.includes("ETH") ? 1 :
                           state.config.pair.includes("JPY") ? 0.01 :
                           state.config.tickSize === 1e-4 ? 1e-4 : state.config.tickSize * 10;
+          
+          if (pos.openPrice && Math.abs(trade.entryPrice - pos.openPrice) > 1e-5) {
+            const oldEntry = trade.entryPrice;
+            trade.entryPrice = pos.openPrice;
+            trade.realFillPrice = pos.openPrice;
+            if (trade.originalSl) {
+              trade.riskPips = Math.abs(pos.openPrice - trade.originalSl) / pipSize;
+            }
+            try {
+              db.prepare("UPDATE bot_trade_states SET entry_price = ?, initial_risk_pips = ? WHERE (id = ? OR meta_order_id = ?) AND status = 'OPEN'")
+                .run(pos.openPrice, trade.riskPips, trade.dbId, String(trade.metaOrderId));
+              logger.info(`[LiveOrchestrator] 🎯 Synced real broker fill price for trade ${pos.id} on ${sp}: ${oldEntry} -> ${pos.openPrice} (Real Risk: ${trade.riskPips.toFixed(1)} pips)`);
+            } catch (e: any) {}
+          }
           
           const posSL = pos.sl !== undefined ? pos.sl : pos.stopLoss;
           const posTP = pos.tp !== undefined ? pos.tp : pos.takeProfit;

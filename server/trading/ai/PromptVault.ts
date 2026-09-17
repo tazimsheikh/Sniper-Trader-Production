@@ -19,7 +19,6 @@ const GBPJPY_RULE =
 
 export const PAIR_WIDE_OVERRIDES: Record<string, string> = {
   // ── GBP PAIRS ──────────────────────────────
-  GBPNZD: GBP_WICK_RULE,
   GBPAUD: GBP_WICK_RULE,
   GBPCAD: GBP_WICK_RULE,
   GBPUSD: GBP_WICK_RULE,
@@ -33,17 +32,6 @@ CRITICAL EURUSD BEHAVIOR: EURUSD has a well-documented dead zone. Backtest analy
 STRICT RULE 1 — SESSION FILTER: If candleTimeEST is AFTER 14:00 EST, REJECT with NO_TRADE. Valid windows: London Session (london) (london) (02:00-05:00 EST) and NY Session (NY_Forex/NY_Indices) (08:00-13:00 EST) ONLY.
 
 STRICT RULE 2 — TRAP QUALITY: EURUSD moves slowly. The mouse must be clearly trapped at the extreme with a large decisive engulf. If the setup is MARGINAL, assign NO_TRADE.`,
-
-  // ── EURNZD ─────────────────────────────────
-  // EVIDENCE: 53% of losses hit the 17-pip max SL. Losses at all hours.
-  EURNZD: `\n\n=== SURGICAL OVERRIDE FOR EURNZD ===
-CRITICAL EURNZD BEHAVIOR: EURNZD is a wide-spread, low-liquidity cross that wicks aggressively. Backtest shows 53% of losing trades hit the max 17-pip stop — violent reversals after legitimate-looking traps. Losses fired across all sessions.
-
-STRICT RULE 1 — SESSION FILTER: EURNZD setups ONLY valid during London Session (london) (london) (02:00-05:00 EST) and NY Session (NY_Forex/NY_Indices) (08:00-13:00 EST). Reject Asia or NY afternoon signals with NO_TRADE.
-
-STRICT RULE 2 — SL CAP: If Stop Loss exceeds 15 PIPS, REJECT with NO_TRADE. Wide spreads eat margin — only take tight, high-quality traps.
-
-STRICT RULE 3 — SETUP QUALITY: Look for consolidation at the extreme, not a single spike. MARGINAL setups must be rejected.`,
 
   // ── XAUUSD ─────────────────────────────────
   // EVIDENCE: We have upgraded Gold to the Asian Sweep strategy. The volatility requires a structural stop.

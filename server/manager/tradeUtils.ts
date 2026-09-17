@@ -53,9 +53,9 @@ export async function logToDiary(
 
   const existing = await db
     .prepare(
-      "SELECT id FROM trade_diary WHERE profile_id = ? AND bot_id = ? AND broker_symbol = ? AND open_time = ?",
+      "SELECT id FROM trade_diary WHERE profile_id = ? AND LOWER(bot_id) = LOWER(?) AND (broker_symbol = ? OR broker_symbol LIKE ? || '%') AND ABS(open_time - ?) <= 15000",
     )
-    .get(profileId, botId, symbol, numericOpenTime);
+    .get(profileId, botId, symbol, symbol, numericOpenTime);
 
   if (existing) {
     console.log(

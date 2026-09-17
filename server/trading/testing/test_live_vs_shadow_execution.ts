@@ -69,10 +69,11 @@ async function loadPatchedOrchestrator(): Promise<any> {
 
 async function fetchCandles(targetDateStr: string, activePairs: string[]) {
   const profile = await db.prepare(`
-    SELECT tp.id, tp.metaapi_account_id, COALESCE(tp.metaapi_token, u.metaapi_token) as metaapi_token
+    SELECT tp.id, tp.metaapi_account_id, COALESCE(tp.metaapi_token, u.metaapi_token) as metaapi_token, tp.broker_symbol_map
     FROM trading_profiles tp
     JOIN users u ON u.id = tp.user_id
-    WHERE tp.id = 42 OR tp.id = 44
+    WHERE tp.id = 44 OR tp.id = 49
+    ORDER BY tp.id ASC
     LIMIT 1
   `).get();
 
@@ -82,6 +83,11 @@ async function fetchCandles(targetDateStr: string, activePairs: string[]) {
   let accId = profile.metaapi_account_id;
   if (isEncrypted(accId)) accId = decrypt(accId);
 
+  let symbolMap: Record<string, string> = {};
+  try {
+    if (profile.broker_symbol_map) symbolMap = JSON.parse(profile.broker_symbol_map);
+  } catch (_) {}
+
   const api = new MetaApi(token);
   const account = await api.metatraderAccountApi.getAccount(accId);
 
@@ -89,17 +95,21 @@ async function fetchCandles(targetDateStr: string, activePairs: string[]) {
   const todayDir = path.join(process.cwd(), "data", "today_csv");
   if (!fs.existsSync(todayDir)) fs.mkdirSync(todayDir, { recursive: true });
 
-  console.log(`\n📥 Fetching full 24-hour M1 data for ${targetDateStr}...`);
+  console.log(`\n📥 Fetching full 24-hour M1 data for ${targetDateStr} (Profile #${profile.id})...`);
 
   for (const pair of activePairs) {
-    const brokerSymbol = pair === "GER40" ? "DAX40" : pair;
+    let brokerSymbol = symbolMap[pair] || (pair === "GER40" ? (profile.id === 49 ? "DAX40" : "GER40") : pair);
     const jsonPath = path.join(todayDir, `${pair}_${targetDateStr}.json`);
     
-    // Always refetch for today, else try cache
-    const isToday = targetDateStr === new Date().toISOString().split("T")[0];
-    if (!isToday && fs.existsSync(jsonPath)) {
-      console.log(`✅ ${pair} (${brokerSymbol}): Loaded from cache ${jsonPath}`);
-      continue;
+    // If already downloaded and has candles, reuse cache
+    if (fs.existsSync(jsonPath)) {
+      try {
+        const cached = JSON.parse(fs.readFileSync(jsonPath, "utf-8"));
+        if (Array.isArray(cached) && cached.length > 500) {
+          console.log(`✅ ${pair} (${brokerSymbol}): Loaded ${cached.length} candles from cache`);
+          continue;
+        }
+      } catch (e) {}
     }
 
     try {
@@ -146,12 +156,7 @@ async function main() {
   console.log(` Date Tested: ${targetDateStr}`);
   console.log("====================================================================================================\n");
 
-  const activePairs = ["USDJPY", "GBPJPY", "NAS100", "NZDUSD", "USDCHF", "EURJPY", "US30", "GER40", "CHFJPY", "GBPNZD"];
-
-  // 1. Fetch Candles
-  await fetchCandles(targetDateStr, activePairs);
-
-  // 2. Fetch Live Trades from REAL DB (BEFORE registering stubs!)
+  // 1. Fetch Live Trades from REAL DB (BEFORE registering stubs!)
   const targetStartMs = new Date(`${targetDateStr}T00:00:00.000Z`).getTime();
   const targetEndMs = new Date(`${targetDateStr}T23:59:59.999Z`).getTime();
 
@@ -165,12 +170,26 @@ async function main() {
   // Deduplicate live trades across multiple accounts to unique canonical trades per bot/pair
   const liveTradesMap = new Map<string, any>();
   for (const t of rawLiveTrades) {
-    const key = `${t.bot_id.toUpperCase()}_${t.broker_symbol.replace('.Daily', '')}_${t.direction.toUpperCase()}`;
+    const cleanSym = t.broker_symbol.replace('.Daily', '').replace('DAX40', 'GER40');
+    const key = `${t.bot_id.toUpperCase()}_${cleanSym}_${t.direction.toUpperCase()}`;
     if (!liveTradesMap.has(key)) {
       liveTradesMap.set(key, t);
     }
   }
   const liveTrades = Array.from(liveTradesMap.values());
+
+  const activePairsSet = new Set<string>([
+    "USDJPY", "XAUUSD", "EURUSD", "NAS100", "US30", "GER40", "NZDUSD", 
+    "USDCHF", "GBPJPY", "EURJPY", "CHFJPY", "GBPAUD", "EURCAD", "AUDJPY", "EURAUD", "GBPUSD", "USDCAD", "CADJPY"
+  ]);
+  for (const t of rawLiveTrades) {
+    const cleanSym = t.broker_symbol.replace('.Daily', '').replace('DAX40', 'GER40');
+    activePairsSet.add(cleanSym);
+  }
+  const activePairs = Array.from(activePairsSet);
+
+  // 2. Fetch Candles
+  await fetchCandles(targetDateStr, activePairs);
 
   console.log(`📦 Found ${rawLiveTrades.length} raw live account trade records (${liveTrades.length} unique canonical signals) in Live DB for ${targetDateStr}.\n`);
 
@@ -186,7 +205,7 @@ async function main() {
 
   orch.toggleBot("mage", true);
   orch.toggleBot("sage", true);
-  orch.activeBots.delete("seer");
+  orch.toggleBot("seer", true);
 
   orch.account = mockAccount;
   orch.cachedEquity = 100000;
@@ -203,7 +222,7 @@ async function main() {
       if (state) {
         state.botConfigs.set("mage", { enabled: true, risk: 10 });
         state.botConfigs.set("sage", { enabled: true, risk: 10 });
-        state.botConfigs.set("seer", { enabled: false, risk: 0 });
+        state.botConfigs.set("seer", { enabled: true, risk: 10 });
       }
     }
 

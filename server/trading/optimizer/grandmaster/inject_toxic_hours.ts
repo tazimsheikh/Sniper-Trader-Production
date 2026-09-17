@@ -12,6 +12,7 @@ import * as path from "path";
 import { PairConfigManager, SAGE_PAIR_CONFIG, MAGE_PAIR_CONFIG } from "../../config/PairConfig.js";
 import { runSageMathBacktest, clearSageBacktestCache } from "../../backtester/SageMathBacktester.js";
 import { runMathBacktest as runMageMathBacktest, clearMageBacktestCache } from "../../backtester/MageMathBacktester.js";
+import { clearCsvCache } from "../../backtester/loadCsv.js";
 import { getFixedEstDate } from "../../engine/LiveOrchestrator.js";
 
 function safeWriteFileSync(filePath: string, content: string) {
@@ -202,6 +203,7 @@ async function runDynamicToxicFilterInjection() {
       else{bans.push({pair,bot:"MAGE",index:i,bannedHours:[],bannedDays:[]});console.log(`  → [${label}] no trades — clearing`);}
       clearMageBacktestCache(pair);
     }
+    clearCsvCache();
   }
 
   // ── Write to PairConfig.ts ────────────────────────────────────────────────

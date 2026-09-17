@@ -142,7 +142,7 @@ export async function runPreFlightFilter(
   if (state.activeTrade || state.isPlacing) return;
   if (state.seerTradeTakenToday) return;
 
-  const optCfg = OPTIMIZER_CONFIG[symbol.replace(".Daily", "")];
+  const optCfg = OPTIMIZER_CONFIG[PairConfigManager.getBaseSymbol(symbol)];
   const pipSize = getDynamicPipSize(symbol);
   const ema20 = state.emaArr[state.emaArr.length - 1] ?? 0;
   const prevC = state.m5Buffer[state.m5Buffer.length - 2];
@@ -278,6 +278,7 @@ export async function runPreFlightFilter(
   if (!inWindow) return;
   if (orch.activeBots.size === 0) return;
   if (state.isEvaluating) return;
+  if (!expectedDirection) return;
 
   if (orch.apiLockouts.has(symbol) && c.timestamp < orch.apiLockouts.get(symbol))
     return;
@@ -292,12 +293,20 @@ export async function runPreFlightFilter(
   if (maxSlopePips && state.m5Buffer.length > 500) {
     const isParabolic = HTFContextTracker.isTrendParabolic(
       state.m5Buffer,
-      expectedDirection as any,
+      expectedDirection,
       maxSlopePips,
       seerConfig.pipSize,
     );
     if (isParabolic) {
       logger.verbose(`[SeerEngine] ${symbol} Rejected: HTF Trend Parabolic (maxH1EmaSlope=${maxSlopePips}) - Dir: ${expectedDirection}`);
+      return;
+    }
+  }
+  if (seerConfig.vetoCounterH1Structure && state.m5Buffer && state.m5Buffer.length >= 24) {
+    const htfData = HTFContextTracker.precomputeHTFData(state.m5Buffer);
+    const m5Idx = state.m5Buffer.length - 1;
+    if (HTFContextTracker.isCounterToH1Structure(htfData, m5Idx, expectedDirection)) {
+      logger.verbose(`[SeerEngine] ${symbol} Rejected: Counter to confirmed H1 swing structure opposing ${expectedDirection}`);
       return;
     }
   }
@@ -424,7 +433,7 @@ export async function runPreFlightFilter(
       return;
     }
     if (result.decision === "BUY" || result.decision === "SELL") {
-      const optCfg = OPTIMIZER_CONFIG[symbol.replace(".Daily", "")];
+      const optCfg = OPTIMIZER_CONFIG[PairConfigManager.getBaseSymbol(symbol)];
       const pipSize3 = getDynamicPipSize(symbol);
       const askSpread = (seerConfig.spread ?? optCfg?.spread ?? 0) * pipSize3;
       const e = result.decision === "BUY" ? c.close + askSpread : c.close;
@@ -434,15 +443,11 @@ export async function runPreFlightFilter(
         symbol.includes("US30") ||
         symbol.includes("GER40") ||
         symbol.includes("GBPJPY") ||
-        symbol.includes("GBPNZD") ||
-        symbol.includes("GBPCAD") ||
-        symbol.includes("EURNZD");
+        symbol.includes("GBPCAD");
       let minSlDist = (isVolatile ? 40 : 20) * pipSize3;
       if (seerConfig.minSlDist !== void 0)
         minSlDist = seerConfig.minSlDist * pipSize3;
       let maxPips = 40;
-      if (symbol.includes("BTC")) maxPips = 250;
-      else if (symbol.includes("ETH")) maxPips = 150;
       if (symbol.includes("XAU")) maxPips = 100;
       else if (
         symbol.includes("NAS") ||
@@ -481,12 +486,15 @@ export async function runPreFlightFilter(
       result.stopLoss = calculatedSl;
       result.takeProfit = calculatedTp;
       result.riskPips = adjustedRiskPips;
-      const profile = await db
-        .prepare(
-          "SELECT t.risk_multiplier, t.automation_active, t.ai_sniper_active, COALESCE(t.metaapi_token, u.metaapi_token) as metaapi_token, t.metaapi_account_id, t.dwcb_enabled, t.dwcb_peak_balance, t.base_risk_balance, t.broker_symbol_map, t.institutional_enabled, t.institutional_daily_start_balance, t.institutional_daily_date, t.institutional_peak_balance FROM trading_profiles t LEFT JOIN users u ON t.user_id = u.id WHERE t.id = ?",
-        )
-        .get(orch.profileId);
-      if (!profile || !profile.automation_active || profile.ai_sniper_active === 0) {
+      const profile = typeof orch.getProfileData === 'function'
+        ? await orch.getProfileData()
+        : await db
+            .prepare(
+              "SELECT t.risk_multiplier, t.automation_active, t.ai_sniper_active, COALESCE(t.metaapi_token, u.metaapi_token) as metaapi_token, t.metaapi_account_id, t.dwcb_enabled, t.dwcb_peak_balance, t.base_risk_balance, t.broker_symbol_map, t.institutional_enabled, t.institutional_daily_cap, t.institutional_peak_to_draw, t.institutional_daily_start_balance, t.institutional_daily_date, t.institutional_peak_balance FROM trading_profiles t LEFT JOIN users u ON t.user_id = u.id WHERE t.id = ?",
+            )
+            .get(orch.profileId) as any;
+      const isSeerActive = orch.activeBots.has(botId2) || profile?.ai_sniper_active === 1;
+      if (!profile || !profile.automation_active || !isSeerActive) {
         logger.info(`[DiscretionaryTrader] \u{1F52E} Skipping execution for ${symbol}: Automation/AI Sniper disabled for profile ${orch.profileId}`,);
       } else {
         let brokerSymbol = symbol;
@@ -614,6 +622,7 @@ export async function runPreFlightFilter(
             let currentInstPeak = profile.institutional_peak_balance;
             if (!currentInstPeak || effectiveBalance > currentInstPeak) {
               currentInstPeak = effectiveBalance;
+              profile.institutional_peak_balance = currentInstPeak;
               await db.prepare("UPDATE trading_profiles SET institutional_peak_balance = ? WHERE id = ?").run(currentInstPeak, orch.profileId);
             } else {
               const absDrawdown = (currentInstPeak - effectiveBalance) / currentInstPeak;
@@ -653,6 +662,8 @@ export async function runPreFlightFilter(
             if (dailyDate !== brokerTradingDayStr || !dailyStartBal) {
               dailyStartBal = effectiveBalance;
               dailyDate = brokerTradingDayStr;
+              profile.institutional_daily_start_balance = dailyStartBal;
+              profile.institutional_daily_date = dailyDate;
               await db.prepare("UPDATE trading_profiles SET institutional_daily_start_balance = ?, institutional_daily_date = ? WHERE id = ?").run(dailyStartBal, dailyDate, orch.profileId);
             } else {
               const dailyDrawdown = (dailyStartBal - effectiveBalance) / dailyStartBal;
@@ -1175,7 +1186,7 @@ export async function evaluateSeerTrailingOnTick(orch, symbol, state) {
   }
   let shouldUpdateSl = false;
   let newSl = trade.slPrice;
-  const optCfg = OPTIMIZER_CONFIG[symbol.replace(".Daily", "")];
+  const optCfg = OPTIMIZER_CONFIG[PairConfigManager.getBaseSymbol(symbol)];
     const pipSize = getDynamicPipSize(symbol);
     const askSpread = (optCfg ? optCfg.spread : 0) * pipSize;
   if (!trade.hasTakenPartial) {

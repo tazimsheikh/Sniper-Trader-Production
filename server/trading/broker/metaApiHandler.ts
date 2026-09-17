@@ -189,7 +189,6 @@ export const BROKER_SYMBOL_MAP: Record<string, string> = {
   // Legacy
   "GC=F": "XAUUSD",
   "NQ=F": "USTEC",
-  "CL=F": "XTIUSD",
   "EURUSD=X": "EURUSD",
   "GBPUSD=X": "GBPUSD",
   "USDJPY=X": "USDJPY",
@@ -200,13 +199,7 @@ export const BROKER_SYMBOL_MAP: Record<string, string> = {
   "NAS100.Daily": "NAS100",
   "GER40.Daily": "GER40",
   "US30.Daily": "US30",
-
-  "JPN225.Daily": "JPN225",
-  "BTCUSD.Daily": "BTCUSD",
-  "ETHUSD.Daily": "ETHUSD",
-  "SPX500.Daily": "SPX500",
   "DAX40": "GER40",
-  "US500": "SPX500",
 };
 
 // ── Pip specification (single source of truth — must match marketStore.ts ASSET_MAP) ──
@@ -248,7 +241,7 @@ export function getFallbackPipValue(brokerSymbol: string, referencePrice?: numbe
     .toUpperCase();
 
   // 1. Major US Indices & Equities (1 point = $1.00 per standard 1.0 contract lot)
-  // US30, NAS100, USTEC, NDX, SPX500, SP500, US500, DJ30, WS30, DOW30, BTC, ETH
+  // US30, NAS100, USTEC, NDX, DJ30, WS30, DOW30
   if (
     clean.includes("US30") ||
     clean.includes("DJ30") ||
@@ -257,12 +250,7 @@ export function getFallbackPipValue(brokerSymbol: string, referencePrice?: numbe
     clean.includes("DOW") ||
     clean.includes("NAS100") ||
     clean.includes("USTEC") ||
-    clean.includes("NDX") ||
-    clean.includes("SPX500") ||
-    clean.includes("SP500") ||
-    clean.includes("US500") ||
-    clean.includes("BTC") ||
-    clean.includes("ETH")
+    clean.includes("NDX")
   ) {
     return 1.0;
   }
@@ -280,18 +268,8 @@ export function getFallbackPipValue(brokerSymbol: string, referencePrice?: numbe
     return 1.10;
   }
 
-  // 3. Asian Indices (JPN225 / NIKKEI) -> 1 point (100 JPY) / USDJPY rate (~155) = ~$0.65 USD
-  if (clean.includes("JPN") || clean.includes("JP225") || clean.includes("NIKKEI")) {
-    return 0.65;
-  }
-
-  // 4. Commodities: Gold (XAUUSD) -> 100 oz contract. 1 pip (0.10 price units) = $10.00 USD
+  // 3. Commodities: Gold (XAUUSD) -> 100 oz contract. 1 pip (0.10 price units) = $10.00 USD
   if (clean.includes("XAU") || clean.includes("GOLD")) {
-    return 10.0;
-  }
-
-  // 5. Commodities: Crude Oil (XTIUSD / WTI / USOIL) -> 1000 bbl contract. 1 pip (0.01 price units) = $10.00 USD
-  if (clean.includes("XTI") || clean.includes("OIL") || clean.includes("USOIL") || clean.includes("WTI")) {
     return 10.0;
   }
 
@@ -325,7 +303,7 @@ export function getFallbackPipValue(brokerSymbol: string, referencePrice?: numbe
     return 7.17;
   }
 
-  // 9. Forex Pairs - NZD Quote (EURNZD, GBPNZD, AUDNZD)
+  // 9. Forex Pairs - NZD Quote (NZDUSD, AUDNZD)
   // 1 standard lot = 100,000 base. 1 pip = 0.0001 NZD = 10 NZD.
   // In USD: 10 NZD * NZDUSD (~0.60) = $6.00 USD. (Valid range: $5.50 - $7.00)
   if (clean.endsWith("NZD")) {
@@ -362,9 +340,6 @@ export function getSymbolSpec(brokerSymbol: string): { pipSize: number, pipValue
     .replace("=F", "");
 
   const INDEX_ALIASES: Record<string, string> = {
-    SP500: "SPX500",
-    US500: "SPX500",
-    SPX: "SPX500",
     US30: "US30",
     DJ30: "US30",
     WS30: "US30",
@@ -378,13 +353,9 @@ export function getSymbolSpec(brokerSymbol: string): { pipSize: number, pipValue
     DE40: "GER40",
     GER30: "GER40",
     DE30: "GER40",
-    JPN225: "JPN225",
-    JP225: "JPN225",
     UK100: "UK100",
     FTSE100: "UK100",
     GOLD: "XAUUSD",
-    USOIL: "XTIUSD",
-    WTI: "XTIUSD",
   };
 
   const canonicalSymbol = INDEX_ALIASES[cleanSymbol] || cleanSymbol.split("_")[0].split(".")[0];
@@ -468,7 +439,7 @@ export function getSymbolSpec(brokerSymbol: string): { pipSize: number, pipValue
  *
  * ALL price values sent to MetaApi (entry, SL, TP, trailing-SL modifications) MUST be
  * routed through this function. Failure to do so causes hard "Validation failed" rejections
- * from the broker for assets with strict decimal limits (BTCUSD=2dp, XAUUSD=2dp, etc.).
+ * from the broker for assets with strict decimal limits (XAUUSD=2dp, JPY pairs=3dp, etc.).
  *
  * Usage:
  *   const pEntry = roundPrice(rawEntry, brokerSymbol);
@@ -476,7 +447,7 @@ export function getSymbolSpec(brokerSymbol: string): { pipSize: number, pipValue
  *   const pTp    = roundPrice(rawTp,    brokerSymbol);
  *
  * @param price  Raw floating-point price (potentially many decimals from arithmetic)
- * @param brokerSymbol  The broker symbol string (e.g. 'BTCUSD', 'XAUUSD', 'EURUSD')
+ * @param brokerSymbol  The broker symbol string (e.g. 'XAUUSD', 'EURUSD')
  * @returns  Number rounded to the exact decimal precision the broker enforces
  */
 export function roundPrice(price: number, brokerSymbol: string): number {
@@ -999,10 +970,6 @@ const ALL_BROKER_SYMBOLS = [
   "NAS100",
   "GER40",
   "US30",
-  "US500",
-  "JPN225",
-  "BTCUSD",
-  "ETHUSD",
   "DAX40",
 ];
 
@@ -1441,7 +1408,7 @@ export async function executeTradeForProfile(
         : entryPrice - tp2Distance;
 
     // Round prices to exact broker decimal precision via canonical SYMBOL_SPECS.digits
-    // This prevents MetaApi 'Validation failed' for BTCUSD (2dp), XAUUSD (2dp), JPY pairs (3dp)
+    // This prevents MetaApi 'Validation failed' for XAUUSD (2dp), JPY pairs (3dp)
     slPrice  = roundPrice(slPrice,  brokerSymbol);
     tp1Price = roundPrice(tp1Price, brokerSymbol);
     tp2Price = roundPrice(tp2Price, brokerSymbol);
@@ -1881,8 +1848,6 @@ export async function discoverBrokerSymbols(profileId: number, token: string, ac
       { base: "GER40", pattern: /^(GER|DAX|DE)[34]0/i },
       { base: "US30", pattern: /^(US|DJ|WS|DOW)[34]0/i },
       { base: "NAS100", pattern: /^(NAS|US100|USTEC|NDX|NQ)/i },
-      { base: "SPX500", pattern: /^(US500|SP500|SPX|S&P)/i },
-      { base: "JPN225", pattern: /^(JPN|JP|NIKKEI)225/i },
     ];
     
     const newMap: Record<string, string> = {};

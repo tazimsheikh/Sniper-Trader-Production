@@ -82,6 +82,8 @@ export interface ActiveTrade {
   isTrailing?: boolean;
   volume?: number;
   hasTakenPartial?: boolean;
+  partialR?: number;
+  bankPct?: number;
   unconfirmedSwingLow?: number | null;
   unconfirmedSwingHigh?: number | null;
   lastSwingHigh?: number | null;
@@ -208,6 +210,7 @@ export interface PairConfig {
   tickSize?: number;
   risk?: number;
   spread?: number;
+  maxSpreadLimit?: number;
   actionMinutes?: number;
   minBodyPips?: number;
   maxBodyPips?: number;
@@ -246,6 +249,7 @@ export interface PairConfig {
   maxH1EmaSlope?: number;
   delayStartMinutes?: number;
   cutoffHour?: number;
+  judasDelayMins?: number;
   riskMultiplier?: number;
   signature?: string;
   riskPct?: number;
@@ -254,6 +258,7 @@ export interface PairConfig {
   toxicHours?: number[];
   toxicDays?: (number | string)[];
   htfAlignmentRequired?: boolean;
+  vetoCounterH1Structure?: boolean;
   minWbr?: number;
   requireCloseLocationHalf?: boolean;
   useHtfSarFilter?: boolean;
@@ -276,6 +281,19 @@ export interface PairConfig {
   minAtrRatio?: number;
   maxAtrRatio?: number;
   maxWbr?: number;
+  splitRunnerEnabled?: boolean;
+  splitRunnerTargetR?: number;
+  splitRunnerBankPct?: number;
+  splitRunnerBeLock?: number;
+  splitEntryEnabled?: boolean;
+  splitEntryMarketRiskPct?: number;
+  splitEntryLimitRiskPct?: number;
+  splitEntryRetestPct?: number;
+  pyramidingEnabled?: boolean;
+  pyramidingTriggerR?: number;
+  pyramidingLockR?: number;
+  pyramidingRiskPct?: number;
+  pyramidingMaxAdds?: number;
   dummy?: boolean;
   comment?: string;
 }
@@ -318,6 +336,7 @@ export interface TriggerEvent {
   actionCandleUtcDay?: number;
   actionCandleMonth?: number;
   orStartTimestamp?: number;
+  forcedDirection?: "BUY" | "SELL";
 }
 
 export interface TradeRecord {
@@ -355,6 +374,9 @@ export interface TradeRecord {
   ema50?: number;
   ema200?: number;
   close?: number;
+  riskWeight?: number;
+  isPyramidChild?: boolean;
+  hasPyramided?: boolean;
 }
 
 export interface BasicTrade {

@@ -34,4 +34,14 @@ logs/
 .DS_Store
 Thumbs.db
 *.tmp
-scratch/*.txtserver/trading/testing/*.txt
+scratch/*.txt
+server/trading/testing/*.txt
+
+# Root scratch & temporary investigation scripts (credential protection)
+check_*.cjs
+check_*.ts
+get_*.cjs
+get_*.ts
+test_*.ts
+db_investigate.cjs
+*.txt

@@ -9,6 +9,8 @@ import {
 } from '../../config/PairConfig.js';
 import { getSharedConnection, getSymbolSpec, getBrokerSymbol, getSharedAccount, safeDecryptAccountId } from '../../broker/metaApiHandler.js';
 import { isEncrypted, decrypt } from '../../../core/crypto.js';
+import { getLatestDate, loadCsv } from '../../backtester/loadCsv.js';
+import { appendCandlesSafely } from '../../market/safeCsvHydrator.js';
 
 // Setup directories
 const OPTIMIZER_DIR = path.join(
@@ -100,6 +102,31 @@ function cleanOldDumps() {
   console.log(`✅ Cleanup complete. Archived ${moved} dump files to last_optimization_run.`);
 }
 
+const helsinkiFmt = new Intl.DateTimeFormat("en-US", {
+  timeZone: "Europe/Helsinki",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+
+function formatToEetLine(c: any): string {
+  const cTime = new Date(c.time);
+  const parts = helsinkiFmt.formatToParts(cTime);
+  const getPart = (type: string) => parts.find((p) => p.type === type)?.value || "";
+  const year = getPart("year");
+  const month = getPart("month");
+  const day = getPart("day");
+  let hour = getPart("hour");
+  if (hour === "24") hour = "00";
+  const minute = getPart("minute");
+  const datePart = `${year}.${month}.${day}`;
+  const timePart = `${hour}:${minute}`;
+  return `${datePart}\t${timePart}\t${c.open}\t${c.high}\t${c.low}\t${c.close}\t${c.tickVolume || c.volume || 1}\t0\t${c.spread || 15}`;
+}
+
 async function fetchHistoricalData() {
   console.log(`\n[2/7] 📈 Hydrating CSVs from MetaApi...`);
 
@@ -152,6 +179,7 @@ async function fetchHistoricalData() {
 
   for (const file of csvFiles) {
     const symbol = file.split("_")[0];
+
     let customMap = null;
     try {
       if (profile.broker_symbol_map) customMap = JSON.parse(profile.broker_symbol_map);
@@ -159,26 +187,7 @@ async function fetchHistoricalData() {
     let brokerSymbol = (await getBrokerSymbol(symbol, customMap)) || symbol;
     const filePath = path.join(CSV_DIR, file);
 
-    // Find last timestamp
-    const content = fs.readFileSync(filePath, "utf-8");
-    const lines = content.trim().split("\n");
-    let lastDate = new Date("2023-01-01T00:00:00Z");
-    if (lines.length > 1) {
-      const lastLine = lines[lines.length - 1];
-      let parts = lastLine.indexOf('\t') !== -1 ? lastLine.split('\t') : lastLine.split(',');
-      if (parts.length > 1) {
-        let datePart = parts[0];
-        let timePart = parts[1];
-        let dateStr = "";
-        if (lastLine.indexOf('\t') !== -1) {
-           dateStr = datePart.replace(/\./g, "-") + "T" + timePart + "Z";
-        } else {
-           dateStr = datePart.replace(/\./g, "-").replace(" ", "T") + "Z";
-        }
-        lastDate = new Date(dateStr);
-      }
-    }
-
+    const lastDate = getLatestDate(filePath);
     const now = new Date();
     const diffHours = (now.getTime() - lastDate.getTime()) / (1000 * 60 * 60);
     
@@ -223,7 +232,6 @@ async function fetchHistoricalData() {
               currentEndTime,
               CHUNK_SIZE,
             );
-            // Overwrite the brokerSymbol for future chunks in this loop to avoid re-triggering the catch block
             brokerSymbol = symbol;
           } else {
             throw candleErr;
@@ -249,33 +257,7 @@ async function fetchHistoricalData() {
     }
 
     if (allNewCandles.length > 0) {
-        allNewCandles.sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
-        
-        const uniqueCandles = [];
-        let lastTime = 0;
-        for (const c of allNewCandles) {
-           const t = new Date(c.time).getTime();
-           if (t > lastTime) {
-              uniqueCandles.push(c);
-              lastTime = t;
-           }
-        }
-        
-        let newLines = [];
-        for (const c of uniqueCandles) {
-          const cTime = new Date(c.time);
-          const datePart = cTime.toISOString().substring(0, 10).replace(/-/g, ".");
-          const timePart = cTime.toISOString().substring(11, 19);
-          newLines.push(
-            `${datePart}\t${timePart}\t${c.open}\t${c.high}\t${c.low}\t${c.close}\t${c.tickVolume}\t0\t${c.spread}`
-          );
-        }
-        let appendStr = newLines.join("\n") + "\n";
-        if (!content.endsWith("\n")) {
-            appendStr = "\n" + appendStr;
-        }
-        fs.appendFileSync(filePath, appendStr);
-        totalAdded = newLines.length;
+      totalAdded = await appendCandlesSafely(filePath, allNewCandles);
     }
     console.log(`✅ ${symbol} Hydrated. Added ${totalAdded} candles.`);
   }
@@ -331,37 +313,13 @@ async function runMasterPipeline() {
     await runCommand(
       "npx",
       ["tsx", "server/trading/optimizer/grandmaster/inject_grandmaster.ts"],
-      "Inject Grandmaster (Mage/Sage)",
-    );
-
-    await runCommand(
-      "npx",
-      ["tsx", "server/trading/optimizer/seer/inject_seer_grandmaster.ts"],
-      "Inject Grandmaster (Seer)",
+      "Inject Grandmaster (Mage + Sage + Seer)",
     );
 
     await runCommand(
       "npx",
       ["tsx", "server/trading/optimizer/grandmaster/inject_toxic_hours.ts"],
-      "Inject Toxic Hours (Mage/Sage)",
-    );
-
-    await runCommand(
-      "npx",
-      ["tsx", "server/trading/optimizer/seer/inject_seer_toxic_hours.ts"],
-      "Inject Toxic Hours (Seer)",
-    );
-
-    await runCommand(
-      "npx",
-      ["tsx", "server/trading/optimizer/grandmaster/generate_ist_schedule.ts"],
-      "Generate IST Schedule Markdown",
-    );
-
-    await runCommand(
-      "node",
-      ["server/trading/optimizer/grandmaster/generate_pdf_fast.cjs"],
-      "Generate Holy Grail PDF (Instant)",
+      "Inject Toxic Hours & Generate Schedules (Tri-Bot)",
     );
 
 

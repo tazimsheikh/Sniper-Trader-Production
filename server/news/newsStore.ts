@@ -39,32 +39,26 @@ function todayUTC(): string {
 
 // All pairs the system trades — used for "ALL" (systemic) events
 const ALL_TRADED_PAIRS = new Set([
-  "EURUSD",
-  "EURJPY",
+  "AUDJPY",
+  "AUDUSD",
+  "CADJPY",
+  "CHFJPY",
   "EURAUD",
   "EURCAD",
-  "EURNZD",
-  "GBPUSD",
-  "GBPJPY",
+  "EURJPY",
+  "EURUSD",
   "GBPAUD",
   "GBPCAD",
-  "GBPNZD",
-  "USDJPY",
-  "AUDJPY",
-  "NZDJPY",
-  "XAUUSD",
-  "NAS100",
-  "XTIUSD",
-  "US30",
-  "SPX500",
+  "GBPJPY",
+  "GBPUSD",
   "GER40",
-  "JPN225",
-  "UKOUSD",
-  "XAGUSD",
+  "NAS100",
+  "NZDUSD",
+  "US30",
   "USDCAD",
   "USDCHF",
-  "AUDUSD",
-  "NZDUSD"
+  "USDJPY",
+  "XAUUSD"
 ]);
 
 interface NewsRule {

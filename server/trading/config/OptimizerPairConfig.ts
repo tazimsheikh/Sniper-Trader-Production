@@ -13,20 +13,8 @@ export const OPTIMIZER_CONFIG: Record<string, BasePhysicalConfig> = {
     spread: 0.6,
     maxSpreadLimit: 1.7,
   },
-  "BTCUSD": {
-    tickSize: 1,
-    pipSize: 10.0,
-    spread: 1.5,
-    maxSpreadLimit: 2.33,
-  }, 
   CADJPY: { tickSize: 0.001, pipSize: 0.01, spread: 1.4, maxSpreadLimit: 2.8 }, 
   CHFJPY: { tickSize: 0.001, pipSize: 0.01, spread: 1.6, maxSpreadLimit: 3.7 }, 
-  "ETHUSD": {
-    tickSize: 0.1,
-    pipSize: 1.0,
-    spread: 3.0,
-    maxSpreadLimit: 4.5,
-  },
   EURAUD: {
     tickSize: 0.00001,
     pipSize: 0.0001,
@@ -35,12 +23,6 @@ export const OPTIMIZER_CONFIG: Record<string, BasePhysicalConfig> = {
   },
   EURCAD: { tickSize: 0.00001, pipSize: 0.0001, spread: 1.9, maxSpreadLimit: 4 },
   EURJPY: { tickSize: 0.001, pipSize: 0.01, spread: 1.0, maxSpreadLimit: 5.6 },
-  EURNZD: {
-    tickSize: 0.00001,
-    pipSize: 0.0001,
-    spread: 2.2,
-    maxSpreadLimit: 3.1,
-  },
   EURUSD: {
     tickSize: 0.00001,
     pipSize: 0.0001,
@@ -60,12 +42,6 @@ export const OPTIMIZER_CONFIG: Record<string, BasePhysicalConfig> = {
     maxSpreadLimit: 4.8,
   }, 
   GBPJPY: { tickSize: 0.001, pipSize: 0.01, spread: 1.6, maxSpreadLimit: 2.7 },
-  GBPNZD: {
-    tickSize: 0.00001,
-    pipSize: 0.0001,
-    spread: 2.5,
-    maxSpreadLimit: 3,
-  }, 
   GBPUSD: {
     tickSize: 0.00001,
     pipSize: 0.0001,
@@ -90,7 +66,6 @@ export const OPTIMIZER_CONFIG: Record<string, BasePhysicalConfig> = {
     spread: 1.0,
     maxSpreadLimit: 5.2,
   }, 
-  "JPN225": { tickSize: 1, pipSize: 1.0, spread: 10.0, maxSpreadLimit: 37 },
   "NAS100": {
     tickSize: 0.1,
     pipSize: 1.0,
@@ -102,12 +77,6 @@ export const OPTIMIZER_CONFIG: Record<string, BasePhysicalConfig> = {
     pipSize: 0.0001,
     spread: 0.8,
     maxSpreadLimit: 1.8,
-  },
-  "SPX500": {
-    tickSize: 0.1,
-    pipSize: 1.0,
-    spread: 1.4,
-    maxSpreadLimit: 2.9,
   },
   "US30": {
     tickSize: 0.1,
@@ -134,14 +103,9 @@ export const OPTIMIZER_CONFIG: Record<string, BasePhysicalConfig> = {
     spread: 1.5,
     maxSpreadLimit: 3.1,
   },
-  XTIUSD: { tickSize: 0.01, pipSize: 0.01, spread: 3.0, maxSpreadLimit: 15 }, 
   "GER40.DAILY": { tickSize: 0.1, pipSize: 1.0, spread: 1.0, maxSpreadLimit: 5.2 },
-  "JPN225.DAILY": { tickSize: 1, pipSize: 1.0, spread: 10.0, maxSpreadLimit: 37 },
   "NAS100.DAILY": { tickSize: 0.1, pipSize: 1.0, spread: 1.0, maxSpreadLimit: 3.1 },
-  "SPX500.DAILY": { tickSize: 0.1, pipSize: 1.0, spread: 1.4, maxSpreadLimit: 2.9 },
   "US30.DAILY": { tickSize: 0.1, pipSize: 1.0, spread: 1.5, maxSpreadLimit: 8.1 },
-  "BTCUSD.DAILY": { tickSize: 1, pipSize: 10.0, spread: 1.5, maxSpreadLimit: 2.33 },
-  "ETHUSD.DAILY": { tickSize: 0.1, pipSize: 1.0, spread: 3.0, maxSpreadLimit: 4.5 },
 };
 
 export function getDynamicPipSize(symbol: string): number {

@@ -1,34 +1,16 @@
-import { GrandmasterOptimizerState, M1TypedArrays, TriggerEvent } from "../../config/types.js";
-import { IndependentSynthesisComponent, evaluateComponent } from "./GrandmasterMetrics.js";
+import { GrandmasterOptimizerState, IndependentSynthesisComponent } from "../../config/types.js";
+import { evaluateComponent } from "./GrandmasterMetrics.js";
 import { rankPercentile } from "./utils/GrandmasterMath.js";
 import { OPTIMIZER_CONFIG } from "../../config/OptimizerPairConfig.js";
-import { preComputeTriggers as preComputeMageTriggers, evaluateExits as evaluateMageExits } from "../../backtester/math_core/MageMathCore.js";
-import { preComputeTriggers as preComputeSageTriggers, evaluateExits as evaluateSageExits } from "../../backtester/math_core/SageMathCore.js";
-import { aggregateCandles } from "../../market/CandleAggregator.js";
-import { loadCsv, getLatestDate } from "../../backtester/loadCsv.js";
-import { isNewsForceClose } from "../../market/historicalNews.js";
-import { isEODSession } from "../../market/MathFilters.js";
-import { getFixedEstDate } from "../../backtester/math_core/MathCoreUtils.js";
+import { validateAnomalyConcentration } from "../core/MonthlyConsistencyValidator.js";
 import * as fs from "fs";
 import * as path from "path";
-
-interface SymbolCandleCache {
-  m1Rows: any[];
-  m1Typed: M1TypedArrays;
-  m5Candles: any[];
-  emaArr?: Float64Array;
-  isForex: boolean;
-  pipSize: number;
-  spreadPts: number;
-  startDate: string;
-  endDate: string;
-}
 
 export function getRollingMonthKeys(endDateStr: string, count: number): string[] {
   const keys: string[] = [];
   const endD = new Date(endDateStr.length === 7 ? `${endDateStr}-01` : endDateStr);
   let y = endD.getUTCFullYear();
-  let m = endD.getUTCMonth(); // 0-indexed
+  let m = endD.getUTCMonth();
   for (let i = 0; i < count; i++) {
     const mKey = `${y}-${String(m + 1).padStart(2, "0")}`;
     keys.unshift(mKey);
@@ -41,378 +23,23 @@ export function getRollingMonthKeys(endDateStr: string, count: number): string[]
   return keys;
 }
 
-const symbolCandleDataCache = new Map<string, SymbolCandleCache>();
-
-async function getOrLoadSymbolCandleData(symbol: string): Promise<SymbolCandleCache | null> {
-  const baseSymbol = symbol.split(".")[0].split("_")[0];
-  if (symbolCandleDataCache.has(symbol)) {
-    return symbolCandleDataCache.get(symbol)!;
-  }
-
-  const csvDir = path.join(process.cwd(), "data", "csv");
-  const csvFiles = fs.readdirSync(csvDir).filter((f) => f.startsWith(baseSymbol) && f.endsWith(".csv"));
-  if (csvFiles.length === 0) return null;
-
-  const latestDate = getLatestDate(path.join(csvDir, csvFiles[0]));
-  const endDate = latestDate.toISOString().substring(0, 10);
-  const sd = new Date(latestDate.getTime());
-  sd.setFullYear(sd.getFullYear() - 3);
-  const startDate = sd.toISOString().substring(0, 10);
-
-  const optConfig = OPTIMIZER_CONFIG[symbol] || OPTIMIZER_CONFIG[baseSymbol];
-  const spread = optConfig ? optConfig.spread : 2.0;
-  const pipSize = optConfig ? optConfig.pipSize : 0.0001;
-  const spreadPts = spread * pipSize;
-  const isForex = !symbol.includes("BTC") && !symbol.includes("ETH") && !["US30", "NAS100", "SPX500", "GER40", "UK100", "JPN225"].some(idx => symbol.includes(idx));
-
-  const startD = new Date(new Date(startDate).getTime() - 15 * 24 * 60 * 60 * 1000);
-  const endD = new Date(new Date(endDate).getTime() + 86400000 - 1);
-
-  let m1Rows: any[] = [];
-  for (const f of csvFiles) {
-    m1Rows = m1Rows.concat(await loadCsv(path.join(csvDir, f), spread, startD, endD));
-  }
-
-  if (m1Rows.length === 0) return null;
-
-  const m1Length = m1Rows.length;
-  const m1Typed: M1TypedArrays = {
-    open: new Float64Array(m1Length),
-    high: new Float64Array(m1Length),
-    low: new Float64Array(m1Length),
-    close: new Float64Array(m1Length),
-    timestamp: new Float64Array(m1Length),
-    estHour: new Int32Array(m1Length),
-    minute: new Int32Array(m1Length),
-    isSessionReset: new Uint8Array(m1Length),
-    isMidnightExpiry: new Uint8Array(m1Length),
-    isEOD_standard: new Uint8Array(m1Length),
-    isNewsForceClose: new Uint8Array(m1Length),
-    length: m1Length,
-  };
-
-  for (let i = 0; i < m1Length; i++) {
-    const r = m1Rows[i];
-    m1Typed.open[i] = r.open;
-    m1Typed.high[i] = r.high;
-    m1Typed.low[i] = r.low;
-    m1Typed.close[i] = r.close;
-    m1Typed.timestamp[i] = r.timestamp;
-    m1Typed.estHour[i] = r.estHour;
-    m1Typed.minute[i] = r.minute;
-    if (i > 0) {
-      const prevH = m1Rows[i - 1].estHour;
-      m1Typed.isSessionReset[i] = ((prevH < 15 && r.estHour >= 15) || (prevH > r.estHour && r.estHour >= 15) || (r.estHour === 15 && r.minute === 0)) ? 1 : 0;
-      m1Typed.isMidnightExpiry[i] = (prevH > r.estHour && r.estHour < 15) ? 1 : 0;
-    }
-    const estDate = getFixedEstDate(new Date(r.timestamp));
-    const dStr = estDate.toISOString().split("T")[0];
-    m1Typed.isEOD_standard[i] = isEODSession(r.estHour, r.minute) ? 1 : 0;
-    m1Typed.isNewsForceClose[i] = isNewsForceClose(dStr, r.estHour, r.minute) ? 1 : 0;
-  }
-
-  const m5Candles = aggregateCandles(m1Rows, 5);
-  const { buildEmaArray } = await import("../../market/Indicators.js");
-  const emaArr = buildEmaArray(m5Candles, 20);
-
-  const entry: SymbolCandleCache = {
-    m1Rows,
-    m1Typed,
-    m5Candles,
-    emaArr,
-    isForex,
-    pipSize,
-    spreadPts,
-    startDate,
-    endDate,
-  };
-
-  symbolCandleDataCache.set(symbol, entry);
-  return entry;
-}
-
-const mageTriggerCache = new Map<string, TriggerEvent[]>();
-function getMageTriggers(
-  data: SymbolCandleCache,
-  symbol: string,
-  session: string,
-  cfg: any
-): TriggerEvent[] {
-  const startH = cfg.orbStartHour ?? 0;
-  const startM = cfg.orbStartMin ?? 0;
-  const orbMins = cfg.orbMinutes ?? 15;
-  const actMins = cfg.actionMinutes ?? 5;
-  const minBody = cfg.minBodyPips ?? 0;
-  const minBodyRatio = cfg.minBodyRatio;
-  const minCloseLoc = cfg.minCloseLoc;
-  const htfTrend = cfg.htfTrendFilter ?? cfg.useHtfEma;
-  const useSar = cfg.useHtfSar ?? cfg.useHtfSarFilter;
-
-  const key = `${symbol}_${session}_${startH}_${startM}_${orbMins}_${actMins}_${minBody}_${minBodyRatio}_${minCloseLoc}_${htfTrend}_${useSar}`;
-  if (!mageTriggerCache.has(key)) {
-    const triggers = preComputeMageTriggers(
-      data.m5Candles,
-      data.m1Rows,
-      symbol,
-      data.spreadPts,
-      session,
-      data.isForex,
-      data.pipSize,
-      startH,
-      startM,
-      orbMins,
-      actMins,
-      minBody,
-      minBodyRatio,
-      minCloseLoc,
-      htfTrend,
-      useSar,
-      cfg
-    );
-    mageTriggerCache.set(key, triggers);
-  }
-  return mageTriggerCache.get(key)!;
-}
-
-const sageTriggerCache = new Map<string, TriggerEvent[]>();
-function getSageTriggers(
-  data: SymbolCandleCache,
-  symbol: string,
-  session: string,
-  cfg: any
-): TriggerEvent[] {
-  const startH = cfg.orbStartHour ?? 0;
-  const startM = cfg.orbStartMin ?? 0;
-  const orbMins = cfg.orbMinutes ?? 15;
-  const actMins = cfg.actionMinutes ?? 5;
-  const sweepPips = cfg.sweepPips ?? 0;
-  const maxSweepMultiplier = cfg.maxSweepMultiplier ?? 3;
-  const requireCloseInside = !!cfg.requireCloseInside;
-  const htfAlignmentRequired = !!cfg.htfAlignmentRequired;
-  const maxH1EmaSlope = cfg.maxH1EmaSlope ?? 30;
-  const minWbr = cfg.minWbr ?? 1.5;
-  const requireCloseLocationHalf = !!cfg.requireCloseLocationHalf;
-  const useHtfSarFilter = !!cfg.useHtfSarFilter;
-
-  const key = `${symbol}_${session}_${startH}_${startM}_${orbMins}_${actMins}_${sweepPips}_${maxSweepMultiplier}_${requireCloseInside}_${htfAlignmentRequired}_${maxH1EmaSlope}_${minWbr}_${requireCloseLocationHalf}_${useHtfSarFilter}`;
-  if (!sageTriggerCache.has(key)) {
-    const triggers = preComputeSageTriggers(
-      data.m5Candles,
-      data.m1Rows,
-      symbol,
-      data.spreadPts,
-      session,
-      data.isForex,
-      data.pipSize,
-      startH,
-      startM,
-      orbMins,
-      sweepPips,
-      actMins,
-      maxSweepMultiplier,
-      requireCloseInside,
-      htfAlignmentRequired,
-      maxH1EmaSlope,
-      minWbr,
-      requireCloseLocationHalf,
-      useHtfSarFilter
-    );
-    sageTriggerCache.set(key, triggers);
-  }
-  return sageTriggerCache.get(key)!;
-}
-
-export function getMinAllowedSl(symbol: string): number {
-  const baseSym = symbol.split('.')[0].toUpperCase();
-  const config = OPTIMIZER_CONFIG[baseSym];
-  const spread = config ? config.spread : 2.0;
-  return Math.max(2.0, 2.5 * spread);
-}
-
-export function parseSetupToConfig(setupStr: string, symbol: string, isSage: boolean): any {
-  const parts = setupStr.split("_");
-  let session = parts[0];
-  if (parts[0] === "NY") session = `NY_${parts[1]}`;
-
-  const findNum = (prefix: string, isSuffix = false): number | undefined => {
-    const p = isSuffix
-      ? parts.find((item) => item.endsWith(prefix))
-      : parts.find((item) => item.startsWith(prefix));
-    if (!p) return undefined;
-    const raw = isSuffix ? p.slice(0, -prefix.length) : p.slice(prefix.length);
-    const num = parseFloat(raw);
-    return isNaN(num) ? undefined : num;
-  };
-
-  const findStr = (prefix: string): string | undefined => {
-    const p = parts.find((item) => item.startsWith(prefix));
-    return p ? p.slice(prefix.length) : undefined;
-  };
-
-  const baseSym = symbol.split('.')[0].toUpperCase();
-  const baseProps = OPTIMIZER_CONFIG[baseSym] || { tickSize: 0.00001, pipSize: 0.0001, spread: 2.0 };
-
-  const parsedPct = findNum("%", true) ?? 0;
-  const minSl = findNum("MinSL") ?? 10;
-  const maxSl = findNum("MaxSl") ?? findNum("MaxSL") ?? 100;
-
-  // Resolve compound exit modes (e.g. ExitADTEL_AGGRESSIVE, ExitOPPOSITE_BOUNDARY)
-  let exitModeStr = findStr("Exit") ?? "TRAILING";
-  const exitTokenIdx = parts.findIndex(p => p.startsWith("Exit"));
-  if (exitTokenIdx >= 0 && exitTokenIdx + 1 < parts.length) {
-    const nextToken = parts[exitTokenIdx + 1];
-    if (["AGGRESSIVE", "MODERATE", "CONSERVATIVE", "BOUNDARY"].includes(nextToken)) {
-      exitModeStr += `_${nextToken}`;
-    }
-  }
-
-  if (isSage) {
-    const sweep = findNum("Sweep") ?? 0;
-    const maxSwp = findNum("MaxSwp") ?? 3;
-    const reqCls = findStr("ReqCls") === "true";
-    const trig = findNum("Trig") ?? 0;
-    const step = findNum("Step") ?? 0;
-    const fc = findNum("FC") ?? 8;
-    const startH = findNum("StartH") ?? 0;
-    const startM = findNum("StartM") ?? 0;
-    const orbMins = findNum("OrbMins") ?? 15;
-    const actMins = findNum("ActMins");
-
-    const maxBodyPart = parts.find((p) => p.startsWith("MaxBody"));
-    const maxBody =
-      maxBodyPart && maxBodyPart !== "MaxBodyNone"
-        ? parseFloat(maxBodyPart.replace("MaxBody", ""))
-        : undefined;
-
-    return {
-      tickSize: baseProps.tickSize,
-      pipSize: baseProps.pipSize,
-      spread: baseProps.spread,
-      session,
-      orbEnabled: true,
-      orbStartHour: startH,
-      orbStartMin: startM,
-      orbMinutes: orbMins,
-      actionMinutes: actMins,
-      minSlDist: minSl,
-      maxSlDist: maxSl,
-      entryPenetrationPct: parsedPct,
-      sweepPips: sweep,
-      maxSweepMultiplier: maxSwp,
-      requireCloseInside: reqCls,
-      exitMode: exitModeStr,
-      trailingSlTrigger: trig,
-      trailingSlStep: step,
-      forceCloseHours: fc,
-      maxBodyPips: maxBody,
-      htfAlignmentRequired: true,
-      maxH1EmaSlope: 20,
-    };
-  } else {
-    // Mage
-    const fc = findNum("FC") ?? 24;
-    const trig = findNum("Trig") ?? 0;
-    const step = findNum("Step") ?? 0;
-    const startH = findNum("StartH") ?? 0;
-    const startM = findNum("StartM") ?? 0;
-    const orbMins = findNum("OrbMins") ?? 10;
-    const actMins = findNum("ActMins") ?? 60;
-    const minBody = findNum("Body") ?? 0;
-
-    return {
-      tickSize: baseProps.tickSize,
-      pipSize: baseProps.pipSize,
-      spread: baseProps.spread,
-      session,
-      orbEnabled: true,
-      orbStartHour: startH,
-      orbStartMin: startM,
-      orbMinutes: orbMins,
-      actionMinutes: actMins,
-      minSlDist: minSl,
-      maxSlDist: maxSl,
-      minBodyPips: minBody,
-      orbPullbackPct: parsedPct / 100,
-      exitMode: exitModeStr,
-      trailingSlTrigger: trig,
-      trailingSlStep: step,
-      forceCloseHours: fc,
-      htfAlignmentRequired: true,
-      maxH1EmaSlope: 20,
-    };
-  }
-}
-
-export function deduplicateConfigs(
-  data: GrandmasterOptimizerState[],
-  botType: "Mage" | "Sage",
-  maxPerSig: number = 3,
-): GrandmasterOptimizerState[] {
-  const groups: Record<string, GrandmasterOptimizerState[]> = {};
-  for (const config of data) {
-    const setupStr = config?.setup || (config as any)?.params || (config as any)?.signature;
-    if (!setupStr || typeof setupStr !== "string") continue;
-    const parts = setupStr.split("_");
-    let session = parts[0];
-    if (parts[0] === "NY") session = `NY_${parts[1]}`;
-
-    const fcPart = parts.find((p) => p.startsWith("FC")) || "NoFC";
-
-    let signature = "";
-    if (botType === "Sage") {
-      const sweepPart = parts.find((p) => p.startsWith("Sweep")) || "NoSweep";
-      const exitPart = parts.find((p) => p.startsWith("Exit")) || "NoExit";
-      signature = `${session}_${sweepPart}_${exitPart}_${fcPart}`;
-    } else {
-      const bodyPart = parts.find((p) => p.startsWith("Body")) || "NoBody";
-      const bypassPart = parts.find((p) => p.endsWith("%")) || "0%";
-      signature = `${session}_${bypassPart}_${bodyPart}_${fcPart}`;
-    }
-
-    if (!groups[signature]) groups[signature] = [];
-    groups[signature].push(config);
-  }
-
-  const result: GrandmasterOptimizerState[] = [];
-  for (const group of Object.values(groups)) {
-    group.sort((a, b) => {
-      const ddA = (a.maxDd !== undefined && a.maxDd > 0) ? a.maxDd : 1.0;
-      const ddB = (b.maxDd !== undefined && b.maxDd > 0) ? b.maxDd : 1.0;
-      const pfA = a.profitFactor !== undefined ? a.profitFactor : 1.0;
-      const pfB = b.profitFactor !== undefined ? b.profitFactor : 1.0;
-      const scoreA = (a.totalNetR / ddA) * pfA;
-      const scoreB = (b.totalNetR / ddB) * pfB;
-      return (scoreB - scoreA) ||
-        ((a.setup || "") as string).localeCompare((b.setup || "") as string);
-    });
-    result.push(...group.slice(0, maxPerSig));
-  }
-  return result;
-}
-
-export function isSessionValidForAsset(symbol: string, setupStr: string): boolean {
-  // All asset session alignments unblocked
-  return true;
-}
-
 export const PAIR_MIN_SL_FLOOR: Record<string, number> = {
   'EURUSD': 5.0, 'GBPUSD': 5.0,
   'USDCHF': 8.0, 'USDCAD': 8.0, 'AUDUSD': 8.0, 'NZDUSD': 8.0,
   'USDJPY': 15.0, 'EURJPY': 15.0, 'GBPJPY': 15.0,
-  'AUDJPY': 15.0, 'CADJPY': 15.0, 'CHFJPY': 15.0,
-  'EURAUD': 15.0, 'EURNZD': 15.0, 'GBPAUD': 15.0,
-  'GBPNZD': 15.0, 'EURCAD': 15.0, 'GBPCAD': 15.0,
+  'AUDJPY': 30.0, 'CADJPY': 15.0, 'CHFJPY': 15.0,
+  'EURAUD': 15.0, 'GBPAUD': 15.0, 'EURCAD': 15.0, 'GBPCAD': 15.0,
   'GER40': 25.0, 'GER40.Daily': 25.0,
   'US30': 25.0, 'US30.Daily': 25.0,
   'NAS100': 15.0, 'NAS100.Daily': 15.0,
-  'SPX500': 15.0, 'SPX500.Daily': 15.0,
-  'JPN225': 15.0, 'JPN225.Daily': 15.0,
-  'XAUUSD': 30.0, 'XTIUSD': 50.0,
-  'BTCUSD': 15.0, 'BTCUSD.Daily': 15.0,
-  'ETHUSD': 15.0, 'ETHUSD.Daily': 15.0,
+  'XAUUSD': 30.0,
 };
 
-interface AuditCacheEntry {
+export function isSessionValidForAsset(symbol: string, setupStr: string): boolean {
+  return true;
+}
+
+export interface AuditCacheEntry {
   threeYearNetR: number;
   threeYearTrades: number;
   threeYearWinRate: number;
@@ -424,6 +51,7 @@ interface AuditCacheEntry {
   hasConsecutivePriorYearLoss?: boolean;
   dailyReturns?: Record<string, number>;
   monthlyNetR?: Record<string, number>;
+  avgWinR?: number;
 }
 
 const CACHE_DIR = path.join(process.cwd(), "server", "trading", "optimizer", "grandmaster", ".cache");
@@ -459,85 +87,7 @@ export function flushAuditCache(): void {
   } catch (e) {}
 }
 
-export function getEliteComponents(
-  validComponents: IndependentSynthesisComponent[],
-  botType: string,
-  minTrades: number,
-): IndependentSynthesisComponent[] {
-  let pool = validComponents.filter(
-    (c) => {
-      // Statistical & 3-Year CSV Audit Gate
-      const threeYrR = c.threeYearNetR !== undefined ? c.threeYearNetR : c.totalTotalR;
-      const threeYrTrades = c.threeYearTrades !== undefined ? c.threeYearTrades : c.totalTrades;
-      const threeYrWR = c.threeYearWinRate !== undefined ? c.threeYearWinRate : (c.winRate || 0);
-      const dd = c.threeYearMaxDrawdown || c.monteCarloDrawdown99 || c.maxDrawdown || 1;
-      const marRatio = dd > 0 ? threeYrR / dd : threeYrR;
-      const expectancy = threeYrTrades > 0 ? threeYrR / threeYrTrades : 0;
-      const maxAllowedDd = c.threeYearMaxDrawdown || c.maxDrawdown || 0;
-      const calmar = maxAllowedDd > 0 ? threeYrR / maxAllowedDd : threeYrR;
-      const oneYrDd = (c as any).oneYearMaxDrawdown !== undefined ? (c as any).oneYearMaxDrawdown : maxAllowedDd;
-      const r1Yr = (c as any).r1Year !== undefined ? (c as any).r1Year : threeYrR;
-
-      // Bot-specific DD ceiling: 14R for Mage and Seer, 10R for Sage
-      const maxDdCeiling = (botType === "Mage" || botType === "Seer") ? 14.0 : 10.0;
-      const oneYrCalmar = oneYrDd > 0 ? r1Yr / oneYrDd : r1Yr;
-      const oneYrCalmarFloor = (threeYrR >= 80.0 && r1Yr >= 15.0) ? 1.30 : 2.0;
-      if (
-        threeYrR < 5.0 ||
-        threeYrTrades < 10 ||
-        expectancy < 0.04 ||
-        calmar < 2.0 ||
-        marRatio < 2.0 ||
-        maxAllowedDd > maxDdCeiling ||
-        oneYrDd > maxDdCeiling ||
-        r1Yr < 2.0 ||
-        oneYrCalmar < oneYrCalmarFloor
-      ) {
-        return false;
-      }
-
-      // Profit Factor floor
-      if (c.threeYearProfitFactor && c.threeYearProfitFactor < 1.15) {
-        return false;
-      }
-
-      // Multi-Regime Half-Year Consistency Gate
-      if (c.regimeConsistency !== undefined && c.regimeConsistency < 30.0) {
-        return false;
-      }
-
-      const effectiveOneYearWR = c.recentSixMonthWinRate !== undefined ? c.recentSixMonthWinRate : threeYrWR;
-      if (effectiveOneYearWR < 20.0) {
-        return false;
-      }
-
-      return (
-        c.botType === botType &&
-        threeYrTrades >= 3 &&
-        threeYrR >= 1.0
-      );
-    }
-  );
-  if (pool.length === 0) return [];
-
-  const maxMcDdAllowed = (botType === "Mage" || botType === "Seer") ? 50.0 : 32.0;
-  pool = pool.filter(c => {
-    const mcDd = c.monteCarloDrawdown99 ?? 0;
-    if (mcDd > maxMcDdAllowed) {
-      return false;
-    }
-    return true;
-  });
-
-  const MIN_HEDGE_SCORE = 0.05;
-  pool = pool.filter(c => {
-    if (c.hedgeScore < MIN_HEDGE_SCORE) {
-      return false;
-    }
-    return true;
-  });
-
-function extractSetupSignature(setup: string, botType: string): string {
+export function extractSetupSignature(setup: string, botType: string): string {
   const lower = setup.toLowerCase();
   let session = "other";
   if (lower.startsWith("london") || lower.includes("session=london")) session = "london";
@@ -548,501 +98,320 @@ function extractSetupSignature(setup: string, botType: string): string {
   if (lower.includes("exitmidpoint") || lower.includes("exit=midpoint")) exitMode = "midpoint";
   else if (lower.includes("exitopposite_boundary") || lower.includes("exit=opposite_boundary")) exitMode = "boundary";
   else if (lower.includes("exittrailing") || lower.includes("exit=trailing")) exitMode = "trailing";
+  else if (lower.includes("exitadtel_moderate") || lower.includes("exit=adtel_moderate")) exitMode = "adtel_moderate";
+  else if (lower.includes("exitadtel_conservative") || lower.includes("exit=adtel_conservative")) exitMode = "adtel_conservative";
+  else if (lower.includes("exitadtel_aggressive") || lower.includes("exit=adtel_aggressive")) exitMode = "adtel_aggressive";
+  else if (lower.includes("exitadtel") || lower.includes("exit=adtel")) exitMode = "adtel_moderate";
+  else if (lower.includes("exitfixed_r") || lower.includes("exit=fixed_r")) exitMode = "fixed_r";
 
   return `${session}_${exitMode}`;
 }
 
-  // Sort candidates by robust composite hedgeScore with deterministic tie-breaking
-  const sortedAll = [...pool].sort((a, b) =>
-    (b.hedgeScore - a.hedgeScore) ||
-    (a.symbol || "").localeCompare(b.symbol || "") ||
-    (a.setup || "").localeCompare(b.setup || "")
-  );
+export const BANNED_GRANDMASTER_PAIRS = new Set<string>();
 
-  // Option A: Parameter Signature Clustering & Consensus Champion
-  // Group candidates into distinct strategy archetypes (Session + Exit Mode)
-  // to prevent multiple near-identical micro-variations (e.g. MinSL 15 vs 20) of the same session breakout.
-  const signatureGroups = new Map<string, IndependentSynthesisComponent[]>();
-  for (const comp of sortedAll) {
-    const sig = extractSetupSignature(comp.setup, botType);
-    if (!signatureGroups.has(sig)) signatureGroups.set(sig, []);
-    signatureGroups.get(sig)!.push(comp);
-  }
-
-  const consensusChampions: IndependentSynthesisComponent[] = [];
-  for (const [sig, candidates] of signatureGroups.entries()) {
-    // Select the top consensus champion (highest stability and hedgeScore) for this distinct archetype
-    consensusChampions.push(candidates[0]);
-  }
-
-  // Sort distinct archetypes by hedgeScore descending, keeping up to 3 distinct session archetypes per symbol per bot
-  consensusChampions.sort((a, b) => b.hedgeScore - a.hedgeScore);
-  return consensusChampions.slice(0, 3);
-}
-
+/**
+ * Next-Gen PreProcessor: Dual-Track Sieve + Fast O(1) Cache Lookup
+ */
 export async function preProcessData(
   symbol: string,
   mageData: GrandmasterOptimizerState[],
   sageData: GrandmasterOptimizerState[],
-  globalDates: string[],
-  minTrades: number,
-  skipAudit: boolean = false
+  seerDataOrDates: GrandmasterOptimizerState[] | string[],
+  datesParam?: string[] | number,
+  minTradesParam: number = 3
 ): Promise<{ normalList: IndependentSynthesisComponent[]; rawValidCount: number }> {
-  for (const state of mageData) {
-    if (!state) continue;
-    state.dailyRArray = new Float64Array(globalDates.length);
-    for (let i = 0; i < globalDates.length; i++) {
-      state.dailyRArray[i] = (state.dailyNetR && state.dailyNetR[globalDates[i]]) || 0;
-    }
+  let seerData: GrandmasterOptimizerState[] = [];
+  let globalDates: string[] = [];
+  let minTrades = minTradesParam;
+
+  if (Array.isArray(seerDataOrDates) && typeof seerDataOrDates[0] === "string") {
+    // Legacy call: (symbol, mageData, sageData, globalDates, minTrades)
+    globalDates = seerDataOrDates as string[];
+    if (typeof datesParam === "number") minTrades = datesParam;
+  } else {
+    // Tri-Bot call: (symbol, mageData, sageData, seerData, globalDates, minTrades)
+    seerData = (seerDataOrDates as GrandmasterOptimizerState[]) || [];
+    globalDates = (datesParam as string[]) || [];
   }
-  for (const state of sageData) {
-    if (!state) continue;
-    state.dailyRArray = new Float64Array(globalDates.length);
-    for (let i = 0; i < globalDates.length; i++) {
-      state.dailyRArray[i] = (state.dailyNetR && state.dailyNetR[globalDates[i]]) || 0;
+
+  const cleanSym = symbol.replace(/\.daily$/i, "").toUpperCase();
+  const upperSym = symbol.toUpperCase();
+
+  if (BANNED_GRANDMASTER_PAIRS.has(cleanSym)) {
+    return { normalList: [], rawValidCount: 0 };
+  }
+
+  const cache = loadAuditCache();
+
+  // 1. Build lightning-fast O(1) cache map for this symbol
+  const setupCache = new Map<string, any>();
+  for (const [k, v] of Object.entries(cache)) {
+    const kUpper = k.toUpperCase();
+    if (kUpper.includes(`_${cleanSym}_`) || kUpper.includes(`_${upperSym}_`)) {
+      const matchSym = kUpper.includes(`_${upperSym}_`) ? upperSym : cleanSym;
+      const parts = k.split(new RegExp(`_${matchSym}_`, 'i'));
+      if (parts.length === 2) {
+        const bot = parts[0];
+        const rest = parts[1];
+        const last = rest.lastIndexOf('_');
+        const secondLast = rest.lastIndexOf('_', last - 1);
+        const setup = secondLast > 0 ? rest.substring(0, secondLast) : rest;
+        setupCache.set(`${bot}_${setup}`, v);
+      }
     }
   }
 
-  let validComponents: IndependentSynthesisComponent[] = [];
+  const survivingPool: IndependentSynthesisComponent[] = [];
   const seenSetups = new Set<string>();
 
-  const minAllowedSl = PAIR_MIN_SL_FLOOR[symbol] || PAIR_MIN_SL_FLOOR[symbol.replace('.Daily', '')] || 2.0;
+  const minAllowedSl = Math.max(2.0, (PAIR_MIN_SL_FLOOR[cleanSym] || PAIR_MIN_SL_FLOOR[symbol] || 2.0) * 0.7);
 
-  const processRawState = (state: any, botType: "Mage" | "Sage") => {
+  const processCandidate = (state: any, botType: "Mage" | "Sage" | "Seer") => {
     if (!state || !state.setup) return;
     const setupStr = state.setup.trim();
-    const setupKey = `${symbol}_${botType}_${setupStr}`;
+    const setupKey = `${cleanSym}_${botType}_${setupStr}`;
     if (seenSetups.has(setupKey)) return;
     seenSetups.add(setupKey);
 
-    // A. Asset-session whitelist
-    if (!isSessionValidForAsset(symbol, setupStr)) return;
-
-    // B. Production Exit Mode Filtering: Mage must be TRAILING only. Sage must be TRAILING, MIDPOINT, or OPPOSITE_BOUNDARY.
+    // Filter invalid exit modes
     if (botType === "Mage") {
-      if (setupStr.includes("ExitADTEL") || !setupStr.includes("ExitTRAILING")) return;
+      const validMageExit = ["ExitTRAILING", "ExitADTEL_MODERATE", "ExitADTEL_CONSERVATIVE", "ExitADTEL_AGGRESSIVE"].some(em => setupStr.includes(em));
+      if (!validMageExit) return;
     } else if (botType === "Sage") {
       if (setupStr.includes("ExitADTEL")) return;
       const validSageExit = ["ExitTRAILING", "ExitMIDPOINT", "ExitOPPOSITE_BOUNDARY"].some(em => setupStr.includes(em));
       if (!validSageExit) return;
+    } else if (botType === "Seer") {
+      const validSeerExit = ["ExitTRAILING", "ExitFIXED_R"].some(em => setupStr.includes(em));
+      if (!validSeerExit) return;
     }
 
-    // C. Min SL Volatility floor
+    // Min SL filter
     const minSlMatch = setupStr.match(/MinSL([\d\.]+)/i);
     const minSlVal = minSlMatch ? parseFloat(minSlMatch[1]) : 999;
     if (minSlVal < minAllowedSl) return;
 
-    // D. Basic dump health (Strict Out-Of-Sample minimum > 0R)
+    // Strict Out-of-sample positive check
     const oosVal = state.oosNetR !== undefined ? state.oosNetR : state.totalNetR;
     if ((oosVal || 0) <= 0) return;
-    if (state.totalNetR !== undefined && state.totalNetR <= 0) return;
 
-    const evaluated = evaluateComponent(state as any, symbol, botType, globalDates, false);
-    if (evaluated) {
-      validComponents.push(evaluated);
-    } else {
-      // Fallback: create shell so the 3-Year CSV Audit can evaluate the true full-history performance
-      validComponents.push({
-        symbol,
-        botType,
-        setup: setupStr,
-        totalTrades: state.trades || 0,
-        totalTotalR: state.totalNetR || state.oosNetR || 0,
-        maxDrawdown: state.maxDrawdown || 0,
-        sharpeRatio: state.sharpeRatio || 1.0,
-        sortinoRatio: state.sortinoRatio || 1.0,
-        recoveryFactor: state.recoveryFactor || 1.0,
-        hedgeScore: 1.0,
-        profitFactor: 1.5,
-        deflatedSharpeRatio: 1.0,
-        dsrProb: 0.5,
-        periodReturns: [],
-        dailyReturns: state.dailyNetR || {},
-        dailyRArray: new Float64Array(globalDates.length),
-        winRate: state.winRate || 30.0,
-        recentTwoMonthR: 0,
-        recentThreeMonthR: 0,
-        recentMomentumR: 0,
-        recentOneYearR: 0,
-        recentQuarterR: 0,
-        curvatureBeta2: 0,
-        regimeRatio: 1.0,
-        omegaRatio: 1.0,
-        cvar95: 0,
-        sampleConfidence: 1.0,
-        threeYearMaxDrawdown: 0,
-        threeYearTrades: 0,
-        threeYearProfitFactor: 1.5,
-        forceCloseHours: 0,
-        recentSixMonthTrades: 0,
-        recentSixMonthWinRate: 30.0,
-        seasonalMultiplier: 1.0,
-        wfMultiplier: 1.0,
-        stepMean: 0,
-        maxStepLoss: 0,
-        hasLosingMonth: false,
-        hasLosingWeek: false,
-        hasLosingDay: false,
-        avgWinR: 1.0
-      });
+    // Check O(1) audit cache with seamless state.dailyNetR fallback
+    let cachedEntry = setupCache.get(`${botType}_${setupStr}`);
+    if (!cachedEntry && state.dailyNetR && Object.keys(state.dailyNetR).length > 0) {
+      const dailyReturns: Record<string, number> = state.dailyNetR;
+      const dailyValues = Object.values(dailyReturns);
+      const trades = state.threeYearTrades ?? state.trades ?? dailyValues.length;
+      const r = state.threeYearNetR ?? state.totalNetR ?? dailyValues.reduce((sum, v) => sum + v, 0);
+      const maxDd = Math.max(1.0, state.threeYearMaxDrawdown ?? state.isMaxDd ?? state.maxDd ?? 1.0);
+      const winDays = dailyValues.filter(v => v > 0);
+      const lossDays = dailyValues.filter(v => v < 0);
+      const winRate = state.threeYearWinRate ?? (trades > 0 ? (winDays.length / dailyValues.length) * 100 : 35.0);
+      const grossProfit = winDays.reduce((sum, v) => sum + v, 0);
+      const grossLoss = Math.abs(lossDays.reduce((sum, v) => sum + v, 0));
+      const pf = state.threeYearProfitFactor ?? (grossLoss > 0 ? grossProfit / grossLoss : (grossProfit > 0 ? 3.0 : 1.0));
+      const avgWin = winDays.length > 0 ? grossProfit / winDays.length : 1.0;
+
+      cachedEntry = {
+        threeYearNetR: r,
+        threeYearTrades: trades,
+        threeYearWinRate: winRate,
+        threeYearMaxDrawdown: maxDd,
+        threeYearProfitFactor: pf,
+        regimeConsistency: 60.0,
+        dailyReturns,
+        avgWinR: avgWin,
+      };
     }
+    if (!cachedEntry) return;
+
+    const r = cachedEntry.threeYearNetR;
+    const trades = cachedEntry.threeYearTrades || 0;
+    const maxDd = Math.max(1.0, cachedEntry.threeYearMaxDrawdown || 1.0);
+    const calmar = maxDd > 0 ? r / maxDd : r;
+    const exp = trades > 0 ? r / trades : 0;
+    const pf = cachedEntry.threeYearProfitFactor || 1.0;
+    const winRate = cachedEntry.threeYearWinRate || 30.0;
+    const avgWin = cachedEntry.avgWinR ?? (trades > 0 && winRate > 0 ? (r / (trades * (winRate / 100))) : 1.0);
+
+    // Hard baseline filter: positive return, minimum trades, reasonable loss
+    if (r < 2.0 || trades < 5 || exp < 0.02 || maxDd > 20.0 || pf < 1.05) {
+      return;
+    }
+
+    // Anti-anomaly filter
+    if (cachedEntry.dailyReturns && Object.keys(cachedEntry.dailyReturns).length > 0) {
+      const anomalyRes = validateAnomalyConcentration(cachedEntry.dailyReturns, 35.0, 70.0, 25.0);
+      if (!anomalyRes.isValid) return;
+    }
+
+    // ── 1-Year Authoritative Recency & Positivity Quality Gate ──────────
+    let oneYearNetR = 0;
+    let oneYearTrades = 0;
+    let oneYearMaxDd = 0;
+    let oneYearPeakR = 0;
+
+    const candidateDaily = cachedEntry.dailyReturns || state.dailyNetR || {};
+    const dailyKeys = Object.keys(candidateDaily);
+
+    if (dailyKeys.length > 0) {
+      const lastDateStr = globalDates.length > 0 ? globalDates[globalDates.length - 1] : dailyKeys.sort()[dailyKeys.length - 1];
+      const cutoffDate = new Date(new Date(lastDateStr).getTime() - 365.25 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+
+      let runningR = 0;
+      for (const [d, dayR] of Object.entries(candidateDaily)) {
+        if (d >= cutoffDate) {
+          const val = dayR as number;
+          oneYearNetR += val;
+          runningR += val;
+          if (runningR > oneYearPeakR) oneYearPeakR = runningR;
+          const dd = oneYearPeakR - runningR;
+          if (dd > oneYearMaxDd) oneYearMaxDd = dd;
+
+          if (val !== 0) {
+            oneYearTrades++;
+          }
+        }
+      }
+
+      // Hard 1-Year Positivity Gate:
+      // Reject any decaying setup that fails the 1-year performance floor:
+      // Mage/Sage: Net R < 3.0 R, Trades < 4, Max DD > 12.0 R.
+      // Seer: Net R < 1.5 R, Trades < 2, Max DD > 12.0 R.
+      const minRequired1YrR = botType === "Seer" ? 1.5 : 3.0;
+      const minRequired1YrTrades = botType === "Seer" ? 2 : 4;
+      if (oneYearNetR < minRequired1YrR || oneYearTrades < minRequired1YrTrades || oneYearMaxDd > 12.0) {
+        return;
+      }
+    }
+
+    // Dual-track classification
+    const maxDdCeiling = (botType === "Mage") ? 18.0 : 14.0;
+    const isTrackA = (
+      r >= 7.0 &&
+      calmar >= 1.20 &&
+      maxDd <= maxDdCeiling &&
+      exp >= 0.035
+    );
+
+    const isTrackB = (
+      r >= 2.0 &&
+      maxDd <= 18.0 &&
+      exp >= 0.02
+    );
+
+    if (!isTrackA && !isTrackB) return;
+
+    // Create hydrated component
+    const dailyReturns = cachedEntry.dailyReturns || state.dailyNetR || {};
+    const dailyRArray = new Float64Array(globalDates.length);
+    for (let i = 0; i < globalDates.length; i++) {
+      dailyRArray[i] = dailyReturns[globalDates[i]] || 0;
+    }
+
+    const comp: IndependentSynthesisComponent = {
+      symbol,
+      botType,
+      setup: setupStr,
+      totalTrades: trades,
+      threeYearTrades: trades,
+      totalTotalR: r,
+      threeYearNetR: r,
+      maxDrawdown: maxDd,
+      threeYearMaxDrawdown: maxDd,
+      sharpeRatio: state.sharpeRatio || (calmar * 0.8),
+      sortinoRatio: state.sortinoRatio || (calmar * 1.0),
+      recoveryFactor: calmar,
+      hedgeScore: 1.0,
+      profitFactor: pf,
+      threeYearProfitFactor: pf,
+      deflatedSharpeRatio: 1.0,
+      dsrProb: 0.5,
+      periodReturns: Object.values(dailyReturns),
+      dailyReturns,
+      dailyRArray,
+      winRate,
+      threeYearWinRate: winRate,
+      recentTwoMonthR: 0,
+      recentThreeMonthR: 0,
+      recentMomentumR: 0,
+      recentOneYearR: oneYearNetR,
+      recentQuarterR: 0,
+      curvatureBeta2: 0,
+      regimeRatio: 1.0,
+      omegaRatio: 1.0,
+      cvar95: 0,
+      sampleConfidence: 1.0,
+      forceCloseHours: 0,
+      recentSixMonthTrades: 0,
+      recentSixMonthWinRate: winRate,
+      seasonalMultiplier: 1.0,
+      wfMultiplier: 1.0,
+      stepMean: 0,
+      maxStepLoss: 0,
+      hasLosingMonth: false,
+      hasLosingWeek: false,
+      hasLosingDay: false,
+      avgWinR: avgWin
+    };
+
+    (comp as any).track = isTrackA ? "TRACK_A" : "TRACK_B";
+    survivingPool.push(comp);
   };
 
-  for (const mState of mageData) processRawState(mState, "Mage");
-  for (const sState of sageData) processRawState(sState, "Sage");
+  for (const mState of mageData) processCandidate(mState, "Mage");
+  for (const sState of sageData) processCandidate(sState, "Sage");
+  for (const eState of seerData) processCandidate(eState, "Seer");
 
-  // ── 2. ACTIVE 3-YEAR CSV AUDIT HARD GATE (With Smart Memoization Cache & High-Speed Trigger Math) ──
-  if (!skipAudit && validComponents.length > 0) {
-    const cache = loadAuditCache();
-    const candleData = await getOrLoadSymbolCandleData(symbol);
-    const startDate = candleData ? candleData.startDate : "2023-08-03";
-    const endDate = candleData ? candleData.endDate : "2026-08-03";
+  // Composite Hedge Score calculation
+  if (survivingPool.length > 0) {
+    const allSharpes = survivingPool.map(p => p.sharpeRatio).sort((a, b) => a - b);
+    const allRecoveries = survivingPool.map(p => p.recoveryFactor).sort((a, b) => a - b);
+    const allPFs = survivingPool.map(p => (p.threeYearProfitFactor || 1)).sort((a, b) => a - b);
 
-    for (let i = validComponents.length - 1; i >= 0; i--) {
-      const p = validComponents[i];
-      const cacheKey = `${p.botType}_${p.symbol}_${p.setup}_${startDate}_${endDate}`;
-      let auditResult: AuditCacheEntry | null = cache[cacheKey] || null;
-
-      if (!auditResult && candleData) {
-        try {
-          let res: any;
-          const cfg = parseSetupToConfig(p.setup, p.symbol, p.botType === "Sage");
-          const session = cfg.session || "london";
-          res = p.botType === "Sage"
-            ? evaluateSageExits(
-                candleData.m1Typed,
-                candleData.m5Candles,
-                getSageTriggers(candleData, p.symbol, session, cfg),
-                p.symbol,
-                cfg,
-                session,
-                candleData.isForex
-              )
-            : evaluateMageExits(
-                candleData.m1Typed,
-                candleData.m5Candles,
-                getMageTriggers(candleData, p.symbol, session, cfg),
-                p.symbol,
-                cfg,
-                session,
-                candleData.isForex
-              );
-          
-          const records: any[] = (res as any).records || (res as any).tradeRecords || (Array.isArray(res) ? res : []);
-          const traded = records.filter(r => r.outcome !== 'SKIPPED');
-          
-          if (traded.length > 0) {
-            const wins = traded.filter(r => (r.rMultiple || r.pips || 0) > 0).length;
-            const totalNetR = traded.reduce((sum, r) => sum + (r.rMultiple || 0), 0);
-            const trades = traded.length;
-            const winRate = (wins / trades) * 100;
-
-            // ── 1-Year Win Rate Calculation (Last 365 Days) ──
-            const oneYearAgoMs = new Date(endDate).getTime() - 365 * 24 * 60 * 60 * 1000;
-            const recentOneYearTrades = traded.filter(r => {
-              const d = r.exitTime || r.entryTime || r.date || r.time;
-              if (!d) return false;
-              const tMs = new Date(d).getTime();
-              return tMs >= oneYearAgoMs;
-            });
-            const recentOneYearWins = recentOneYearTrades.filter(r => (r.rMultiple || r.pips || 0) > 0).length;
-            const oneYearWinRate = recentOneYearTrades.length > 0 ? (recentOneYearWins / recentOneYearTrades.length) * 100 : winRate;
-
-            // ── Multi-Regime Half-Year & Monthly Breakdown ──
-            const halfYears: Record<string, number> = {};
-            const monthlyNetR: Record<string, number> = {};
-            const dailyReturns: Record<string, number> = {};
-            const sourceDailyR: Record<string, number> = (res as any).dailyNetR || {};
-            if (Object.keys(sourceDailyR).length > 0) {
-              for (const [dateStr, r] of Object.entries(sourceDailyR)) {
-                const dayKey = dateStr;
-                const year = dateStr.substring(0, 4);
-                const month = parseInt(dateStr.substring(5, 7), 10);
-                const mKey = dateStr.substring(0, 7);
-                monthlyNetR[mKey] = (monthlyNetR[mKey] || 0) + (r as number);
-                dailyReturns[dayKey] = (dailyReturns[dayKey] || 0) + (r as number);
-
-                if (!isNaN(month)) {
-                  const half = month <= 6 ? "H1" : "H2";
-                  const key = `${year}_${half}`;
-                  halfYears[key] = (halfYears[key] || 0) + (r as number);
-                }
-              }
-            } else {
-              for (const r of traded) {
-                const d = r.exitTime || r.entryTime || r.date || r.time;
-                if (!d) continue;
-                const dStr = typeof d === "string" ? d : (d.toISOString ? d.toISOString() : String(d));
-                const dayKey = dStr.substring(0, 10);
-                const year = dStr.substring(0, 4);
-                const month = parseInt(dStr.substring(5, 7), 10);
-                const mKey = dStr.substring(0, 7);
-                monthlyNetR[mKey] = (monthlyNetR[mKey] || 0) + (r.rMultiple || 0);
-                dailyReturns[dayKey] = (dailyReturns[dayKey] || 0) + (r.rMultiple || 0);
-
-                if (!isNaN(month)) {
-                  const half = month <= 6 ? "H1" : "H2";
-                  const key = `${year}_${half}`;
-                  halfYears[key] = (halfYears[key] || 0) + (r.rMultiple || 0);
-                }
-              }
-            }
-            const halfKeys = Object.keys(halfYears);
-            const posHalves = halfKeys.filter(k => halfYears[k] > 0).length;
-            const consistency = halfKeys.length > 0 ? (posHalves / halfKeys.length) * 100 : 0;
-
-            // ── Consecutive Prior-Year Monthly Loss Hard Gate ──────────────────
-            // Reject any config that had negative R in the same calendar month
-            // last year (e.g. August 2025) AND in the next month last year (September 2025).
-            const endYear = parseInt(endDate.substring(0, 4), 10);
-            const endMonth = parseInt(endDate.substring(5, 7), 10);
-            const priorYear = endYear - 1;
-            const nextMonth = endMonth === 12 ? 1 : endMonth + 1;
-            const nextMonthYear = endMonth === 12 ? endYear : priorYear;
-
-            const priorSameMonthKey = `${priorYear}-${String(endMonth).padStart(2, "0")}`;
-            const priorNextMonthKey = `${nextMonthYear}-${String(nextMonth).padStart(2, "0")}`;
-
-            const priorSameR = monthlyNetR[priorSameMonthKey] ?? 0;
-            const priorNextR = monthlyNetR[priorNextMonthKey] ?? 0;
-            const hasConsecutivePriorYearLoss = (priorSameR < 0 || priorNextR < 0);
-
-            // Chronological sort for 100% exact drawdown calculation
-            traded.sort((a, b) => {
-              const timeA = a.timestamp || (a.entryTimeMs ?? new Date(a.exitTime || a.entryTime || a.date || a.time).getTime());
-              const timeB = b.timestamp || (b.entryTimeMs ?? new Date(b.exitTime || b.entryTime || b.date || b.time).getTime());
-              return timeA - timeB;
-            });
-
-            // Compute 3-year max drawdown and profit factor from chronologically sorted trade records
-            let peak = 0;
-            let running = 0;
-            let maxDd = 0;
-            let grossProfit = 0;
-            let grossLoss = 0;
-            for (const r of traded) {
-              const val = (r.rMultiple || 0);
-              running += val;
-              if (running > peak) peak = running;
-              const dd = peak - running;
-              if (dd > maxDd) maxDd = dd;
-              if (val > 0) grossProfit += val;
-              else if (val < 0) grossLoss += Math.abs(val);
-            }
-            const pf = grossLoss > 0 ? grossProfit / grossLoss : (grossProfit > 0 ? 5.0 : 1.0);
-
-            // Compute 1-year max drawdown on recent 12 months (chronologically sorted)
-            recentOneYearTrades.sort((a, b) => {
-              const timeA = a.timestamp || (a.entryTimeMs ?? new Date(a.exitTime || a.entryTime || a.date || a.time).getTime());
-              const timeB = b.timestamp || (b.entryTimeMs ?? new Date(b.exitTime || b.entryTime || b.date || b.time).getTime());
-              return timeA - timeB;
-            });
-            let peak1Yr = 0;
-            let running1Yr = 0;
-            let oneYearMaxDd = 0;
-            for (const r of recentOneYearTrades) {
-              const val = (r.rMultiple || 0);
-              running1Yr += val;
-              if (running1Yr > peak1Yr) peak1Yr = running1Yr;
-              const dd = peak1Yr - running1Yr;
-              if (dd > oneYearMaxDd) oneYearMaxDd = dd;
-            }
-
-            auditResult = {
-              threeYearNetR: totalNetR,
-              threeYearTrades: trades,
-              threeYearWinRate: winRate,
-              oneYearWinRate: oneYearWinRate,
-              regimeConsistency: consistency,
-              threeYearMaxDrawdown: maxDd,
-              oneYearMaxDrawdown: oneYearMaxDd,
-              threeYearProfitFactor: pf,
-              hasConsecutivePriorYearLoss,
-              dailyReturns,
-              monthlyNetR,
-            };
-            cache[cacheKey] = auditResult;
-            cacheDirty = true;
-          } else {
-            auditResult = {
-              threeYearNetR: 0,
-              threeYearTrades: 0,
-              threeYearWinRate: 0,
-              oneYearWinRate: 0,
-              regimeConsistency: 0,
-              threeYearMaxDrawdown: 0,
-              threeYearProfitFactor: 1.0,
-              hasConsecutivePriorYearLoss: false,
-            };
-            cache[cacheKey] = auditResult;
-            cacheDirty = true;
-          }
-        } catch (e) {
-          // Backtest failure
-        }
-      }
-
-      if (auditResult) {
-        p.threeYearNetR = auditResult.threeYearNetR;
-        p.threeYearTrades = auditResult.threeYearTrades;
-        p.totalTotalR = auditResult.threeYearNetR;
-        p.totalTrades = auditResult.threeYearTrades;
-        p.threeYearWinRate = auditResult.threeYearWinRate;
-        p.threeYearMaxDrawdown = auditResult.threeYearMaxDrawdown ?? 1.0;
-        p.maxDrawdown = p.threeYearMaxDrawdown;
-        (p as any).oneYearMaxDrawdown = auditResult.oneYearMaxDrawdown ?? 1.0;
-        p.threeYearProfitFactor = auditResult.threeYearProfitFactor ?? 1.5;
-        p.profitFactor = p.threeYearProfitFactor;
-        p.recoveryFactor = p.maxDrawdown > 0 ? p.threeYearNetR / p.maxDrawdown : p.threeYearNetR * 2.0;
-        p.recentSixMonthWinRate = auditResult.oneYearWinRate ?? auditResult.threeYearWinRate;
-        p.winRate = auditResult.threeYearWinRate;
-        p.regimeConsistency = auditResult.regimeConsistency;
-        p.hasConsecutivePriorYearLoss = auditResult.hasConsecutivePriorYearLoss;
-        if (auditResult.dailyReturns) {
-          p.dailyReturns = auditResult.dailyReturns;
-        }
-
-        const monthlyR = auditResult.monthlyNetR || {};
-        const targetMonths13 = getRollingMonthKeys(endDate, 13);
-        const recent1YearMonths = targetMonths13.slice(-12);
-        const recent6Months = targetMonths13.slice(-6);
-        const recentQuarterMonths = targetMonths13.slice(-3);
-        const recent2Months = targetMonths13.slice(-2);
-
-        const r1Year = recent1YearMonths.reduce((sum, m) => sum + (monthlyR[m] || 0), 0);
-        const rRecent6M = recent6Months.reduce((sum, m) => sum + (monthlyR[m] || 0), 0);
-        const rRecentQuarter = recentQuarterMonths.reduce((sum, m) => sum + (monthlyR[m] || 0), 0);
-        const rRecent2M = recent2Months.reduce((sum, m) => sum + (monthlyR[m] || 0), 0);
-
-        const lastMonthR = monthlyR[targetMonths13[targetMonths13.length - 1]] || 0;
-        const secondLastMonthR = monthlyR[targetMonths13[targetMonths13.length - 2]] || 0;
-        const hasConsecutiveRecentLosses = lastMonthR < -0.5 && secondLastMonthR < -0.5;
-
-        const expectancy = p.threeYearTrades > 0 ? p.threeYearNetR / p.threeYearTrades : 0;
-        const calmar = p.threeYearMaxDrawdown > 0 ? p.threeYearNetR / p.threeYearMaxDrawdown : p.threeYearNetR;
-        const oneYrMaxDd = (p as any).oneYearMaxDrawdown || 0;
-        const oneYrCalmar = oneYrMaxDd > 0 ? r1Year / oneYrMaxDd : r1Year;
-        const effectiveOneYearWR = auditResult.oneYearWinRate ?? auditResult.threeYearWinRate;
-
-        // Dynamic Pristine Champion Gates: Ensure pristine alpha, high calmar, and extreme monthly consistency
-        let losingMonths13 = 0;
-        const monthlyValues: number[] = [];
-        for (const m of targetMonths13) {
-          const mVal = monthlyR[m] || 0;
-          monthlyValues.push(mVal);
-          if (mVal < -0.2) losingMonths13++;
-        }
-
-        // Linear slope across rolling months to detect decaying vs accelerating setups
-        const nMonths = monthlyValues.length;
-        let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
-        for (let idx = 0; idx < nMonths; idx++) {
-          sumX += idx;
-          sumY += monthlyValues[idx];
-          sumXY += idx * monthlyValues[idx];
-          sumXX += idx * idx;
-        }
-        const slope = (nMonths * sumXY - sumX * sumY) / (nMonths * sumXX - sumX * sumX);
-
-        const marRatio = p.threeYearMaxDrawdown > 0 ? p.threeYearNetR / p.threeYearMaxDrawdown : p.threeYearNetR;
-        const actualMaxDd = p.threeYearMaxDrawdown || p.maxDrawdown || 0;
-
-        const maxDdCeiling = (p.botType === "Mage" || p.botType === "Seer") ? 14.0 : 10.0;
-        const oneYrCalmarFloor = (p.threeYearNetR >= 80.0 && r1Year >= 15.0) ? 1.30 : 2.0;
-        if (
-          p.threeYearNetR < 5.0 ||
-          p.threeYearTrades < 10 ||
-          expectancy < 0.04 ||
-          calmar < 2.0 ||
-          marRatio < 2.0 || // Hard MAR Gate
-          actualMaxDd > maxDdCeiling || // Hard 3-Year Max Drawdown Gate (<= 14R for Mage/Seer, <= 10R for Sage)
-          oneYrMaxDd > maxDdCeiling || // Hard 1-Year Max Drawdown Gate (<= 14R for Mage/Seer, <= 10R for Sage)
-          (p.threeYearProfitFactor && p.threeYearProfitFactor < 1.15) || // Profit factor floor
-          r1Year < 2.0 || // Rolling 12M must be at least +2R
-          oneYrCalmar < oneYrCalmarFloor || // Rolling 12M Calmar must be at least 2.0
-          rRecent6M < 0.5 || // Recent 6 months must be positive (> +0.5R)
-          rRecentQuarter < -3.0 || // Recent quarter cannot have severe drop (< -3R)
-          slope < -1.5 || // Reject setups with steep decaying trajectory
-          losingMonths13 > 6 ||
-          effectiveOneYearWR < 20.0 ||
-          (p.regimeConsistency !== undefined && p.regimeConsistency < 30.0)
-        ) {
-          validComponents.splice(i, 1);
-          continue;
-        }
-        (p as any).r1Year = r1Year;
-        (p as any).rRecent6M = rRecent6M;
-        (p as any).recentQuarter = rRecentQuarter;
-        (p as any).slope = slope;
-        (p as any).calmar = calmar;
-        (p as any).oneYearMaxDrawdown = oneYrMaxDd;
-        (p as any).oneYearCalmar = oneYrCalmar;
-        (p as any).losingMonths = losingMonths13;
-      } else {
-        validComponents.splice(i, 1);
-        continue;
-      }
-    }
-  }
-
-  flushAuditCache();
-
-  if (validComponents.length > 0) {
-    const allSharpes = validComponents.map((p) => p.sharpeRatio).sort((a, b) => a - b);
-    const allRecoveries = validComponents.map((p) => p.recoveryFactor).sort((a, b) => a - b);
-    const allPFs = validComponents.map((p) => (p.threeYearProfitFactor || 1)).sort((a, b) => a - b);
-
-    for (const p of validComponents) {
-      if ((p.totalTrades || 0) < minTrades) {
-        p.hedgeScore = 0;
-        continue;
-      }
-
+    for (const p of survivingPool) {
       const sharpeRank = rankPercentile(p.sharpeRatio, allSharpes);
       const recoveryRank = rankPercentile(p.recoveryFactor, allRecoveries);
       const pfRank = rankPercentile(p.threeYearProfitFactor || 1, allPFs);
 
-      const baseSym = p.symbol.split('.')[0].toUpperCase();
-      const config = OPTIMIZER_CONFIG[baseSym];
+      const config = OPTIMIZER_CONFIG[cleanSym];
       const spread = config ? config.spread : 2.0;
 
       let spreadBoost = 1.0;
-      if (spread <= 1.3) {
-        spreadBoost = 1.60;
-      } else if (spread <= 1.7) {
-        spreadBoost = 1.35;
-      } else if (spread <= 2.0) {
-        spreadBoost = 1.15;
-      }
+      if (spread <= 1.3) spreadBoost = 1.40;
+      else if (spread <= 1.7) spreadBoost = 1.25;
+      else if (spread <= 2.0) spreadBoost = 1.10;
 
-      const r1Yr = (p as any).r1Year ?? p.totalTotalR;
-      const r6M = (p as any).rRecent6M ?? 0;
-      const rq = (p as any).recentQuarter ?? 0;
-      const calmarVal = (p as any).calmar ?? p.recoveryFactor;
-
-      // Dynamic Recency Acceleration Booster: heavily favors setups gaining momentum in recent 6M / Quarter
-      const recencyBoost = (1.0 + Math.max(0, r6M / 15.0)) * (1.0 + Math.max(0, rq / 5.0));
-      const alphaBoost = (1.0 + Math.max(0, r1Yr / 40.0)) * Math.min(3.0, Math.max(0.5, calmarVal / 2.0));
-
-      p.hedgeScore = sharpeRank * recoveryRank * pfRank * spreadBoost * alphaBoost * recencyBoost;
+      const trackBoost = (p as any).track === "TRACK_A" ? 1.35 : 1.0;
+      p.hedgeScore = Math.max(0.01, sharpeRank * recoveryRank * pfRank * spreadBoost * trackBoost);
     }
   }
 
-  validComponents.sort((a, b) =>
-    (b.hedgeScore - a.hedgeScore) ||
-    (a.symbol || "").localeCompare(b.symbol || "") ||
-    (a.setup || "").localeCompare(b.setup || "")
-  );
+  // Diverse Archetype Selection: allow up to 6 archetypes per symbol per bot
+  const getBotArchetypes = (bot: "Mage" | "Sage" | "Seer"): IndependentSynthesisComponent[] => {
+    const botPool = survivingPool.filter(c => c.botType === bot);
+    botPool.sort((a, b) => (b.hedgeScore - a.hedgeScore) || a.setup.localeCompare(b.setup));
 
-  const mages = getEliteComponents(validComponents, "Mage", minTrades);
-  const sages = getEliteComponents(validComponents, "Sage", minTrades);
-  const normalList = [...mages, ...sages];
+    const groups = new Map<string, IndependentSynthesisComponent[]>();
+    for (const comp of botPool) {
+      const sig = extractSetupSignature(comp.setup, bot);
+      if (!groups.has(sig)) groups.set(sig, []);
+      groups.get(sig)!.push(comp);
+    }
 
-  // Release memory for this symbol's cached M1/M5 tick arrays and precomputed triggers
-  mageTriggerCache.clear();
-  sageTriggerCache.clear();
-  symbolCandleDataCache.delete(symbol);
+    const champions: IndependentSynthesisComponent[] = [];
+    for (const [_, cands] of groups.entries()) {
+      champions.push(cands[0]);
+    }
+    champions.sort((a, b) => b.hedgeScore - a.hedgeScore);
+    return champions.slice(0, 6); // Up to 6 distinct session archetypes!
+  };
 
-  return { normalList, rawValidCount: validComponents.length };
+  const mageChampions = getBotArchetypes("Mage");
+  const sageChampions = getBotArchetypes("Sage");
+  const seerChampions = getBotArchetypes("Seer");
+  const normalList = [...mageChampions, ...sageChampions, ...seerChampions];
+
+  return { normalList, rawValidCount: survivingPool.length };
 }
 
+export const preProcessDataNextGen = preProcessData;

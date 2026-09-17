@@ -137,31 +137,62 @@ export async function loadCsv(
       estHour,
     });
   }
-  csvCache.set(cacheKey, rows);
-  return rows;
+
+  // Sort chronologically and deduplicate to guarantee strict monotonicity
+  rows.sort((a, b) => a.timestamp - b.timestamp);
+  const dedupedRows: M1Row[] = [];
+  let lastTs = -1;
+  for (let i = 0; i < rows.length; i++) {
+    if (rows[i].timestamp !== lastTs) {
+      dedupedRows.push(rows[i]);
+      lastTs = rows[i].timestamp;
+    }
+  }
+  csvCache.set(cacheKey, dedupedRows);
+  return dedupedRows;
 }
 
 export function getLatestDate(csvPath: string): Date {
   const fd = fs.openSync(csvPath, "r");
   const stat = fs.fstatSync(fd);
-  const chunkSize = Math.min(stat.size, 2048);
+  const chunkSize = Math.min(stat.size, 65536);
   const buffer = Buffer.alloc(chunkSize);
   fs.readSync(fd, buffer, 0, chunkSize, stat.size - chunkSize);
   fs.closeSync(fd);
   const content = buffer.toString("utf-8").trim();
   const lines = content.split("\n");
-  const lastLine = lines[lines.length - 1];
-  let parts = lastLine.indexOf('\t') !== -1 ? lastLine.split('\t') : lastLine.split(',');
-  if (parts.length > 1) {
-    let datePart = parts[0];
-    let timePart = parts[1];
-    let dateStr = "";
-    if (lastLine.indexOf('\t') !== -1) {
-       dateStr = datePart.replace(/\./g, "-") + "T" + timePart + "Z";
-    } else {
-       dateStr = datePart.replace(/\./g, "-").replace(" ", "T") + "Z";
+  let maxTime = 0;
+  for (let i = lines.length - 1; i >= Math.max(0, lines.length - 200); i--) {
+    const line = lines[i].trim();
+    if (!line || line.startsWith("<")) continue;
+    let parts = line.indexOf('\t') !== -1 ? line.split('\t') : line.split(',');
+    if (parts.length > 1) {
+      const datePart = parts[0].replace(/\./g, "-");
+      const timePart = parts[1];
+      const ymd = datePart.split("-");
+      const hm = timePart.split(":");
+      if (ymd.length === 3 && hm.length >= 2) {
+        const yr = parseInt(ymd[0], 10);
+        const mon = parseInt(ymd[1], 10);
+        const dy = parseInt(ymd[2], 10);
+        const hr = parseInt(hm[0], 10);
+        const min = parseInt(hm[1], 10);
+        if (!isNaN(yr) && !isNaN(mon) && !isNaN(dy) && !isNaN(hr) && !isNaN(min)) {
+          const guessMs = Date.UTC(yr, mon - 1, dy, 12, 0, 0);
+          const fParts = helsinkiFmt.formatToParts(new Date(guessMs));
+          let formattedHour = parseInt(fParts.find((p) => p.type === "hour")!.value, 10);
+          if (formattedHour === 24) formattedHour = 0;
+          let eetDiff = formattedHour - 12;
+          if (eetDiff < -12) eetDiff += 24;
+          if (eetDiff > 12) eetDiff -= 24;
+
+          const tsMs = Date.UTC(yr, mon - 1, dy, hr - eetDiff, min);
+          if (tsMs > maxTime) {
+            maxTime = tsMs;
+          }
+        }
+      }
     }
-    return new Date(dateStr);
   }
-  return new Date(); // fallback
+  return maxTime > 0 ? new Date(maxTime) : new Date();
 }

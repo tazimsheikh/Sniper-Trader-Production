@@ -359,7 +359,8 @@ export function parseSetupString(
     output += `      "trailingSlStep": ${step},\n`;
     output += `      "forceCloseHours": ${fc},\n`;
     output += `      "maxOrbToAdrRatio": 0.65,\n`;
-    output += `      "rvrThresholds": { "lowCompression": 0.80, "goldenZoneMin": 1.25, "goldenZoneMax": 1.50 }\n`;
+    output += `      "rvrThresholds": { "lowCompression": 0.80, "goldenZoneMin": 1.25, "goldenZoneMax": 1.50 }`;
+    output += `\n`;
   }
 
   output += `  }`;
@@ -398,6 +399,31 @@ function parseSetupStringBody(
     if (baseProps.tickSize !== null) output += `    "tickSize": ${baseProps.tickSize},\n`;
     if (baseProps.pipSize !== null) output += `    "pipSize": ${baseProps.pipSize},\n`;
     if (baseProps.spread !== null) output += `    "spread": ${baseProps.spread},\n`;
+
+    const modernMatch = setupString.match(/^(\w+)_Body([\d.]+)_Wick([\d.]+)_MinSL([\d.]+)_MaxSL([\d.]+)_Trig([\d.]+)_Step([\d.]+)_FC(\d+)_Exit(\w+)(?:_VetoH1(true|false))?$/);
+    if (modernMatch) {
+      const [, sSession, sBody, sWick, sMinSL, sMaxSL, sTrig, sStep, sFC, sExit, sVetoH1] = modernMatch;
+      const session = sSession === "NY_Forex" ? "ny" : sSession;
+      output += `      "session": "${session}",\n`;
+      output += `      "minBodyPips": ${parseFloat(sBody)},\n`;
+      output += `      "pinBarWickBodyRatio": ${parseFloat(sWick)},\n`;
+      output += `      "minSlDist": ${parseFloat(sMinSL)},\n`;
+      output += `      "maxSlDist": ${parseFloat(sMaxSL)},\n`;
+      if (parseFloat(sTrig) > 0) output += `      "trailingSlTrigger": ${parseFloat(sTrig)},\n`;
+      if (parseFloat(sStep) > 0) output += `      "trailingSlStep": ${parseFloat(sStep)},\n`;
+      output += `      "forceCloseHours": ${parseInt(sFC, 10)},\n`;
+      output += `      "exitMode": "${sExit}"`;
+      if (sVetoH1 !== undefined) {
+        output += `,\n      "vetoCounterH1Structure": ${sVetoH1 === "true"}`;
+      }
+      if ((baseProps as any).riskPct !== undefined) {
+        output += `,\n      "riskPct": ${(baseProps as any).riskPct}\n`;
+      } else {
+        output += `\n`;
+      }
+      output += `    }`;
+      return { key: pair, body: output };
+    }
 
     const getNum = (label: string) => {
       const match = setupString.match(new RegExp(`${label}=([\\d\\.]+)`));
@@ -545,21 +571,39 @@ function parseSetupStringBody(
 
     const pct = rawEntryPenetration !== undefined ? rawEntryPenetration : parsedPct;
 
+    const cleanPair = pair.replace(/\.daily$/i, "").split("_")[0];
+    let finalReqCls = reqCls;
+    if (cleanPair === "USDCHF") finalReqCls = true;
+
+    let finalTrig = trig;
+    let finalStep = step;
+    let finalMinSl = minSl;
+
+    if (cleanPair === "USDCHF") {
+      finalTrig = 0.5;
+      finalStep = 0.5;
+    } else if (cleanPair === "USDCAD") {
+      finalTrig = 1;
+      finalStep = 0.5;
+    } else if (cleanPair === "AUDJPY") {
+      finalMinSl = Math.max(minSl, 30);
+    }
+
     output += `      "session": "${sessionName}",\n`;
     output += `      "orbEnabled": true,\n`;
     output += `      "orbStartHour": ${startH},\n`;
     output += `      "orbStartMin": ${startM},\n`;
     output += `      "orbMinutes": ${orbMins},\n`;
     if (actMins !== undefined && !isNaN(actMins)) output += `      "actionMinutes": ${actMins},\n`;
-    output += `      "minSlDist": ${minSl},\n`;
+    output += `      "minSlDist": ${finalMinSl},\n`;
     output += `      "maxSlDist": ${maxSl},\n`;
     output += `      "entryPenetrationPct": ${pct},\n`;
     output += `      "sweepPips": ${sweep},\n`;
     output += `      "maxSweepMultiplier": ${maxSwp},\n`;
-    output += `      "requireCloseInside": ${reqCls},\n`;
+    output += `      "requireCloseInside": ${finalReqCls},\n`;
     output += `      "exitMode": "${exitModeStr}",\n`;
-    output += `      "trailingSlTrigger": ${trig},\n`;
-    output += `      "trailingSlStep": ${step},\n`;
+    output += `      "trailingSlTrigger": ${finalTrig},\n`;
+    output += `      "trailingSlStep": ${finalStep},\n`;
     output += `      "forceCloseHours": ${fc}`;
     
     const finalMaxBody = rawMaxBody !== undefined ? rawMaxBody : maxBody;
@@ -568,31 +612,7 @@ function parseSetupStringBody(
     }
     if (rawHtfAlign !== undefined) {
        output += `,\n      "htfAlignmentRequired": ${rawHtfAlign}`;
-    } else {
-       output += `,\n      "htfAlignmentRequired": true`;
     }
-
-    const isCrypto = pair.includes("BTC") || pair.includes("ETH");
-    const isIndex = ["US30", "NAS100", "SPX500", "GER40", "UK100", "JPN225"].some(idx => pair.includes(idx));
-    const isJpyCross = pair.includes("JPY");
-    const isAsiaSession = sessionName === "asia";
-
-    let useHtfSar = true;
-    if (isCrypto) useHtfSar = false;
-    if (isIndex && isAsiaSession) useHtfSar = false;
-    if (isJpyCross && !pair.includes("GBP")) useHtfSar = false;
-    if (pair === "NZDUSD") useHtfSar = false;
-    
-    let reqCloseHalf = false;
-    if (isIndex && !isAsiaSession) reqCloseHalf = true;
-    if (pair === "USDCAD" || pair === "GBPJPY" || pair === "BTCUSD") reqCloseHalf = true;
-    
-    const wbr = (pair.includes("EURUSD") || (pair.includes("CHFJPY") && !isAsiaSession)) ? 1.75 : 1.5;
-
-    output += `,\n      "maxH1EmaSlope": 20`;
-    output += `,\n      "useHtfSarFilter": ${useHtfSar}`;
-    output += `,\n      "requireCloseLocationHalf": ${reqCloseHalf}`;
-    output += `,\n      "minWbr": ${wbr}`;
     output += `\n`;
   } else {
     const body = findNum("Body") ?? 0;
@@ -625,7 +645,15 @@ function parseSetupStringBody(
     output += `      "exitMode": "${exitModeStr}",\n`;
     output += `      "trailingSlTrigger": ${trig},\n`;
     output += `      "trailingSlStep": ${step},\n`;
-    output += `      "forceCloseHours": ${fc}\n`;
+    output += `      "forceCloseHours": ${fc}`;
+
+    const cleanPair = pair.replace(/\.daily$/i, "").split("_")[0];
+    const slMode = (cleanPair === "GBPJPY" || cleanPair === "XAUUSD" || cleanPair === "GER40")
+      ? "MIDPOINT"
+      : "OPPOSITE_BOUNDARY";
+    output += `,\n      "slMode": "${slMode}"`;
+
+    output += `\n`;
   }
 
   if ((baseProps as any).riskPct !== undefined) {

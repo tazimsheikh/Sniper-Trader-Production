@@ -63,245 +63,326 @@ The system is divided into three **completely isolated** bots. Never intertwine 
 
 ## 🗂️ Complete Codebase File Map
 
-### `/server/core/` — Platform Infrastructure
+> ⚠️ AUTO-GENERATED EXHAUSTIVE BLUEPRINT. EVERY FILE IS DOCUMENTED HERE.
 
-| File | Role |
-|------|------|
-| `auth.ts` | All HTTP authentication endpoints, session management, `deduplicateRequest` Promise cache to prevent DB pool exhaustion (max 20 connections). |
-| `db.ts` | SQLite database module. Owns the `trading_profiles` table with `dwcb_enabled`, `dwcb_peak_balance` for the Daily Drawdown Circuit Breaker. |
-| `socket.ts` | WebSocket server. Broadcasts real-time trade updates to the frontend dashboard. |
-| `crypto.ts` | AES decryption for MetaApi Account IDs stored encrypted in the database. |
-| `email.ts` | Email notification dispatch (trade alerts, drawdown warnings). |
-| `settings.ts` | User-facing settings endpoints (risk parameters, enabled bots, lot sizing rules). |
+### `/server/core/`
 
----
+| File | Technical Role & Exports |
+|------|--------------------------|
+| `auth.ts` | Exports: const authRouter, interface AuthRequest, const authLimiter, const calendarLimiter, const tradeLimiter, const requireAuth |
+| `candleDb.ts` | Exports: function loadCachedM5CandlesLocal, function saveM5CandlesToCacheLocal, function pruneOldM5CandlesLocal, default candleDb<br/>*Purpose: candleDb.ts     Local SQLite store for M5 candle cache.   This keeps bulk candle data OFF Supabase (cross-cloud, high latency)   and on the local VM d...* |
+| `crypto.ts` | Exports: function encrypt, function decrypt, function isEncrypted, function getShortHash<br/>*Purpose: Encrypts a plaintext string using AES-256-GCM.   Returns a colon-delimited string: iv:authTag:ciphertext (all hex-encoded)....* |
+| `db.ts` | Exports: default db |
+| `email.ts` | Internal logic / Config<br/>*Purpose: Sends a 6-digit verification code (OTP) to the specified email address.   If SMTP environment variables are not configured, it will log the OTP direct...* |
+| `settings.ts` | Exports: const settingsRouter |
+| `socket.ts` | Exports: function startProfileBalanceInterval, function initSocket, function getIO, function broadcastTradeOpened, function broadcastTradeClosed, function broadcastEngineStatus, function broadcastNewsUpdate |
 
-### `/server/news/` — Macro Event Intelligence
+### `/server/manager/`
 
-| File | Role |
-|------|------|
-| `newsStore.ts` | Fetches and caches high-impact economic calendar events (NFP, CPI, FOMC). Exposes `isHighImpactNews(dateStr, hour, minute)` used by every engine to block trades. |
-| `newsAgent.ts` | Background task that periodically refreshes the news cache from external APIs. |
+| File | Technical Role & Exports |
+|------|--------------------------|
+| `tradeManager.ts` | Exports: function deleteProfileTradeState |
+| `tradeUtils.ts` | Exports: interface SafetyStatus, const safetyStatusMap, function deleteProfileBotInstances, const BOT_REGISTRY, const ALL_BOT_CONFIGS, interface SwingPoint, function detectSwingPoints<br/>*Purpose: Bill Williams 5-Bar Fractal Algorithm   A Swing Low is strictly lower than 2 candles left and right.   A Swing High is strictly higher than 2 candles ...* |
 
----
+### `/server/news/`
 
-### `/server/utils/` — Shared System Utilities
+| File | Technical Role & Exports |
+|------|--------------------------|
+| `newsFetcher.ts` | Internal logic / Config<br/>*Purpose: Fetches the economic calendar directly from Forex Factory using the   open-source forexfactory-scraper package. This bypasses the need for   any API k...* |
+| `newsStore.ts` | Exports: interface CalendarEvent, function setCachedEventsForTesting, function getSyntheticCalendarFallback, function isNewsBlackout, function shouldForceCloseForNews, function getUpcomingNewsForPair<br/>*Purpose: Get the set of pairs that should be blocked for a given event.   Systemic events block ALL traded pairs.   Direct events block only pairs that contain...* |
 
-| File | Role |
-|------|------|
-| `GlobalTradeGate.ts` | The global concurrency gate. Prevents two bots from placing trades simultaneously on the same account. |
-| `MetaApiQueue.ts` | Serial queue for all MetaApi broker calls. Prevents API rate-limit violations. |
-| `VisionApiQueue.ts` | Serial queue for Gemini Vision API calls (Seer bot only). |
-| `DwcbCalculator.ts` | Calculates whether the Daily Drawdown Circuit Breaker has been hit for a given account. |
-| `PropFirmRiskMonitor.ts` | Monitors prop firm rule compliance (max daily loss, max total drawdown). |
-| `discoverSymbols.ts` | On startup, discovers all available symbols from the connected MetaApi account. |
-| `ensureMetaApiReliability.ts` | Wraps MetaApi calls with retry logic and timeout handling. |
-| `logger.ts` | Structured console logger with timestamps and log levels. |
-| `magicNumber.ts` | Encodes/decodes the MetaTrader "magic number" embedded in each live order to identify which bot placed it and on which pair. |
-| `trade_cleanup.ts` | Utility to remove orphaned/stale trade records from the database. |
+### `/server/trading/ai/`
 
----
+| File | Technical Role & Exports |
+|------|--------------------------|
+| `ChartRenderer.ts` | Exports: function renderChart, function getChartWindow<br/>*Purpose: Determine which candles to include in the chart.   Shows the last `windowBars` M5 candles ending at index `currentIdx`....* |
+| `PromptVault.ts` | Exports: const PROMPT_OVERRIDES, const PAIR_WIDE_OVERRIDES, class PromptVault<br/>*Purpose: A registry of surgical prompt overrides for specific pairs and setups.   Structure: OVERRIDES[pair][setupType] = string...* |
+| `StacyBurkePrompt.ts` | Exports: const STACY_BURKE_SYSTEM_PROMPT, function buildSystemPrompt, const buildChartAnalysisPrompt |
+| `VisionEvaluator.ts` | Exports: class VisionEvaluator |
 
-### `/server/trading/config/` — Immutable Configuration Layer
+### `/server/trading/backtester/`
 
-| File | Role |
-|------|------|
-| `types.ts` | **The single source of truth for all TypeScript interfaces.** `TradeRecord`, `AggregatedCandle`, `MageConfig`, `SageConfig`, `SageOptimizerConfig`, `M1Row`, `M1TypedArrays`, `TriggerEvent`. **Never re-declare these interfaces anywhere else.** |
-| `OptimizerPairConfig.ts` | Locked, immutable per-pair constants: `pipSize`, `spread` (in pips), `contractSize`. Used by the optimizer during backtesting. |
-| `PairConfig.ts` | Runtime configuration loader. Exports `PairConfigManager` class with helpers: `getRepresentativeConfig(pair)`, `isForex(pair)`, `getBaseSymbol(order.symbol)`. Also exports `MAGE_PAIR_CONFIG`, `SAGE_PAIR_CONFIG`, `SEER_PAIR_CONFIG`, `BLACKSWAN_PAIR_CONFIG`. |
+| File | Technical Role & Exports |
+|------|--------------------------|
+| `loadCsv.ts` | Exports: function clearCsvCache, function getLatestDate |
+| `MageMathBacktester.ts` | Exports: function clearMageBacktestCache |
+| `MageMathBacktesterExp.ts` | Internal logic / Config |
+| `OrchestratorShadowBacktester.ts` | Internal logic / Config |
+| `SageMathBacktester.ts` | Exports: function clearSageBacktestCache |
+| `SeerMathBacktester.ts` | Exports: function clearSeerBacktestCache |
+| `SeerVisionBacktester.ts` | Internal logic / Config |
 
----
+### `/server/trading/backtester/math_core/`
 
-### `/server/trading/market/` — Market Pre-Filters & Context
+| File | Technical Role & Exports |
+|------|--------------------------|
+| `MageMathCore.ts` | Exports: function preComputeTriggers, function evaluateExits |
+| `MathCoreUtils.ts` | Exports: const PRICE_EPSILON, const gte, const lte, function getFixedEstDate, function buildM1TypedArrays |
+| `SageMathCore.ts` | Exports: function getActionCandle, function preComputeTriggers, function evaluateExits |
+| `SeerMathCore.ts` | Internal logic / Config |
 
-| File | Role |
-|------|------|
-| `CandleAggregator.ts` | Aggregates M1 rows into M5 or any N-minute candles. Attaches `m1StartIndex` to each M5 candle for fast M1 indexing. |
-| `DailyContextTracker.ts` | Tracks rolling 3-day high/low, day-of-week, and daily open. Used by MageEngine to filter low-context days. |
-| `HTFContextTracker.ts` | Higher Timeframe context tracker. Monitors weekly/daily trend bias. |
-| `Indicators.ts` | Pure math indicator library: ATR, EMA, RSI, Bollinger Bands. Used by Seer for chart analysis. |
-| `MathFilters.ts` | Shared pre-trade filters: `isEODSession()`, `isRolloverCircuitBreaker()`. Prevents trading during the 4:55–5:05 PM EST rollover window. |
-| `historicalNews.ts` | Static `Set<string>` objects: `NFP_DATES`, `CPI_DATES`, `FOMC_DATES`. Used by the math backtester (which cannot call the live newsStore). |
+### `/server/trading/backtester/stubs/`
 
----
+| File | Technical Role & Exports |
+|------|--------------------------|
+| `crypto.stub.ts` | Exports: function isEncrypted, function decrypt, function getShortHash, default |
+| `db.stub.ts` | Exports: function setSimulatedTime, function getSimulatedTime, function addBotLog, default db |
+| `globalTradeGate.stub.ts` | Exports: const globalTradeGate, default |
+| `metaApiHandler.stub.ts` | Exports: function getSharedConnection, function getSharedAccount, function getSymbolSpec, function safeDecryptAccountId, function getBrokerSymbol, function clearSharedConnection, function forceRebootMetaApi, function getFallbackPipValue... |
+| `metaApiQueue.stub.ts` | Exports: default |
+| `MockBrokerAccount.ts` | Exports: interface SimPosition, interface PendingLimitOrder, interface TradeRecord, class MockBrokerAccount<br/>*Purpose: Called before each M1 tick is fed to the orchestrator...* |
+| `newsStore.stub.ts` | Exports: function isNewsBlackout, default |
+| `PortfolioMockBrokerAccount.ts` | Exports: interface SimPosition, interface PendingLimitOrder, interface TradeRecord, class PortfolioMockBrokerAccount<br/>*Purpose: Called before each M1 tick is fed to the orchestrator...* |
+| `socket.stub.ts` | Exports: function getIO, default |
 
-### `/server/trading/broker/` — Broker Interface
+### `/server/trading/broker/`
 
-| File | Role |
-|------|------|
-| `metaApiHandler.ts` | The sole interface to the MetaTrader 5 broker via MetaApi. Handles: position opening, modification (move SL), closing, pending order management, account info fetching. All calls go through `MetaApiQueue.ts`. |
+| File | Technical Role & Exports |
+|------|--------------------------|
+| `metaApiHandler.ts` | Exports: const BROKER_SYMBOL_MAP, function getFallbackPipValue, function getSymbolSpec, function roundPrice, function isBrokerPriceOrStopsError, function calculateStopsLevelSafePrices, function clearApiCacheForToken, function quantizeLots...<br/>*Purpose: Canonical price rounding utility — the SINGLE source of truth for all MetaApi price fields.     ALL price values sent to MetaApi (entry, SL, TP, tra...* |
 
----
+### `/server/trading/config/`
 
-### `/server/trading/ai/` — Vision Intelligence (Seer Only)
+| File | Technical Role & Exports |
+|------|--------------------------|
+| `OptimizerPairConfig.ts` | Exports: const OPTIMIZER_CONFIG, function getDynamicPipSize |
+| `PairConfig.ts` | Exports: class PairConfigManager, const MAGE_PAIR_CONFIG, const SAGE_PAIR_CONFIG, const SEER_PAIR_CONFIG |
+| `ShadowPortfolioConfig.ts` | Exports: const SHADOW_MAGE_CONFIG, const SHADOW_SAGE_CONFIG |
+| `types.ts` | Exports: interface M1TypedArrays, type TradeDirection, type TraderType, interface ActiveEntry, interface SessionLeadTrade, type TradeOutcome, type SessionFilter, type Timeframe...<br/>*Purpose: Core Definitions & Types Registry     This file serves as the absolute source of truth for the backend trading logic.   Do not scatter interface de...* |
 
-| File | Role |
-|------|------|
-| `VisionEvaluator.ts` | Sends a chart image to Gemini Vision API and parses the response to approve/reject a Seer trade setup. |
-| `ChartRenderer.ts` | Generates a PNG chart image from M1/M5 candle data using `canvas`. The image is passed to `VisionEvaluator`. |
-| `PromptVault.ts` | Library of pre-written Gemini prompts for different market conditions. Selects appropriate prompt for each Seer setup. |
-| `StacyBurkePrompt.ts` | Stacy Burke–specific prompt templates for liquidity hunt and false breakout evaluation. |
+### `/server/trading/engine/`
 
----
+| File | Technical Role & Exports |
+|------|--------------------------|
+| `LiveOrchestrator.ts` | Exports: function getFixedEstDate, const DISCRETIONARY_TRADER_PAIRS, function isConnectionError, function updateOrchestratorIndicators, class LiveOrchestrator<br/>*Purpose: ⚡ Sub-Millisecond Reactive In-Memory Lead Trade Broadcast to all peer orchestrators...* |
+| `MageEngine.ts` | Internal logic / Config |
+| `SageEngine.ts` | Internal logic / Config |
+| `SeerEngine.ts` | Internal logic / Config |
+| `TickFeed.ts` | Exports: class TickFeed<br/>*Purpose: Called on every price update (bid/ask tick).         We synthesise M1 bars from these ticks....* |
 
-### `/server/trading/engine/` — The Live Production Engine (Tier 2-A)
+### `/server/trading/`
 
-> ⚠️ **Air-Gap Rule:** Files in this directory MUST NEVER import from `backtester/` or `stubs/`. Production-critical only.
+| File | Technical Role & Exports |
+|------|--------------------------|
+| `index.ts` | Internal logic / Config |
 
-| File | Role |
-|------|------|
-| `LiveOrchestrator.ts` | The central event-driven state machine. Receives ticks from `TickFeed`, fans them out to `MageEngine`, `SageEngine`, `SeerEngine`, `BlackSwanEngine`. Manages pending order recovery on server restart via `orbStates` (Mage) and `sageStates` (Sage). Exports `getFixedEstDate()` — the canonical timezone converter. |
-| `MageEngine.ts` | Mage ORB breakout logic. Maintains an ORB range per pair per session. Detects breakouts and routes signals to `LiveOrchestrator` → `metaApiHandler`. |
-| `SageEngine.ts` | Sage reversal logic. Detects M5 liquidity sweeps of ORB range, confirms rejection via `actionCandle`, places limit orders. |
-| `SeerEngine.ts` | Seer liquidity hunt logic. Generates mathematical candidates → calls `ChartRenderer` → calls `VisionEvaluator` → routes approved setups. |
+### `/server/trading/market/`
 
-| `TickFeed.ts` | Connects to MetaApi streaming. Receives real-time ticks, aggregates M1 candles, and feeds them to `LiveOrchestrator`. Uses `getFixedEstDate()` for session gating. |
+| File | Technical Role & Exports |
+|------|--------------------------|
+| `CandleAggregator.ts` | Exports: type Timeframe, function aggregateCandles, function buildTimeframeIndex<br/>*Purpose: Minutes per timeframe...* |
+| `DailyContextTracker.ts` | Exports: class DailyContextTracker<br/>*Purpose: Tracks the "Stacy Burke Daily Context" by grouping M5 candles into Daily candles   that strictly roll over at 5 PM EST (17:00 EST)....* |
+| `fetch_news_calendar.ts` | Exports: interface NewsCalendarCache<br/>*Purpose: 📰 Historical News Calendar Auto-Generator   Fetches and caches high-impact news event dates (NFP, CPI, FOMC)....* |
+| `historicalNews.ts` | Exports: const NFP_DATES, const CPI_DATES, const FOMC_DATES, function isHistoricalNews, function isNewsForceClose |
+| `HTFContextTracker.ts` | Exports: interface HTFPrecomputedData, class HTFContextTracker<br/>*Purpose: Helper to compute the H1 50 EMA and its steepness from an array of M5 candles.     Calculates the steepness (in pips per hour) of the 50 EMA over the...* |
+| `Indicators.ts` | Exports: function computeEma, function buildEmaArray, function buildAtrArray, function buildRsiArray, function buildBollingerArray, function buildBbwPercentileArray, function buildVwapArray, function isVolumeSpike... |
+| `KellyCalculator.ts` | Internal logic / Config<br/>*Purpose: Calculates the Half-Kelly multiplier based on the last 30 closed trades for a given bot/symbol.   Half-Kelly formula: f = (p  b - q) / b / 2   Where: ...* |
+| `MathFilters.ts` | Exports: class MathFilterManager, function isTradeAllowed, function isRolloverCircuitBreaker, function isSeerRolloverHalt, function isEODSession, function isToxicDay, function getVolatilityRegimeMultiplier<br/>*Purpose: MathFilters.ts — Production Trade Filtering Utilities   Session-level math filters: rollover circuit breaker, EOD window,   toxic-day detection, and v...* |
+| `SeerMathCore.ts` | Exports: function getDigitsForPair, function roundPrice, function evaluateStacyBurkeSetup |
 
-#### `getFixedEstDate()` — The Timezone Cornerstone
-```typescript
-// Defined in LiveOrchestrator.ts, exported to all engines and TickFeed
-export function getFixedEstDate(date = new Date()) {
-  if ((global as any).__SIM_TIME_PROVIDER__) {
-    return (global as any).__SIM_TIME_PROVIDER__(date); // Shadow backtester hook
-  }
-  const estStr = date.toLocaleString("en-US", { timeZone: "America/New_York" });
-  return new Date(estStr + " UTC");
-}
-```
-This uses the JavaScript `Intl` API to convert any timestamp into **New York Local Time (EST/EDT)**, automatically handling Daylight Saving Time transitions year-round. All session hours in this codebase are **New York Local Time**, not UTC or broker server time.
+### `/server/trading/optimizer/core/`
 
----
+| File | Technical Role & Exports |
+|------|--------------------------|
+| `ChromosomeMapper.ts` | Exports: class ChromosomeMapper<br/>*Purpose: Generates a random chromosome (array of indices) matching the grid dimensions....* |
+| `DumpScanner.ts` | Exports: function isLastOptimizationRunDir, function getAllOptimizationRunDirs, function getAllStateFiles, function getAllWfaFiles, function findStateFileForPair, function loadHistoricalAlphasForSymbol<br/>*Purpose: Checks whether a folder name corresponds to a historical optimization run folder.   Matches:    - last_optimization_run    - last_optimization_run 8_1...* |
+| `HybridGeneticOptimizer.ts` | Exports: interface FitnessResult, interface GeneticOptimizerOptions, class HybridGeneticOptimizer<br/>*Purpose: Consecutive generations with <0.01% best-fitness improvement before early exit. Default: 15...* |
+| `MonthlyConsistencyValidator.ts` | Exports: interface MonthlyValidationResult, function validateMonthlyConsistency, interface AnomalyValidationResult, function validateAnomalyConcentration<br/>*Purpose: ============================================================   MONTHLY CONSISTENCY & ANTI-ANOMALY VALIDATOR   ========================================...* |
+| `WalkForwardEngine.ts` | Exports: interface WfaWindow, class WalkForwardEngine<br/>*Purpose: Generates rolling 6-month In-Sample and 2-month Out-Of-Sample windows.     Steps forward by 2 months....* |
 
-### `/server/trading/backtester/` — Simulation & Parity Layer (Tier 1-B & 2-B)
+### `/server/trading/optimizer/`
 
-| File | Role |
-|------|------|
-| `loadCsv.ts` | Parses MetaTrader 5 CSV export files (M1 data). Dynamically calculates the EET (Helsinki/broker) and EST (New York) offset for every candle using `Intl.DateTimeFormat`, correctly handling DST. Outputs `M1Row[]` with pre-computed `estHour` field. |
-| `MageMathBacktester.ts` | Lightweight loop-based Mage backtester. Iterates M5 candles, calls `MageMathCore.preComputeTriggers()` and `MageMathCore.evaluateExits()`. Used for quick validation. |
-| `MageMathBacktesterExp.ts` | Extended Mage backtester with additional instrumentation and session diagnostics. Used for deep debugging. |
-| `SageMathBacktester.ts` | Lightweight loop-based Sage backtester. Calls `SageMathCore.preComputeTriggers()` and `SageMathCore.evaluateExits()`. |
-| `OrchestratorShadowBacktester.ts` | **The Parity Bridge.** Re-uses the real `LiveOrchestrator.ts` code verbatim, but injects stubs for all broker/DB dependencies via `__SIM_TIME_PROVIDER__`, `MockBrokerAccount`, etc. Simulates tick-by-tick execution on historical CSV data, producing results that must exactly match the Math Backtester (Tier 1 = Tier 2). |
-| `SeerMathBacktester.ts` | Mathematical (no-Vision) Seer backtester. Tests the Seer setup detection logic without calling the Vision API. |
-| `SeerVisionBacktester.ts` | Full Seer backtester that calls `VisionEvaluator`. Used for end-to-end Seer pipeline validation. |
+| File | Technical Role & Exports |
+|------|--------------------------|
+| `cull_dna_banks.ts` | Exports: interface EvaluatedAlpha, function parseMageConfig, function parseSageConfig, function getMageNiche, function getSageNiche, function curateMapElitesArchive<br/>*Purpose: Classifies a Mage setup into a MAP-Elites Behavioral Niche...* |
+| `grandmaster_holy_grail_portfolios.json` | Internal logic / Config |
 
-#### `/server/trading/backtester/math_core/`
+### `/server/trading/optimizer/grandmaster/`
 
-| File | Role |
-|------|------|
-| `MageMathCore.ts` | The canonical Mage math algorithm. `preComputeTriggers()` detects ORB breakout events. `evaluateExits()` simulates trailing stop, break-even, force-close logic on M1 tick data. This is the source of truth for Mage math used by BOTH the optimizer and the MathBacktester. |
-| `SageMathCore.ts` | The canonical Sage math algorithm. `preComputeTriggers()` detects M5 liquidity sweeps using `getActionCandle(m5Candles, i-1, actionMinutes)`. `evaluateExits()` simulates limit order fill, trailing SL, and force-close on M1 ticks. |
-| `MathCoreUtils.ts` | Shared utility functions: `roundPrice()`, `getActionCandle()` for N-minute candle aggregation from M5 slices. |
+| File | Technical Role & Exports |
+|------|--------------------------|
+| `correlation_pre_filter.ts` | Exports: interface AlphaItem, function extractCurrencies, function filterCorrelatedClusters<br/>*Purpose: 🔗 Correlation Pre-Filter   Groups trading pairs by currency cluster and caps cluster representation   before grandmaster synthesis to prevent correla...* |
+| `generate_ist_schedule.ts` | Internal logic / Config |
+| `generate_pdf_fast.cjs` | Internal logic / Config |
+| `GrandmasterMetrics.ts` | Exports: function evaluateComponent, function evaluatePortfolio, function calculateDeflatedSharpeRatio<br/>*Purpose: Marcos López de Prado's Deflated Sharpe Ratio (DSR)   Calculates the probability that an observed Sharpe Ratio is true (not a false discovery / overf...* |
+| `GrandmasterPreProcessor.ts` | Exports: function getRollingMonthKeys, function getMinAllowedSl, function parseSetupToConfig, function deduplicateConfigs, function isSessionValidForAsset, const PAIR_MIN_SL_FLOOR, function loadAuditCache, function flushAuditCache... |
+| `grandmaster_cpcv.ts` | Exports: interface CPCVResult, function runCPCV |
+| `grandmaster_plwfo.ts` | Exports: interface PLWFOWindow, interface PLWFOResult, function generateRollingWindows, function runPLWFO |
+| `grandmaster_portfolio.json` | Internal logic / Config |
+| `grandmaster_synthesizer.ts` | Internal logic / Config |
+| `inject_grandmaster.ts` | Exports: function parseSetupString, const SAGE_PAIR_CONFIG, const MAGE_PAIR_CONFIG, const SEER_PAIR_CONFIG, const MAGE_PAIR_CONFIG, class PairConfigManager, const MAGE_PAIR_CONFIG, const SAGE_PAIR_CONFIG... |
+| `inject_toxic_hours.ts` | Internal logic / Config |
+| `monte_carlo_validator.ts` | Exports: interface MonteCarloResult, function validateMonteCarlo<br/>*Purpose: 🎲 Monte Carlo Robustness Validator   Resamples daily P&L streams with replacement (bootstrapping)   to evaluate portfolio drawdown distributions and ...* |
 
-#### `/server/trading/backtester/stubs/`
+### `/server/trading/optimizer/grandmaster/utils/`
 
-These stubs **mirror** their production counterparts exactly. Any interface change in production MUST be reflected here.
+| File | Technical Role & Exports |
+|------|--------------------------|
+| `GrandmasterMath.ts` | Exports: function calculateCorrelation, function calculatePearsonCorrelation, function calculateDailyCalendarCorrelation, function rankPercentile, function hashStringToSeed, function createMulberry32, function runMonteCarlo, interface HedgingUnit...<br/>*Purpose: Calculates calendar-synchronized Pearson correlation between two daily returns maps.   Evaluates identical calendar dates across globalDates....* |
+| `mage_params_parser.ts` | Exports: default function |
+| `sage_params_parser.ts` | Exports: default function |
+| `seer_params_parser.ts` | Exports: default function |
 
-| File | Mirrors |
-|------|---------|
-| `MockBrokerAccount.ts` | `metaApiHandler.ts` — Simulates trade fills, SL modifications, order cancellations in memory. |
-| `crypto.stub.ts` | `server/core/crypto.ts` |
-| `db.stub.ts` | `server/core/db.ts` |
-| `globalTradeGate.stub.ts` | `server/utils/GlobalTradeGate.ts` |
-| `metaApiHandler.stub.ts` | `server/trading/broker/metaApiHandler.ts` |
-| `metaApiQueue.stub.ts` | `server/utils/MetaApiQueue.ts` |
-| `newsStore.stub.ts` | `server/news/newsStore.ts` — Uses `historicalNews.ts` static sets instead of live API. |
-| `socket.stub.ts` | `server/core/socket.ts` |
+### `/server/trading/optimizer/mage/dna_bank/`
 
----
+| File | Technical Role & Exports |
+|------|--------------------------|
+| `mage_dna_AUDJPY.json` | Internal logic / Config |
+| `mage_dna_AUDUSD.json` | Internal logic / Config |
+| `mage_dna_BTCUSD.Daily.json` | Internal logic / Config |
+| `mage_dna_CADJPY.json` | Internal logic / Config |
+| `mage_dna_CHFJPY.json` | Internal logic / Config |
+| `mage_dna_ETHUSD.Daily.json` | Internal logic / Config |
+| `mage_dna_EURAUD.json` | Internal logic / Config |
+| `mage_dna_EURCAD.json` | Internal logic / Config |
+| `mage_dna_EURJPY.json` | Internal logic / Config |
+| `mage_dna_EURNZD.json` | Internal logic / Config |
+| `mage_dna_EURUSD.json` | Internal logic / Config |
+| `mage_dna_GBPAUD.json` | Internal logic / Config |
+| `mage_dna_GBPCAD.json` | Internal logic / Config |
+| `mage_dna_GBPJPY.json` | Internal logic / Config |
+| `mage_dna_GBPNZD.json` | Internal logic / Config |
+| `mage_dna_GBPUSD.json` | Internal logic / Config |
+| `mage_dna_GER40.Daily.json` | Internal logic / Config |
+| `mage_dna_JPN225.Daily.json` | Internal logic / Config |
+| `mage_dna_NAS100.Daily.json` | Internal logic / Config |
+| `mage_dna_NZDUSD.json` | Internal logic / Config |
+| `mage_dna_SPX500.Daily.json` | Internal logic / Config |
+| `mage_dna_US30.Daily.json` | Internal logic / Config |
+| `mage_dna_USDCAD.json` | Internal logic / Config |
+| `mage_dna_USDCHF.json` | Internal logic / Config |
+| `mage_dna_USDJPY.json` | Internal logic / Config |
+| `mage_dna_XAUUSD.json` | Internal logic / Config |
+| `mage_dna_XTIUSD.json` | Internal logic / Config |
 
-### `/server/trading/optimizer/` — The Alpha Generation Pipeline (Tier 1-A)
+### `/server/trading/optimizer/mage/`
 
-#### `/server/trading/optimizer/core/` — Optimizer Engines
+| File | Technical Role & Exports |
+|------|--------------------------|
+| `mage_optimizer.ts` | Exports: function parseMageConfig |
 
-| File | Role |
-|------|------|
-| `ChromosomeMapper.ts` | Maps a flat integer chromosome array (from the GA) to actual typed parameter values (e.g., index 3 → `minSl = 15`). Used by both Mage and Sage optimizers. |
-| `HybridGeneticOptimizer.ts` | The Genetic Algorithm engine. Population: 300 chromosomes, 80 generations. Uses tournament selection, crossover, mutation. Fitness = Walk-Forward OOS Net R. |
-| `WalkForwardEngine.ts` | Generates Walk-Forward Analysis (WFA) windows. Default: 6-month In-Sample, 2-month Out-of-Sample, rolling forward. |
+### `/server/trading/optimizer/pipelines/`
 
+| File | Technical Role & Exports |
+|------|--------------------------|
+| `master_pipeline.ts` | Internal logic / Config |
+| `update_historical_news.ts` | Exports: const NFP_DATES, const CPI_DATES, const FOMC_DATES, const NFP_DATES, const CPI_DATES, const FOMC_DATES, function isHistoricalNews, function isNewsForceClose |
 
-#### `/server/trading/optimizer/mage/`
+### `/server/trading/optimizer/sage/dna_bank/`
 
-| File | Role |
-|------|------|
-| `mage_optimizer.ts` | Main Mage optimizer. Spawns 8 parallel Worker threads (one per pair). For each pair: loads CSV → aggregates M5 → generates WFA windows → runs `HybridGeneticOptimizer` per session → dumps `state_<PAIR>.json` and `wfa_<PAIR>.json` to `mage_optimizer_dump/`. |
-| `mage_synthesizer.ts` | Post-optimizer synthesis step. Reads all `state_<PAIR>.json` files, ranks configs by OOS Net R, filters by minimum trade count, and produces a clean `mage_portfolio.json` ready for injection. |
-| `mage_optimizer_dump/` | Output directory. Contains one `state_<PAIR>.json` (array of alphas sorted by Net R) and one `wfa_<PAIR>.json` (window-by-window OOS results) per pair. |
+| File | Technical Role & Exports |
+|------|--------------------------|
+| `sage_dna_AUDJPY.json` | Internal logic / Config |
+| `sage_dna_AUDUSD.json` | Internal logic / Config |
+| `sage_dna_BTCUSD.Daily.json` | Internal logic / Config |
+| `sage_dna_CADJPY.json` | Internal logic / Config |
+| `sage_dna_CHFJPY.json` | Internal logic / Config |
+| `sage_dna_ETHUSD.Daily.json` | Internal logic / Config |
+| `sage_dna_EURAUD.json` | Internal logic / Config |
+| `sage_dna_EURCAD.json` | Internal logic / Config |
+| `sage_dna_EURJPY.json` | Internal logic / Config |
+| `sage_dna_EURNZD.json` | Internal logic / Config |
+| `sage_dna_EURUSD.json` | Internal logic / Config |
+| `sage_dna_GBPAUD.json` | Internal logic / Config |
+| `sage_dna_GBPCAD.json` | Internal logic / Config |
+| `sage_dna_GBPJPY.json` | Internal logic / Config |
+| `sage_dna_GBPNZD.json` | Internal logic / Config |
+| `sage_dna_GBPUSD.json` | Internal logic / Config |
+| `sage_dna_GER40.Daily.json` | Internal logic / Config |
+| `sage_dna_JPN225.Daily.json` | Internal logic / Config |
+| `sage_dna_NAS100.Daily.json` | Internal logic / Config |
+| `sage_dna_NZDUSD.json` | Internal logic / Config |
+| `sage_dna_SPX500.Daily.json` | Internal logic / Config |
+| `sage_dna_US30.Daily.json` | Internal logic / Config |
+| `sage_dna_USDCAD.json` | Internal logic / Config |
+| `sage_dna_USDCHF.json` | Internal logic / Config |
+| `sage_dna_USDJPY.json` | Internal logic / Config |
+| `sage_dna_XAUUSD.json` | Internal logic / Config |
+| `sage_dna_XTIUSD.json` | Internal logic / Config |
 
-#### `/server/trading/optimizer/sage/`
+### `/server/trading/optimizer/sage/`
 
-| File | Role |
-|------|------|
-| `sage_optimizer.ts` | Main Sage optimizer. Same Worker-thread architecture as Mage. Optimizes reversal parameters per pair/session. Dumps to `sage_optimizer_dump/`. |
-| `sage_synthesizer.ts` | Sage post-synthesis. Produces `sage_portfolio.json`. |
-| `sage_optimizer_dump/` | Output dump directory for Sage alphas. |
+| File | Technical Role & Exports |
+|------|--------------------------|
+| `sage_optimizer.ts` | Exports: function parseSageConfig |
 
-#### `/server/trading/optimizer/seer/`
+### `/server/trading/optimizer/seer/`
 
-| File | Role |
-|------|------|
-| `seer_cluster_optimizer.ts` | Seer parameter optimizer. Simulates mathematical setups (without Vision) to find good entry/ORB parameter candidates. |
-| `seer_synthesizer.ts` | Seer synthesis step. |
-| `inject_seer_grandmaster.ts` | Injects the Seer synthesized portfolio into the live system's state files. |
-| `seer_optimizer_dump/` | Output dump directory for Seer alphas. |
+| File | Technical Role & Exports |
+|------|--------------------------|
+| `inject_seer_grandmaster.ts` | Exports: const SEER_PAIR_CONFIG, const SEER_PAIR_CONFIG |
+| `inject_seer_toxic_hours.ts` | Internal logic / Config |
+| `seer_grandmaster_portfolio.json` | Internal logic / Config |
+| `seer_optimizer.ts` | Exports: function parseSeerConfig |
+| `seer_pre_processor.ts` | Exports: function getRollingMonthKeys, function extractSeerSetupSignature, function deduplicateConfigs |
 
-#### `/server/trading/optimizer/grandmaster/`
+### `/server/trading/testing/`
 
-The Grandmaster is the meta-optimizer — it selects the best portfolio of alphas *across* all pairs optimally.
+| File | Technical Role & Exports |
+|------|--------------------------|
+| `analyze_portfolio_losses.ts` | Internal logic / Config |
+| `analyze_portfolio_losses_shadow.ts` | Internal logic / Config |
+| `portfolio_shadow_engine.ts` | Internal logic / Config |
+| `run_seer_math_audit.ts` | Internal logic / Config |
+| `simulate_portfolio_risk_math.ts` | Internal logic / Config |
+| `simulate_portfolio_risk_shadow.ts` | Internal logic / Config |
+| `test_all_pairs_parity.ts` | Internal logic / Config |
+| `test_live_vs_shadow_execution.ts` | Internal logic / Config |
+| `test_portfolio_parity_comparison.ts` | Internal logic / Config |
+| `test_single_pair_parity.ts` | Internal logic / Config |
 
-| File | Role |
-|------|------|
-| `grandmaster_synthesizer.ts` | The master orchestrator of the whole pipeline. Reads all individual optimizer dumps, runs CPCV + PLWFO validation, and produces the final `grandmaster_portfolio.json`. |
-| `GrandmasterGA.ts` | A second-level GA that selects the optimal *combination* of alphas (not just per pair, but cross-portfolio) to maximize Sharpe and minimize drawdown. |
-| `GrandmasterMetrics.ts` | Calculates advanced portfolio metrics: Sharpe Ratio, Sortino Ratio, CPCV (Combinatorial Purged Cross-Validation), PLWFO (Probabilistic Lookahead-free Walk-Forward Optimization). |
-| `GrandmasterPreProcessor.ts` | Pre-processes raw alpha dumps before feeding to the GA: deduplication, Z-score normalization, outlier pruning. |
-| `grandmaster_cpcv.ts` | Implementation of Combinatorial Purged Cross-Validation for portfolio overfitting detection. |
-| `grandmaster_plwfo.ts` | Probabilistic Walk-Forward Optimization runner. |
+### `/server/utils/`
 
-| `inject_grandmaster.ts` | **The final injection step.** Takes the validated `grandmaster_portfolio.json` and writes each pair's top configuration into the `server/trading/output/` state files. These are the configs the live bot reads at runtime. |
-| `test_grandmaster_parity.ts` | Validates Grandmaster-produced configs against Tier 1 and Tier 2 for parity. |
+| File | Technical Role & Exports |
+|------|--------------------------|
+| `BrokerMetricsEngine.ts` | Exports: interface BrokerMetrics, function calculateBrokerTradingDayStr, function getCachedBrokerMetrics |
+| `discoverSymbols.ts` | Internal logic / Config |
+| `DwcbCalculator.ts` | Exports: interface DwcbResult<br/>*Purpose: Calculates the Daily Drawdown Circuit Breaker (DWCB) multiplier based on profile settings and current balance.   Updates the peak balance in the datab...* |
+| `ensureMetaApiReliability.ts` | Internal logic / Config<br/>*Purpose: Calls POST /users/current/accounts/:accountId/increase-reliability   for a single account. Returns true if successful....* |
+| `GlobalTradeGate.ts` | Exports: const MAX_CONCURRENT_TRADES, const globalTradeGate<br/>*Purpose: Called by DiscretionaryTrader when it starts evaluating a pair (AI call in-flight)...* |
+| `logger.ts` | Exports: const profileContext, function registerProfileName, function getProfileLabel, class ProfileLogger, const logger, function hijackConsole |
+| `magicNumber.ts` | Exports: function generateMagicNumber, function isMageMagic, function isSageMagic, function isSeerMagic<br/>*Purpose: Generates a determinisitc 32-bit integer magic number from a string signature.   Uses FNV-1a hash algorithm to ensure the same signature always maps t...* |
+| `MetaApiQueue.ts` | Internal logic / Config<br/>*Purpose: Enqueues an async task for MetaAPI execution with full resilience.   - Concurrent limiting (max 2 active per profile)   - Exponential backoff retries ...* |
+| `PropFirmRiskMonitor.ts` | Exports: class PropFirmRiskMonitor, const propFirmRiskMonitor |
+| `trade_cleanup.ts` | Internal logic / Config |
+| `VisionApiQueue.ts` | Internal logic / Config<br/>*Purpose: Acquire a concurrency slot. Callers block here until a slot is free....* |
 
-#### `/server/trading/optimizer/pipelines/`
+### `/src/`
 
-| File | Role |
-|------|------|
-| `master_pipeline.ts` | **The single command to run the entire optimization pipeline end-to-end:** Mage optimizer → Sage optimizer → Grandmaster synthesis → Grandmaster injection. One script to rule them all. |
+| File | Technical Role & Exports |
+|------|--------------------------|
+| `App.tsx` | Exports: const MAGE_BOT, const SEER_BOT, const SAGE_BOT, default function |
+| `main.tsx` | Internal logic / Config |
+| `types.ts` | Exports: type TradeDirection, type TradeOutcome, type SessionFilter, type Timeframe, type SetupType, interface SymbolSpec, interface OHLCVTick, interface AggregatedCandle...<br/>*Purpose: Core Definitions & Types Registry      This file serves as the absolute source of truth for the backend trading logic.   Do not scatter interface defi...* |
 
----
+### `/src/components/`
 
-### `/server/trading/testing/` — Parity Verification & Portfolio Simulation Suite
+| File | Technical Role & Exports |
+|------|--------------------------|
+| `BotDashboard.tsx` | Exports: default function |
+| `ErrorBoundary.tsx` | Exports: default class |
+| `GlobalSettings.tsx` | Exports: default function |
+| `LoginScreen.tsx` | Exports: default function |
+| `TradeAnalytics.tsx` | Exports: default React |
 
-| File | Role |
-|------|------|
-| `test_single_pair_parity.ts` | Single-pair parity engine. Takes `<BOT> <PAIR> <START> <END>`, runs Tier 1 (MathBacktester) and Tier 2 (ShadowBacktester) sequentially, outputs a detailed trade comparison table. |
-| `test_all_pairs_parity.ts` | Comprehensive pre-commit test runner executing parity checks across all configured pairs and bots. |
-| `test_portfolio_parity_comparison.ts` | Multi-pair portfolio parity validator comparing aggregated Tier 1 math trades vs multi-pair Tier 2 portfolio shadow backtester trades. |
-| `test_live_vs_shadow_execution.ts` | Validates real Live MetaTrader broker execution against Shadow LiveOrchestrator replay. |
-| `portfolio_shadow_engine.ts` | Chronological multi-pair simulation engine using real `LiveOrchestrator`. |
-| `simulate_portfolio_risk_math.ts` | Multi-risk mode capital simulation ($100 starting balance, Fixed/Monthly/Continuous/DWCB) via Tier 1 Math engine. |
-| `simulate_portfolio_risk_shadow.ts` | Multi-risk mode capital simulation ($100 starting balance, Fixed/Monthly/Continuous/DWCB) via Tier 2 Live Orchestrator Shadow engine. |
+### `/src/context/`
 
-**Commands:**
-```bash
-# Full suite parity check
-npm run test:parity
-# or: npx tsx server/trading/testing/test_all_pairs_parity.ts
+| File | Technical Role & Exports |
+|------|--------------------------|
+| `WebSocketContext.tsx` | Exports: const useWebSocket, const WebSocketProvider |
 
-# Targeted single-pair parity check
-npx tsx server/trading/testing/test_single_pair_parity.ts MAGE GBPJPY 2026-04-01 2026-04-30
+### `/src/hooks/`
 
-# Multi-risk portfolio simulations
-npm run backtest:modes
-npm run backtest:modes:shadow
-```
+| File | Technical Role & Exports |
+|------|--------------------------|
+| `useEconomicNews.tsx` | Exports: interface NewsEvent, function useEconomicNews |
+| `useSound.ts` | Exports: function useSound |
 
----
+### `/src/utils/`
 
-### `/server/trading/output/` — Live State Isolation Zone
-
-This directory holds the JSON state files that the live bot reads at runtime. They are the **only** files that should ever be written to by `inject_grandmaster.ts`. The engine reads from here — never from the optimizer dumps directly.
-
----
+| File | Technical Role & Exports |
+|------|--------------------------|
+| `timezone.ts` | Exports: const TZ_MAP, function getIanaTz, function formatDateTime, function formatTime, function formatDate, function getTzLabel, function getBrokerTradingDayStr<br/>*Purpose: ============================================================   TIMEZONE UTILITY — Central timestamp formatter   ======================================...* |
 
 ## 🔄 The Configuration Lifecycle: From Optimizer to Live Trade
 
@@ -318,10 +399,11 @@ Step 2: CHROMOSOME ENCODING
 
 Step 3: GENETIC ALGORITHM BREEDING
   HybridGeneticOptimizer.ts
-  ├── Population: 300 random chromosomes
-  ├── 80 Generations of evolution
-  ├── Fitness = WFA Out-of-Sample Net R
-  └── Survivor selection → crossover → mutation → repeat
+  ├── Population: 100 chromosomes (12% smart-seeded from archetypes)
+  ├── 40 Generations (stagnation exit after 15 gens of <0.01% improvement)
+  ├── Fitness = Calmar Ratio × Trade Significance × Win Rate Floor × Consistency
+  ├── Adaptive hyper-mutation (50%) when top-3 elites converge
+  └── Top 3 unique solutions refined via local exhaustive grid search
 
 Step 4: WALK-FORWARD VALIDATION
   WalkForwardEngine.ts creates windows:
@@ -338,15 +420,25 @@ Step 6: DUMP TO STATE FILE
   → Array of alphas sorted by totalNetR descending
   → Each entry: { setup: "london_60%_MinSL10_...", totalNetR, trades, ... }
 
-Step 7: SYNTHESIS & RANKING
-  mage_synthesizer.ts reads all state_*.json files
-  Filters: minTrades >= threshold, OOS Win% > 40%
-  Outputs: mage_portfolio.json
+Step 7: GRANDMASTER SYNTHESIS (Deterministic Clustered Risk Parity)
+  grandmaster_synthesizer.ts reads all state_*.json from both Mage + Sage dumps
+  ├── OOS slice stitching (merges multi-window results per setup)
+  ├── Deduplication (max 3 configs per signature group)
+  ├── 3-Year CSV Audit (re-backtests every candidate on 3 years of data)
+  │   └── Rejects: NetR ≤ 0, trades < 20, WR < 22%, regime consistency < 50%
+  ├── Calendar Year Guard: rejects any setup losing money in ANY calendar year
+  ├── Deflated Sharpe Ratio (DSR) — penalizes multiple-testing selection bias
+  ├── Monte Carlo 99% Drawdown simulation (10,000 paths)
+  └── Hierarchical Risk Parity de-correlation clustering
 
-Step 8: GRANDMASTER META-SELECTION
-  GrandmasterGA.ts selects optimal cross-pair portfolio
-  GrandmasterMetrics.ts validates: Sharpe, CPCV, PLWFO
-  Outputs: grandmaster_portfolio.json
+Step 8: CPCV HARD GATE (Combinatorial Purged Cross-Validation)
+  grandmaster_cpcv.ts validates the final portfolio:
+  ├── 6 rolling windows (IS=560 days, OOS=140 days)
+  ├── All C(6,2)=15 combinatorial paths evaluated
+  ├── 5-day embargo buffer prevents autocorrelation leakage
+  ├── Pass criteria: ≥10/15 paths profitable + Max DD < 12.0R
+  └── If CPCV FAILS → portfolio JSON is NOT written. Pipeline aborts.
+  Outputs: grandmaster_holy_grail_portfolios.json
 
 Step 9: INJECTION INTO LIVE STATE
   inject_grandmaster.ts writes each pair's config to:
@@ -393,7 +485,11 @@ Mage trades **Open Range Breakouts**. It builds a range during a defined time wi
 
 4. ENTRY
    Entry = candle.close (market order on breakout candle close)
-   Stop Loss (SL) = orLow - spread (below the opposite boundary)
+   Stop Loss (SL) determined by slMode:
+     - OPPOSITE_BOUNDARY (default): orLow - spread (below opposite boundary)
+     - MIDPOINT: (orHigh + orLow) / 2 (cuts risk distance by 50% for high-volatility pairs like GBPJPY, XAUUSD, GER40)
+     - BREAKOUT_BAR_LOW: actionCandle.low - 2 pips
+     - BOX_30PCT: orHigh - 0.30 * boxSize
    slDist = Entry - SL (in pips)
    if slDist < minSlDist → reject
    if slDist > maxSlDist → reject
@@ -415,7 +511,9 @@ Mage trades **Open Range Breakouts**. It builds a range during a defined time wi
 ### SELL Setup (Bearish Breakout)
 Identical lifecycle, mirrored direction:
 - Entry triggered when M5 candle closes BELOW `orLow - minBody`
-- SL placed above `orHigh + spread`
+- SL placed according to `slMode`:
+  - OPPOSITE_BOUNDARY: above `orHigh + spread`
+  - MIDPOINT: `(orHigh + orLow) / 2 + spread`
 - TP = `orLow - boxSize` (if OPPOSITE_BOUNDARY mode)
 
 ---
@@ -438,11 +536,26 @@ Sage trades **Liquidity Sweep Reversals**. It waits for price to aggressively po
    
    SWEEP LOW triggered if:
      actionCandle.low <= orLow - sweepPips × pipSize
+
+   [DOUBLE-SWEEP SUB-TICK RESOLUTION]
+     If BOTH High and Low are swept during the action window:
+     Inspect sub-tick M1 arrival sequence:
+     - If High swept first, Low swept last → fade final low sweep → BUY
+     - If Low swept first, High swept last → fade final high sweep → SELL
+     - If sequence indeterminate → skip per Parity Rule.
+
+   [CONFIRM: REQUIRE CLOSE INSIDE]
+     If requireCloseInside is true:
+       actionCandle.close > orLow   ← Price MUST close strictly back inside range
+       (If it stays below = trend breakout, not a sweep. Reject.)
    
-   [CONFIRM] actionCandle.close > orLow   ← Price MUST close back inside range
-             (If it stays below = trend, not a sweep. Reject.)
-   
+   [FILTER: CLOSE LOCATION HALF]
+     If requireCloseLocationHalf is true:
+       (actionCandle.close - actionCandle.low) / (actionCandle.high - actionCandle.low) >= 0.50
+       (Rejection candle must close in top half of its total range for BUY. Reject full-body dump candles.)
+
    [FILTER]  actionCandle.body <= maxBodyPips ← Not a massive trend candle
+   [FILTER]  wickPips / bodyPips >= minWbr (default 1.5) ← Rejection wick confirmation
    [FILTER]  no high-impact news
    [FILTER]  not in rollover window
 
@@ -474,7 +587,9 @@ Sage trades **Liquidity Sweep Reversals**. It waits for price to aggressively po
 ### SELL Setup (Low Sweep → Reversal Up → Wait → SELL the Return)
 Identical lifecycle, mirrored:
 - Sweep triggered when price pokes ABOVE `orHigh + sweepPips`
-- Confirm: `actionCandle.close < orHigh` (closes back inside)
+- Double-Sweep Resolution: If both swept, inspect M1 ticks $\rightarrow$ fade the final touch (Low first, High last $\rightarrow$ SELL).
+- Confirm: `actionCandle.close < orHigh` (closes back inside range)
+- Close Location Half: `(actionCandle.close - actionCandle.low) / (actionCandle.high - actionCandle.low) <= 0.50` (closes in bottom half)
 - Place LIMIT SELL at `orHigh - boxSize × entryPenetrationPct`
 - SL above `orHigh + sweepPips`
 
@@ -563,8 +678,96 @@ Before merging any logic change: run `npx tsx server/trading/testing/test_single
 ## 🔒 Key Decision Log (Session Memory)
 
 - **DST/Timezone:** The entire system uses `America/New_York` locale via `Intl` API. All session hours are EST/EDT. MT5 server time is irrelevant — it is always converted.
-- **Sage `actionMinutes`:** This is the timeframe of the **sweep detection candle** (5, 10, 15, or 30 min), NOT the observation window duration. The observation window is always 4 hours. Backup 11 used a hardcoded 5-minute candle, which proved most effective for fast sweep confirmation.
-- **GBPAUD Mage:** Was overtrading on 4-pip bodies (604 trades). Fixed to require 10-pip minimum body and mandatory trailing stop (no Trig999).
-- **SPX500 Mage:** Was starved because maxSL of 100 was too tight for NY open volatility. Expanded to 300.
-- **Gold Mage:** 214R achieved with 16% win rate using Trig999 on tiny 20-pip bodies. Fixed: raised minBody to 25-50 pips; added loose trailing grid `[1.5, 2.0, 3.0, 4.0, 999]`.
+- **MAGE Portfolio Forensics & Midpoint SL Polish (+216.76R):** Volatile instruments (`GBPJPY`, `XAUUSD`, `GER40`) suffered catastrophic losses when setting SL at opposite ORB boundaries during wide ranges. Added `slMode: "MIDPOINT"` to cut risk distance in half while preserving profit potential, lifting Mage portfolio net return to +216.76R with 0 parity divergence.
+- **SAGE Double-Sweep Sub-Tick Resolution (+1.35R, 2.35 PF):** When both `orHigh` and `orLow` are swept during the action window, Sage does not discard the setup; it inspects the M1 tick arrival times and trades opposite the final swept boundary (High hit first, Low hit last → BUY; Low hit first, High hit last → SELL).
+- **SAGE Portfolio Polish (+162.82R, +103.85R lift, 78.00R losses slashed):**
+  - **USDCHF:** Set `requireCloseInside: true`, `requireCloseLocationHalf: true`, and `trailingSlTrigger: 0.5` (step 0.5) — turned USDCHF from -61.00R (PF 0.10) to +8.50R (PF 1.71), eliminating 56 losses (-56.0R capital saved).
+  - **AUDJPY:** Expanded `minSlDist` to 30 pips and enforced `requireCloseLocationHalf: true` — lifted Net R to +30.00R (PF 1.58), cutting 9 catastrophic stopouts.
+  - **USDCAD & EURNZD:** Tightened trailing stop triggers (1.0R / 0.5R step) and enforced `requireCloseLocationHalf: true`, boosting USDCAD to +11.50R (PF 1.82) and EURNZD to +32.00R (PF 2.23).
+- **5-Layer Upstream Automation Synchronization:** All improvements are permanently wired into:
+  1. `sage_optimizer.ts` / `mage_optimizer.ts` (bounded parameter grids and `liveStaticValues`)
+  2. `cull_dna_banks.ts` (MAP-Elites 3-year survival evaluation with double sweep)
+  3. `GrandmasterPreProcessor.ts` (`PAIR_MIN_SL_FLOOR`, `parseSetupToConfig`)
+  4. `inject_grandmaster.ts` (Dynamic TypeScript code generation for `PairConfig.ts`)
+  5. JSON Interchange stores (`grandmaster_portfolio.json`, `grandmaster_holy_grail_portfolios.json`, `grandmaster_holy_grail.md`).
 - **Pending Order Recovery:** `LiveOrchestrator.ts` on server restart re-attaches pending orders using `PairConfigManager.getBaseSymbol(order.symbol)` and maps to `orbStates` (Mage) or `sageStates` (Sage). Never use client ID string parsing for symbol resolution.
+
+---
+
+## 📅 Optimizer Re-Run Schedule & Frequency
+
+### The Rule: Bimonthly (Every 8 Weeks)
+
+The optimizer should be re-run **every 2 months (bimonthly)**. This is not arbitrary — it is dictated by the WFA architecture:
+
+- The WFA step size is **2 months**. A new Walk-Forward OOS window is only created when ≥2 months of new data accumulates.
+- Running more frequently than bimonthly produces **zero new WFA windows** — the GA re-solves the identical problem with minor random seed noise, which can destabilize CPCV path pass/fail decisions.
+- Running less frequently than quarterly risks deploying stale configs into shifted macro regimes.
+
+### Concrete Schedule: September 2026 → August 2028
+
+| # | Exact Date | Day | Macro Context Captured |
+|:-:|:----------:|:---:|------------------------|
+| 1 | **Sep 1, 2026** | Tue | Jul–Aug summer lull + Jackson Hole aftermath |
+| 2 | **Nov 2, 2026** | Mon | Sep–Oct volatility spike + Q3 earnings |
+| 3 | **Jan 4, 2027** | Mon | Nov–Dec holiday regime + year-end rebalancing |
+| 4 | **Mar 1, 2027** | Mon | Jan–Feb new-year momentum + BOJ/ECB decisions |
+| 5 | **May 3, 2027** | Mon | Mar–Apr earnings season + spring volatility |
+| 6 | **Jul 1, 2027** | Thu | May–Jun pre-summer + FOMC dot plot |
+| 7 | **Sep 1, 2027** | Wed | Jul–Aug summer lull + Jackson Hole aftermath |
+| 8 | **Nov 1, 2027** | Mon | Sep–Oct volatility spike + Q3 earnings |
+| 9 | **Jan 3, 2028** | Mon | Nov–Dec holiday regime + year-end rebalancing |
+| 10 | **Mar 1, 2028** | Wed | Jan–Feb new-year momentum + BOJ/ECB decisions |
+| 11 | **May 1, 2028** | Mon | Mar–Apr earnings season + spring volatility |
+| 12 | **Jul 3, 2028** | Mon | May–Jun pre-summer + FOMC dot plot |
+
+> **Tip:** Run the pipeline on a weekend (Saturday/Sunday) before the listed date so CSV data includes the full Friday close. The dates above are the *latest* acceptable run dates — running the prior weekend is ideal.
+
+### Emergency Re-Run Triggers
+
+Re-run immediately (outside the bimonthly schedule) if:
+- A major central bank makes a surprise policy change (e.g., BOJ abandons YCC, Fed emergency cut)
+- CPCV validation starts failing on the latest data
+- More than 3 pairs simultaneously hit negative Net R in live trading over 2+ consecutive weeks
+- A new pair is added to or removed from the trading universe
+
+### Why NOT Weekly or Monthly?
+
+| Frequency | New WFA Windows | Risk |
+|-----------|:-:|---|
+| Weekly | 0 | 🔴 GA seed noise destabilizes CPCV. Actively harmful. |
+| Biweekly | 0 | 🟠 Same problem, slightly diluted. Wasteful compute. |
+| Monthly | 0 | 🟡 Still below 1 WFA step. Suboptimal. |
+| **Bimonthly** | **1** | 🟢 **Exactly 1 new OOS window. Optimal.** |
+| Quarterly | 1+ | 🟢 Safe but risks being late to regime shifts. |
+| Semi-Annual | 2–3 | 🟠 Too infrequent for live prop firm trading. |
+
+### Pipeline Command
+```bash
+npx tsx server/trading/optimizer/pipelines/master_pipeline.ts
+```
+Total runtime: ~5–9 hours. The pipeline automatically: hydrates CSVs → culls old DNA banks → runs Mage optimizer → runs Sage optimizer → synthesizes Grandmaster portfolio → validates CPCV → injects into PairConfig.ts → generates PDF report.
+
+
+## 👁️ Seer Engine (Vision Intelligence) Pipeline
+
+The Seer bot is uniquely capable of analyzing visual structure using Gemini Vision AI.
+
+1. **Setup Generation (Math Core):** `SeerMathCore.ts` pre-computes valid structural setups (e.g., Stacy Burke liquidity hunts).
+2. **Chart Rendering:** `ChartRenderer.ts` generates a pixel-perfect HTML5 Canvas image of the M5/M1 structure.
+3. **Prompt Vault Selection:** `PromptVault.ts` and `StacyBurkePrompt.ts` select the precise LLM instructions based on the market pattern.
+4. **Vision Evaluation:** `VisionEvaluator.ts` dispatches the image + prompt to Gemini via `VisionApiQueue.ts`.
+5. **Execution:** If Gemini responds with "APPROVE", `SeerEngine.ts` executes the trade immediately.
+
+## 🖥️ Frontend Dashboard Architecture
+
+The React Vite frontend (`/src/`) provides real-time visibility into the trading engines.
+
+*   **State Management:** Real-time data streams via WebSockets (`WebSocketContext.tsx`).
+*   **Routing & Auth:** `App.tsx` and `LoginScreen.tsx` control access.
+*   **Key Views:**
+    *   `BotDashboard.tsx`: Real-time tracking of Mage, Sage, and Seer bots. Displays equity curves, PnL, open trades, and system status (DWCB).
+    *   `TradeAnalytics.tsx`: Post-trade historical analytics.
+    *   `GlobalSettings.tsx`: Modifies system configurations, bot risk parameters, and toggles execution.
+*   **Audio Alerts:** `useSound.ts` triggers auditory feedback on trade execution or circuit breaker hits.
+*   **News Integration:** `useEconomicNews.tsx` tracks high-impact calendar events to visualize blackout periods on the UI.

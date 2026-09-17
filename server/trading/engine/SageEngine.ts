@@ -139,6 +139,14 @@ export async function _runSageBotForConfig(orch: any, sessionPair: string, state
     const dd = String(estDateUTC.getUTCDate()).padStart(2, "0");
     const dateStr = yyyy + "-" + mm + "-" + dd;
     const ss = state.sageStates[sig];
+    if (!ss.m1Buffer) ss.m1Buffer = [];
+    if (c && c.timestamp) {
+      const bLen = ss.m1Buffer.length;
+      if (bLen === 0 || ss.m1Buffer[bLen - 1].timestamp < c.timestamp) {
+        ss.m1Buffer.push({ timestamp: c.timestamp, high: c.high, low: c.low });
+        if (ss.m1Buffer.length > 500) ss.m1Buffer.shift();
+      }
+    }
     const currentMins = estHour * 60 + estMin;
 
     const startMins = config.orbStartHour! * 60 + config.orbStartMin!;
@@ -362,16 +370,11 @@ export async function _runSageBotForConfig(orch: any, sessionPair: string, state
   const pipSize = config.pipSize || state.config?.pipSize || getDynamicPipSize(baseSymbol);
   const sweepBuffer = config.sweepPips! * pipSize;
   const spreadPts = OPTIMIZER_CONFIG[baseSymbol.replace(".Daily", "")]?.spread * pipSize || 0;
-  const isCrypto = baseSymbol.includes("BTC") || baseSymbol.includes("ETH");
   const isIndex =
     baseSymbol.includes("NAS") ||
     baseSymbol.includes("US30") ||
-    baseSymbol.includes("GER40") ||
-    baseSymbol.includes("XTIUSD") ||
-    
-    baseSymbol.includes("SPX500") ||
-    baseSymbol.includes("JPN225");
-  const isForex = !isCrypto && !isIndex;
+    baseSymbol.includes("GER40");
+  const isForex = !isIndex;
 
   if (ss.lastEvaluatedM5Timestamp === lastM5.timestamp) {
     return;
@@ -423,33 +426,41 @@ export async function _runSageBotForConfig(orch: any, sessionPair: string, state
     `ORB [High/Low]: [${rSessionHigh}/${rSessionLow}] | ` +
     `Target Sweep [High >= ${reqSweepHigh.toFixed(5)} / Low <= ${reqSweepLow.toFixed(5)}]`);
 
-  if (sweepHighTriggered && sweepLowTriggered) {
-    logger.info(`[SageEngine] 🛑 Double sweep detected on ${sessionPair} at ${new Date(actionCandle.timestamp).toISOString()} - Skipping per Parity Rule.`);
-    return;
-  }
-  if (!sweepHighTriggered && !sweepLowTriggered) {
-    return;
-  }
-
-
-
-  // Log sweep details whenever a potential sweep is triggered
-  logger.info(`[SageEngine] 🔍 Evaluating Sweep for ${sessionPair} at ${new Date(actionCandle.timestamp).toISOString()}: ` +
-    `ActionCandle [High/Low]: [${actionCandle.high}/${actionCandle.low}] | ` +
-    `Required [High/Low]: [${reqSweepHigh}/${reqSweepLow}] | ` +
-    `Session [High/Low]: [${ss.sessionHigh}/${ss.sessionLow}] | ` +
-    `sweepHighTriggered: ${sweepHighTriggered}, sweepLowTriggered: ${sweepLowTriggered}`);
-
   let triggeredDir = null;
-  if (sweepHighTriggered) triggeredDir = "SELL";
-  else if (sweepLowTriggered) triggeredDir = "BUY";
+  if (sweepHighTriggered && sweepLowTriggered) {
+    const startIndex = m5Len - N;
+    const actionStartTs = state.m5Buffer[startIndex].timestamp;
+    const actionEndTs = lastM5.timestamp + 5 * 60 * 1000;
+    let highHitTime = -1;
+    let lowHitTime = -1;
+    if (ss.m1Buffer) {
+      for (const row of ss.m1Buffer) {
+        if (row.timestamp < actionStartTs) continue;
+        if (row.timestamp >= actionEndTs) break;
+        if (gte(row.high, reqSweepHigh) && highHitTime === -1) highHitTime = row.timestamp;
+        if (lte(row.low, reqSweepLow) && lowHitTime === -1) lowHitTime = row.timestamp;
+      }
+    }
+    if (highHitTime !== -1 && lowHitTime !== -1) {
+      // Fade final sweep: if High was swept first, then Low was swept last -> BUY.
+      // If Low was swept first, then High was swept last -> SELL.
+      triggeredDir = highHitTime < lowHitTime ? "BUY" : "SELL";
+      logger.info(`[SageEngine] ⚡ Double sweep resolved for ${sessionPair} at ${new Date(actionCandle.timestamp).toISOString()}: High hit at ${new Date(highHitTime).toISOString()}, Low hit at ${new Date(lowHitTime).toISOString()} -> Trading opposite final sweep: ${triggeredDir}`);
+    } else {
+      logger.info(`[SageEngine] 🛑 Double sweep detected on ${sessionPair} at ${new Date(actionCandle.timestamp).toISOString()} - Unresolved sub-tick sequence, skipping.`);
+      return;
+    }
+  } else if (sweepHighTriggered) {
+    triggeredDir = "SELL";
+  } else if (sweepLowTriggered) {
+    triggeredDir = "BUY";
+  } else {
+    return;
+  }
 
   if (triggeredDir) {
     let validSweep = true;
 
-    const reqSweepHigh = isForex
-      ? rSessionHigh + sweepBuffer
-      : rSessionHigh + sweepBuffer + spreadPts;
     const maxSweepMultiplier = config.maxSweepMultiplier ?? 2.0;
     const maxSweepBuffer = sweepBuffer * maxSweepMultiplier;
 
@@ -513,13 +524,15 @@ export async function _runSageBotForConfig(orch: any, sessionPair: string, state
       const htfData = HTFContextTracker.precomputeHTFData(state.m5Buffer);
       const m5Idx = state.m5Buffer.length - 1;
       const maxH1EmaSlope = config.maxH1EmaSlope ?? 20;
-      if (HTFContextTracker.isTrendParabolicFast(htfData, m5Idx, triggeredDir, maxH1EmaSlope, pipSize)) {
-        logger.info(`[SageEngine] ${sessionPair} Rejected: Parabolic trend momentum opposing ${triggeredDir}`);
-        validSweep = false;
-      }
-      if (config.useHtfSarFilter && HTFContextTracker.isSarAcceleratingFast(htfData, m5Idx, triggeredDir)) {
-        logger.info(`[SageEngine] ${sessionPair} Rejected: Parabolic SAR accelerating opposing ${triggeredDir}`);
-        validSweep = false;
+      if (config.htfAlignmentRequired) {
+        if (HTFContextTracker.isTrendParabolicFast(htfData, m5Idx, triggeredDir, maxH1EmaSlope, pipSize)) {
+          logger.info(`[SageEngine] ${sessionPair} Rejected: Parabolic trend momentum opposing ${triggeredDir}`);
+          validSweep = false;
+        }
+        if (config.useHtfSarFilter && HTFContextTracker.isSarAcceleratingFast(htfData, m5Idx, triggeredDir)) {
+          logger.info(`[SageEngine] ${sessionPair} Rejected: Parabolic SAR accelerating opposing ${triggeredDir}`);
+          validSweep = false;
+        }
       }
     }
 
@@ -658,7 +671,7 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
   try {
     const profile = typeof orch.getProfileData === 'function' 
       ? await orch.getProfileData()
-      : await db.prepare("SELECT t.risk_multiplier, COALESCE(t.metaapi_token, u.metaapi_token) as metaapi_token, t.metaapi_account_id, t.dwcb_enabled, t.dwcb_peak_balance, t.base_risk_balance, t.broker_symbol_map, t.institutional_enabled, t.institutional_daily_start_balance, t.institutional_daily_date, t.institutional_peak_balance FROM trading_profiles t LEFT JOIN users u ON t.user_id = u.id WHERE t.id = ?").get(orch.profileId);
+      : await db.prepare("SELECT t.risk_multiplier, COALESCE(t.metaapi_token, u.metaapi_token) as metaapi_token, t.metaapi_account_id, t.dwcb_enabled, t.dwcb_peak_balance, t.base_risk_balance, t.broker_symbol_map, t.institutional_enabled, t.institutional_daily_cap, t.institutional_peak_to_draw, t.institutional_daily_start_balance, t.institutional_daily_date, t.institutional_peak_balance FROM trading_profiles t LEFT JOIN users u ON t.user_id = u.id WHERE t.id = ?").get(orch.profileId);
     if (!profile) {
       logger.info("[PLACE_LIMIT] no profile");
       abortPlacement();
@@ -743,6 +756,7 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
       let currentInstPeak = sageProfile.institutional_peak_balance;
       if (!currentInstPeak || effectiveBalance > currentInstPeak) {
         currentInstPeak = effectiveBalance;
+        sageProfile.institutional_peak_balance = currentInstPeak;
         await db.prepare("UPDATE trading_profiles SET institutional_peak_balance = ? WHERE id = ?").run(currentInstPeak, orch.profileId);
       } else {
         const absDrawdown = (currentInstPeak - effectiveBalance) / currentInstPeak;
@@ -782,6 +796,8 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
       if (dailyDate !== brokerTradingDayStr || !dailyStartBal) {
         dailyStartBal = effectiveBalance;
         dailyDate = brokerTradingDayStr;
+        sageProfile.institutional_daily_start_balance = dailyStartBal;
+        sageProfile.institutional_daily_date = dailyDate;
         await db.prepare("UPDATE trading_profiles SET institutional_daily_start_balance = ?, institutional_daily_date = ? WHERE id = ?").run(dailyStartBal, dailyDate, orch.profileId);
       } else {
         const dailyDrawdown = (dailyStartBal - effectiveBalance) / dailyStartBal;
@@ -889,7 +905,7 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
     // Fallback timer
     const attemptStart = Date.now();
     // Round all prices to exact broker decimal precision (SYMBOL_SPECS.digits)
-    // This prevents hard 'Validation failed' rejections on BTCUSD (2dp), XAUUSD (2dp), etc.
+    // This prevents hard 'Validation failed' rejections on XAUUSD (2dp), JPY pairs (3dp), etc.
     const pEntry = roundPrice(ss.limitPrice, brokerSymbol);
     const pSl = roundPrice(ss.slPrice, brokerSymbol);
     const pTp = roundPrice(ss.tpPrice, brokerSymbol);
@@ -897,12 +913,13 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
     const penetrationPct = sageCfg.entryPenetrationPct ?? 0;
     const optCfg = PairConfigManager.getRepresentativeConfig(symbol);
     const spreadPts = (optCfg?.spread || 0) * pipSize;
-    const proximityThreshold = Math.max(2.5 * pipSize, (optCfg?.spread || 1) * 2.5 * pipSize, 0.10 * Math.abs(pEntry - pSl));
+    const proximityThreshold = Math.max(3.5 * pipSize, (optCfg?.spread || 1) * 2.5 * pipSize, 0.15 * Math.abs(pEntry - pSl));
     const currentPrice = ss.direction === "BUY" ? roundPrice(c.open + spreadPts, brokerSymbol) : roundPrice(c.open, brokerSymbol);
     const distFromEntry = ss.direction === "BUY" ? (currentPrice - pEntry) : (pEntry - currentPrice);
     const isWithinProximity = lte(Math.abs(distFromEntry), proximityThreshold) || (ss.direction === "BUY" ? lte(currentPrice, pEntry) : gte(currentPrice, pEntry));
 
-    const executeAsMarket = penetrationPct === 0 || isWithinProximity;
+    let executeAsMarket = penetrationPct === 0 || isWithinProximity;
+    const isSim = (global as any).isSimulator || (global as any).__SIM_MOCK_ACCOUNT__;
 
     let orderRes: any;
     let placingDbId = 0;
@@ -954,9 +971,9 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
         const roundedSafeTp = roundPrice(safePrices.pTp, brokerSymbol);
 
         logger.info(`[SageEngine] ⚡ Executing direct MARKET ${ss.direction} on ${brokerSymbol} (Proximity: ${(distFromEntry / pipSize).toFixed(1)} pips <= ${(proximityThreshold / pipSize).toFixed(1)} threshold, Target: ${pEntry}, Live: ${latestPrice}, SL: ${roundedSafeSl}, TP: ${roundedSafeTp})`);
-        const isSim = (global as any).isSimulator || (global as any).__SIM_MOCK_ACCOUNT__;
+        const intendedEntry = penetrationPct > 0 ? pEntry : latestPrice;
         const marketOpts = isSim
-          ? { magic, clientId: shortClientId, entryPrice: latestPrice }
+          ? { magic, clientId: shortClientId, entryPrice: latestPrice, limitPrice: pEntry, intendedEntryPrice: intendedEntry }
           : { magic, clientId: shortClientId };
         orderRes = await enqueueMetaApiRequest(
           async () =>
@@ -1045,13 +1062,14 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
         const roundedSafeSl = roundPrice(safePrices.pSl, brokerSymbol);
         const roundedSafeTp = roundPrice(safePrices.pTp, brokerSymbol);
         logger.info(`[SageEngine] 🛡️ Smart Market Fallback Prices: Entry=${latestPrice}, SL=${roundedSafeSl}, TP=${roundedSafeTp} (stopsLevel=${stopsLevelPts}pts)`);
-        const isSim = (global as any).isSimulator || (global as any).__SIM_MOCK_ACCOUNT__;
+        const intendedEntry = penetrationPct > 0 ? pEntry : latestPrice;
         const fallbackOpts = isSim
-          ? { magic, clientId: shortClientId, entryPrice: latestPrice }
+          ? { magic, clientId: shortClientId, entryPrice: latestPrice, limitPrice: pEntry, intendedEntryPrice: intendedEntry }
           : { magic, clientId: shortClientId };
         orderRes = isBuy
           ? await conn.createMarketBuyOrder(brokerSymbol, lots, roundedSafeSl, roundedSafeTp || undefined, fallbackOpts)
           : await conn.createMarketSellOrder(brokerSymbol, lots, roundedSafeSl, roundedSafeTp || undefined, fallbackOpts);
+        executeAsMarket = true;
       } else {
         globalTradeGate.release(orch.profileId, preRegKey);
         throw err;
@@ -1085,16 +1103,35 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
       );
 
       // Immediate Trailing & Active Trade Attachment for Direct Market Orders
-      if (executeAsMarket) {
-        const openPrice = c.close;
-        const openTimeMs = c.timestamp || Date.now();
+      if (executeAsMarket && orderRes && orderRes.orderId) {
+        let matchedPos: any = null;
+        if (!isSim) {
+          try {
+            const currentPositions = await conn.getPositions();
+            matchedPos = currentPositions.find((p: any) => String(p.id) === String(orderRes.orderId));
+            const stillOpen = !!matchedPos;
+            if (!stillOpen && currentPositions.length > 0) {
+              logger.info(`[SageEngine] ⚡ Market Order ${orderRes.orderId} was already closed by broker on entry candle.`);
+              return;
+            }
+          } catch (_e) {}
+        }
+
+        const isBuy = ss.direction === "BUY";
+        const realFillPrice = matchedPos?.openPrice 
+          ? roundPrice(matchedPos.openPrice, brokerSymbol) 
+          : (isBuy ? roundPrice(c.open + spreadPts, brokerSymbol) : roundPrice(c.open, brokerSymbol));
+        const openPrice = realFillPrice;
+        const openTimeMs = matchedPos?.time ? new Date(matchedPos.time).getTime() : (c.timestamp || Date.now());
+        const actualRiskPips = Math.abs(openPrice - pSl) / pipSize;
+
         try {
           const updateRes = await db.prepare(`
             UPDATE bot_trade_states 
-            SET status = 'OPEN', meta_order_id = ?, entry_price = ?, sl_price = ?, tp_price = ?, lots = ?
+            SET status = 'OPEN', meta_order_id = ?, entry_price = ?, sl_price = ?, tp_price = ?, lots = ?, initial_risk_pips = ?
             WHERE (client_id = ? OR meta_order_id = ?) AND status = 'PLACING'
             RETURNING id
-          `).all(orderRes.orderId, openPrice, pSl, pTp, lots, shortClientId, orderRes.orderId);
+          `).all(orderRes.orderId, openPrice, pSl, pTp, lots, actualRiskPips, shortClientId, orderRes.orderId);
           if (updateRes && updateRes.length > 0 && updateRes[0].id) {
             placingDbId = Number(updateRes[0].id);
           }
@@ -1109,12 +1146,13 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
           botId: botId.toUpperCase(),
           direction: ss.direction,
           entryPrice: openPrice,
-          intendedEntryPrice: pEntry,
-          entrySlippage: ss.direction === "BUY" ? (openPrice - pEntry) : (pEntry - openPrice),
+          realFillPrice: openPrice,
+          intendedEntryPrice: penetrationPct > 0 ? pEntry : openPrice,
+          entrySlippage: isBuy ? (openPrice - (penetrationPct > 0 ? pEntry : openPrice)) : ((penetrationPct > 0 ? pEntry : openPrice) - openPrice),
           slPrice: pSl,
           originalSl: pSl,
           tpPrice: pTp,
-          riskPips: Math.abs(openPrice - pSl) / pipSize,
+          riskPips: actualRiskPips,
           highestPrice: openPrice,
           lowestPrice: openPrice,
           isTrailing: false,
@@ -1122,11 +1160,19 @@ export async function placeSageLimitOrder(orch: any, sessionPair: string, state:
           hasTakenPartial: false,
           openTime: openTimeMs,
         };
-        if (!state.activeTrades.some((t: any) => t.metaOrderId === orderRes.orderId)) {
+        const existing = state.activeTrades.find((t: any) => String(t.metaOrderId) === String(orderRes.orderId));
+        if (existing) {
+          existing.entryPrice = openPrice;
+          existing.realFillPrice = openPrice;
+          existing.intendedEntryPrice = pEntry;
+          existing.riskPips = actualRiskPips;
+        } else {
           state.activeTrades.push(newTradeRec);
         }
-        if (!state.activeTrade) state.activeTrade = newTradeRec;
-        logger.info(`[SageEngine] ⚡ Market Order OPEN & Attached for Trailing on ${brokerSymbol} at ${openPrice}`);
+        if (!state.activeTrade || String(state.activeTrade.metaOrderId) === String(orderRes.orderId)) {
+          state.activeTrade = existing || newTradeRec;
+        }
+        logger.info(`[SageEngine] ⚡ Market Order OPEN & Attached for Trailing on ${brokerSymbol} at ${openPrice} (Real Fill, Risk: ${actualRiskPips.toFixed(1)} pips)`);
       }
 
       // Register Canonical Session Direction in GlobalTradeGate
@@ -1266,10 +1312,16 @@ export async function evaluateSageTrailingOnTick(
     const estDateUTC = getFixedEstDate(new Date(currentTime));
 
     const isCrypto = baseSymbol.includes("BTC") || baseSymbol.includes("ETH");
+    const dayOfWeek = estDateUTC.getUTCDay();
+    const isWeekendGap = Boolean((global as any).__SIM_IS_WEEKEND_GAP__);
+    const isFridayAfternoon = dayOfWeek === 5 && (estDateUTC.getUTCHours() >= 14 || (estDateUTC.getUTCHours() >= 13 && isWeekendGap));
     const isEOD =
       !isCrypto &&
       config.session !== "asia" &&
-      (isEODSession(estDateUTC.getUTCHours(), estDateUTC.getUTCMinutes()) || isRolloverCircuitBreaker(estDateUTC.getUTCHours(), estDateUTC.getUTCMinutes()));
+      (isEODSession(estDateUTC.getUTCHours(), estDateUTC.getUTCMinutes()) ||
+       isRolloverCircuitBreaker(estDateUTC.getUTCHours(), estDateUTC.getUTCMinutes()) ||
+       isFridayAfternoon ||
+       isWeekendGap);
 
     const newsCheck = isNewsBlackout(baseSymbol, new Date(currentTime));
     const isNewsForceClose = newsCheck.blocked;
@@ -1321,15 +1373,16 @@ export async function evaluateSageTrailingOnTick(
     const pipSize2 = config.pipSize || state.config?.pipSize || getDynamicPipSize(baseSymbol);
     const isBuy = trade.direction === "BUY";
     const brokerDigits = getSymbolSpec(baseSymbol).digits ?? 5;
+    const effectiveEntry = trade.realFillPrice || trade.entryPrice;
     if (!trade.originalSl) trade.originalSl = trade.slPrice;
-    if (!trade.riskPips) trade.riskPips = Math.abs(trade.entryPrice - trade.originalSl) / pipSize2;
-    const actualRisk = Math.abs(trade.entryPrice - trade.originalSl);
+    if (!trade.riskPips) trade.riskPips = Math.abs(effectiveEntry - trade.originalSl) / pipSize2;
+    const actualRisk = Math.abs(effectiveEntry - trade.originalSl);
     const originalSl = trade.originalSl;
     const riskPips = trade.riskPips;
     const optCfg = OPTIMIZER_CONFIG[baseSymbol.replace(".Daily", "")];
     const spreadPts = (optCfg?.spread || 0) * pipSize2;
-    const peakHigh = Math.max(trade.highestPrice || trade.entryPrice, tick.high);
-    const peakLow = Math.min(trade.lowestPrice || trade.entryPrice, tick.low);
+    const peakHigh = Math.max(trade.highestPrice || effectiveEntry, tick.high);
+    const peakLow = Math.min(trade.lowestPrice || effectiveEntry, tick.low);
     trade.highestPrice = peakHigh;
     trade.lowestPrice = peakLow;
     const highestReached = isBuy ? peakHigh : peakLow + spreadPts;
@@ -1338,12 +1391,13 @@ export async function evaluateSageTrailingOnTick(
     const tStep = config.trailingSlStep!;
     const exitMode = config.exitMode;
 
-    const intendedEntry = trade.intendedEntryPrice !== undefined ? trade.intendedEntryPrice : trade.entryPrice;
+    const penetrationPct = config.entryPenetrationPct ?? 0;
+    const intendedEntry = (penetrationPct > 0 && trade.intendedEntryPrice !== undefined) ? trade.intendedEntryPrice : effectiveEntry;
     const intendedRisk = Math.abs(intendedEntry - originalSl);
 
     const actualR = isBuy
-      ? (highestReached - trade.entryPrice) / (actualRisk > 0 ? actualRisk : pipSize2)
-      : (trade.entryPrice - highestReached) / (actualRisk > 0 ? actualRisk : pipSize2);
+      ? (highestReached - effectiveEntry) / (actualRisk > 0 ? actualRisk : pipSize2)
+      : (effectiveEntry - highestReached) / (actualRisk > 0 ? actualRisk : pipSize2);
 
     const theoreticalR = isBuy
       ? (highestReached - intendedEntry) / (intendedRisk > 0 ? intendedRisk : actualRisk)
@@ -1351,9 +1405,13 @@ export async function evaluateSageTrailingOnTick(
 
     const currentR = Math.max(actualR, theoreticalR);
 
-    const clog = (global as any).__ORIGINAL_LOG__ || console.log;
-    const botLabel = trade.botId === "discretionary_trader" ? "MANUAL" : "SAGE";
-    clog(`📈 Trailing Eval (${botLabel}) ${baseSymbol}: FloatingR=${currentR >= 0 ? "+" : ""}${currentR.toFixed(2)}R | BreakEvenTrigger=${tTrig}R | Step=${tStep}R | CurrentSL=${trade.slPrice} | Entry=${trade.entryPrice}`);
+    const nowMs = Date.now();
+    if (!trade._lastTrailLogAt || nowMs - trade._lastTrailLogAt >= 60000) {
+      trade._lastTrailLogAt = nowMs;
+      const profitPts = isBuy ? (highestReached - effectiveEntry) : (effectiveEntry - highestReached);
+      const botLabel = trade.botId === "discretionary_trader" ? "MANUAL" : "SAGE";
+      logger.info(`[SageEngine] 📊 Tracking Trade ${trade.metaOrderId} on ${baseSymbol} (${trade.direction}): Entry = ${effectiveEntry}, Live = ${tick.close} | Floating = ${currentR >= 0 ? "+" : ""}${currentR.toFixed(2)}R (${profitPts >= 0 ? "+" : ""}${profitPts.toFixed(1)} pts / ${actualRisk.toFixed(1)} pts) | Target BE = +${tTrig}R | SL = ${trade.slPrice}`);
+    }
 
     const isTrailingEnabled = exitMode === "TRAILING" || exitMode === "MIDPOINT" || exitMode === "OPPOSITE_BOUNDARY" || exitMode === "ADTEL" || exitMode === undefined || (tTrig !== undefined && tTrig > 0);
     if (isTrailingEnabled) {
@@ -1362,28 +1420,28 @@ export async function evaluateSageTrailingOnTick(
         let sageNewSl = trade.slPrice;
 
         if (isBuy) {
-          if (tTrig !== undefined && tTrig > 0 && gte(currentR, tTrig) && trade.slPrice < trade.entryPrice) {
-            sageNewSl = trade.entryPrice;
+          if (tTrig !== undefined && tTrig > 0 && gte(currentR, tTrig) && trade.slPrice < effectiveEntry) {
+            sageNewSl = effectiveEntry;
             sageShouldUpdate = true;
           }
           if (tTrig !== undefined && tTrig > 0 && tStep !== undefined && tStep > 0 && gte(currentR, tTrig + tStep)) {
             const numSteps = Math.floor((currentR - tTrig + PRICE_EPSILON) / tStep);
             const rLevelToLock = numSteps * tStep;
-            const proposedSL = Number((trade.entryPrice + rLevelToLock * actualRisk).toFixed(brokerDigits));
+            const proposedSL = Number((effectiveEntry + rLevelToLock * actualRisk).toFixed(brokerDigits));
             if (proposedSL > trade.slPrice && proposedSL > sageNewSl) {
               sageNewSl = proposedSL;
               sageShouldUpdate = true;
             }
           }
         } else {
-          if (tTrig !== undefined && tTrig > 0 && gte(currentR, tTrig) && trade.slPrice > trade.entryPrice) {
-            sageNewSl = trade.entryPrice;
+          if (tTrig !== undefined && tTrig > 0 && gte(currentR, tTrig) && trade.slPrice > effectiveEntry) {
+            sageNewSl = effectiveEntry;
             sageShouldUpdate = true;
           }
           if (tTrig !== undefined && tTrig > 0 && tStep !== undefined && tStep > 0 && gte(currentR, tTrig + tStep)) {
             const numSteps = Math.floor((currentR - tTrig + PRICE_EPSILON) / tStep);
             const rLevelToLock = numSteps * tStep;
-            const proposedSL = Number((trade.entryPrice - rLevelToLock * actualRisk).toFixed(brokerDigits));
+            const proposedSL = Number((effectiveEntry - rLevelToLock * actualRisk).toFixed(brokerDigits));
             if (proposedSL < trade.slPrice && proposedSL < sageNewSl) {
               sageNewSl = proposedSL;
               sageShouldUpdate = true;
@@ -1396,11 +1454,11 @@ export async function evaluateSageTrailingOnTick(
 
           trade.slPrice = roundedSl;
           const sageHighest = trade.direction === "BUY"
-            ? Math.max(trade.highestPrice || trade.entryPrice, tick.high)
-            : (trade.highestPrice || trade.entryPrice);
+            ? Math.max(trade.highestPrice || effectiveEntry, tick.high)
+            : (trade.highestPrice || effectiveEntry);
           const sageLowest = trade.direction === "SELL"
-            ? Math.min(trade.lowestPrice || trade.entryPrice, tick.low)
-            : (trade.lowestPrice || trade.entryPrice);
+            ? Math.min(trade.lowestPrice || effectiveEntry, tick.low)
+            : (trade.lowestPrice || effectiveEntry);
           trade.highestPrice = sageHighest;
           trade.lowestPrice = sageLowest;
           db.prepare("UPDATE bot_trade_states SET sl_price = ?, highest_price = ?, lowest_price = ? WHERE id = ?").run(
@@ -1500,17 +1558,18 @@ export async function checkSageLimitFill(orch, sessionPair, state, c, targetBotI
           const sageConfigs = (orch as any).__CUSTOM_SAGE_CONFIGS__ || PairConfigManager.getSageConfigs(sessionPair);
           const sageCfg = sageConfigs.find((c: any) => c.signature === sig) || sageConfigs[0] || state.config;
           const pipSize = sageCfg?.pipSize || PairConfigManager.getRepresentativeConfig(sessionPair)?.pipSize || getDynamicPipSize(baseSymbol);
-          const intendedLimit = ss.limitPrice || pos.openPrice;
-          const riskPips = Math.abs(intendedLimit - ss.slPrice) / pipSize;
+          const penetrationPct = sageCfg?.entryPenetrationPct ?? 0;
+          const intendedLimit = penetrationPct > 0 ? (ss.limitPrice || pos.openPrice) : pos.openPrice;
+          const actualRiskPips = Math.abs(pos.openPrice - ss.slPrice) / pipSize;
 
           let dbId = 0;
           try {
             // First try to upgrade a PLACING record
             const upgradeRes = await db.prepare(`
               UPDATE bot_trade_states 
-              SET status = 'OPEN', meta_order_id = ?, entry_price = ?, sl_price = ?, tp_price = ?, lots = ? 
+              SET status = 'OPEN', meta_order_id = ?, entry_price = ?, sl_price = ?, tp_price = ?, lots = ?, initial_risk_pips = ? 
               WHERE (client_id = ? OR meta_order_id = ?) AND status IN ('PLACING', 'FAILED', 'PENDING_VERIFICATION') RETURNING id
-            `).all(pos.id, pos.openPrice, ss.slPrice, ss.tpPrice, pos.volume, pos.clientId || sig, ss.limitOrderId);
+            `).all(pos.id, pos.openPrice, ss.slPrice, ss.tpPrice, pos.volume, actualRiskPips, pos.clientId || sig, ss.limitOrderId);
             
             if (upgradeRes && upgradeRes.length > 0) {
               dbId = upgradeRes[0].id;
@@ -1543,7 +1602,7 @@ export async function checkSageLimitFill(orch, sessionPair, state, c, targetBotI
                 pos.id,
                 pos.openPrice,
                 pos.openPrice,
-                riskPips,
+                actualRiskPips,
                 pos.clientId || sig
               );
               dbId = runResult.lastInsertRowid;
@@ -1560,12 +1619,13 @@ export async function checkSageLimitFill(orch, sessionPair, state, c, targetBotI
             botId: targetBotId.toUpperCase(),
             direction: ss.direction,
             entryPrice: pos.openPrice,
-            intendedEntryPrice: ss.limitPrice || pos.openPrice,
-            entrySlippage: ss.direction === "BUY" ? (pos.openPrice - (ss.limitPrice || pos.openPrice)) : ((ss.limitPrice || pos.openPrice) - pos.openPrice),
+            realFillPrice: pos.openPrice,
+            intendedEntryPrice: intendedLimit,
+            entrySlippage: ss.direction === "BUY" ? (pos.openPrice - intendedLimit) : (intendedLimit - pos.openPrice),
             slPrice: ss.slPrice,
             originalSl: ss.slPrice,
             tpPrice: ss.tpPrice || 0,
-            riskPips: riskPips,
+            riskPips: actualRiskPips,
             highestPrice: pos.openPrice,
             lowestPrice: pos.openPrice,
             isTrailing: false,

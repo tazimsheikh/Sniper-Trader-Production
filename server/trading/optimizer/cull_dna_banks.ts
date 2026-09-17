@@ -353,6 +353,11 @@ if (isMainThread) {
           const parsed = parseMageConfig(item.setup);
           if (!parsed) continue;
           const { session, config } = parsed;
+          const cleanSym = symbol.replace(/\.Daily$/i, "").split("_")[0];
+          config.slMode = (cleanSym === "GBPJPY" || cleanSym === "XAUUSD" || cleanSym === "GER40")
+            ? "MIDPOINT"
+            : "OPPOSITE_BOUNDARY";
+
 
           const triggers = magePreCompute(
             m5Candles,

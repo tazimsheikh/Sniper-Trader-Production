@@ -6,14 +6,8 @@ const PAIRS_TO_DISCOVER = [
   { base: "GER40", pattern: /^(GER|DAX|DE)[34]0/i },
   { base: "US30", pattern: /^(US|DJ|WS|DOW)[34]0/i },
   { base: "NAS100", pattern: /^(NAS|US100|USTEC|NDX|NQ)/i },
-  { base: "SPX500", pattern: /^(US500|SP500|SPX|S&P)/i },
-  { base: "JPN225", pattern: /^(JPN|JP|NIKKEI)225/i },
-  // Crypto
-  { base: "BTCUSD", pattern: /^(BTCUSD|BITCOIN)/i },
-  { base: "ETHUSD", pattern: /^(ETHUSD|ETHEREUM)/i },
   // Commodities
   { base: "XAUUSD", pattern: /^(XAUUSD|GOLD)/i },
-  { base: "XTIUSD", pattern: /^(XTIUSD|USOIL|WTI)/i },
   // Majors & Minors
   { base: "EURUSD", pattern: /^EURUSD/i },
   { base: "GBPUSD", pattern: /^GBPUSD/i },
@@ -23,14 +17,12 @@ const PAIRS_TO_DISCOVER = [
   { base: "NZDUSD", pattern: /^NZDUSD/i },
   { base: "USDCHF", pattern: /^USDCHF/i },
   // Crosses
-  { base: "EURNZD", pattern: /^EURNZD/i },
   { base: "EURAUD", pattern: /^EURAUD/i },
   { base: "EURCAD", pattern: /^EURCAD/i },
   { base: "EURJPY", pattern: /^EURJPY/i },
   { base: "GBPJPY", pattern: /^GBPJPY/i },
   { base: "GBPAUD", pattern: /^GBPAUD/i },
   { base: "GBPCAD", pattern: /^GBPCAD/i },
-  { base: "GBPNZD", pattern: /^GBPNZD/i },
   { base: "AUDJPY", pattern: /^AUDJPY/i },
   { base: "CADJPY", pattern: /^CADJPY/i },
   { base: "CHFJPY", pattern: /^CHFJPY/i },
@@ -55,12 +47,7 @@ export async function discoverBrokerSymbols(profileId: number, token: string, ac
       "GER40": ["GER40", "DAX40", "DE40", "GER30", "DE30", "GDAXI", "DAX", "DAX30", ".DE40", ".GER40"],
       "US30": ["US30", "DJ30", "WS30", "DOW30", "DOWJONES", ".US30"],
       "NAS100": ["NAS100", "US100", "USTEC", "NDX", "NDX100", "NQ100", ".NAS100"],
-      "SPX500": ["SPX500", "US500", "SP500", "SPX", ".SPX500"],
-      "JPN225": ["JPN225", "JP225", "NIKKEI225", ".JPN225"],
       "XAUUSD": ["XAUUSD", "GOLD"],
-      "XTIUSD": ["XTIUSD", "USOIL", "WTI"],
-      "BTCUSD": ["BTCUSD", "BITCOIN"],
-      "ETHUSD": ["ETHUSD", "ETHEREUM"],
     };
 
     const newMap: Record<string, string> = {};

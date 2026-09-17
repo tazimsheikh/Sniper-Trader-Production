@@ -208,10 +208,10 @@ export async function runMathBacktest(
 
     const sig = config.signature || `default_${cfgIdx}`;
     for (const r of evalRes.records) {
-      r.clientId = sig;
-      r.botId = `MAGE_${sig}`;
+      r.clientId = r.isPyramidChild ? `${sig}_PYR` : sig;
+      r.botId = r.isPyramidChild ? `MAGE_${sig}_PYR` : `MAGE_${sig}`;
       r.pair = pair;
-      r.setupType = "MAGE_ORB";
+      r.setupType = r.isPyramidChild ? "MAGE_ORB_PYR" : "MAGE_ORB";
       r.sessionName = sessionName;
       r.confidence = 1;
       r.setupQuality = "N/A";

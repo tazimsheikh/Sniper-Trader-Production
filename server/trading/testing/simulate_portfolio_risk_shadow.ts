@@ -729,22 +729,42 @@ async function runInstitutionalGridModule(trades: any[]) {
         consecutiveDayClamp = 0.25;
       }
 
-      const effectiveRisk = baseRisk * (t.riskMultiplier || 1.0) * institutionalMultiplier * consecutiveDayClamp;
+      // 🛡️ Pre-Trade Daily Headroom Protection (Preventative Sizing)
+      const currentDailyLoss = Math.max(0, (startOfDayBal - bal) / startOfDayBal);
+      const remainingHeadroom = Math.max(0, dailyCapPct - currentDailyLoss);
+
+      // If remaining headroom is smaller than 0.15% (e.g. >=90% of daily cap consumed), halt new entries for the day
+      if (remainingHeadroom <= 0.0015 || currentDailyLoss >= dailyCapPct * 0.90) {
+        dayHalted = true;
+        daysCircuited++;
+        continue;
+      }
+
+      // Clamp incoming trade risk so that even a maximum worst-case -1.0R loss CANNOT breach the daily cap
+      const maxRiskAllowedByDailyCap = remainingHeadroom * 0.85; // 15% safety buffer for adverse slippage
+
+      const nominalRisk = baseRisk * (t.riskMultiplier || 1.0) * institutionalMultiplier * consecutiveDayClamp;
+      const effectiveRisk = Math.min(nominalRisk, maxRiskAllowedByDailyCap);
       const riskCapital = bal * effectiveRisk;
       const r = t.rMultiple || 0;
       bal += riskCapital * r;
       tradesTaken++;
 
-      const dailyLoss = (startOfDayBal - bal) / startOfDayBal;
-      if (dailyLoss > maxDailyLossSeen) maxDailyLossSeen = dailyLoss;
+      const postTradeDailyLoss = (startOfDayBal - bal) / startOfDayBal;
+      if (postTradeDailyLoss > maxDailyLossSeen) maxDailyLossSeen = postTradeDailyLoss;
 
-      if (dailyLoss >= dailyCapPct) {
+      if (postTradeDailyLoss >= dailyCapPct * 0.90) {
         dayHalted = true;
         daysCircuited++;
+      }
+
+      if (postTradeDailyLoss > dailyCapPct + 0.0001) {
+        accountHalted = true; // Breached daily cap!
       }
     }
 
     const netRetPct = ((bal - 100.0) / 100.0) * 100;
+    const isBreached = accountHalted || (maxDailyLossSeen > dailyCapPct + 0.0001);
     return {
       baseRisk: (baseRisk * 100).toFixed(1) + "%",
       dailyCap: (dailyCapPct * 100).toFixed(1) + "%",
@@ -755,16 +775,18 @@ async function runInstitutionalGridModule(trades: any[]) {
       maxDailyDd: (maxDailyLossSeen * 100).toFixed(2) + "%",
       maxPeakDd: (maxPeakDdPct * 100).toFixed(2) + "%",
       circuitedDays: daysCircuited,
-      status: accountHalted ? "🔴 BREACHED" : "🟢 SAFE"
+      status: isBreached ? "🔴 BREACHED" : "🟢 SAFE"
     };
   }
 
   console.log("\n▶ [Preset: Account A (Conservative) — 2.5% Daily Cap / 5.5% Trailing Max DD]");
   console.table(testRisks.map(r => evaluateInstitutionalScenario(r, 0.025, 0.055)));
 
+  // 2. Account B (Balanced / Moderate Profile — 3.0% Daily Cap / 9.5% Trailing Max DD)
   console.log("\n▶ [Preset: Account B (Balanced / Moderate) — 3.0% Daily Cap / 9.5% Trailing Max DD]");
   console.table(testRisks.map(r => evaluateInstitutionalScenario(r, 0.03, 0.095)));
 
+  // 3. Account C (Aggressive / High Risk Profile — 10.0% Daily Cap / 40.0% Trailing Max DD)
   console.log("\n▶ [Preset: Account C (Aggressive / High Risk) — 10.0% Daily Cap / 40.0% Trailing Max DD]");
   console.table(testRisks.map(r => evaluateInstitutionalScenario(r, 0.10, 0.40)));
 
@@ -796,7 +818,7 @@ async function runInstitutionalGridModule(trades: any[]) {
 
     for (const r of fineRisks) {
       const res = evaluateInstitutionalScenario(r, acc.dailyCap, acc.peakToDraw);
-      if (res.status === "🟢 SAFE") {
+      if (res.status === "🟢 SAFE" && parseFloat(res.maxDailyDd) <= (acc.dailyCap * 100 + 0.01)) {
         if (acc.peakToDraw >= 0.99) {
           // For Account D (100% Cap / 100% DD), find the optimal Kelly growth peak (max final balance)
           if (!bestResult || res.rawFinalBal > bestResult.rawFinalBal) {
