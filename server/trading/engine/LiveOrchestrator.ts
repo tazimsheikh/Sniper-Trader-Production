@@ -638,13 +638,14 @@ export class LiveOrchestrator {
           }
           if (!state.activeTrades) state.activeTrades = [];
           if (!state.activeTrades.some((at: any) => String(at.metaOrderId) === String(t.meta_order_id))) {
-            state.activeTrades.push({
+            const tradeRec = {
               dbId: t.id,
               metaOrderId: t.meta_order_id,
               clientId: t.client_id,
               botId: t.bot_id,
               direction: t.direction,
               entryPrice: t.entry_price,
+              realFillPrice: t.entry_price,
               slPrice: t.sl_price,
               originalSl: t.original_sl || t.sl_price,
               tpPrice: t.tp_price,
@@ -665,7 +666,11 @@ export class LiveOrchestrator {
               openTime: t.open_time
                 ? (Number.isFinite(Number(t.open_time)) ? Number(t.open_time) : new Date(t.open_time).getTime())
                 : Date.now(),
-            });
+            };
+            state.activeTrades.push(tradeRec);
+            if (!state.activeTrade || t.bot_id?.toUpperCase() === 'SEER' || t.bot_id?.toUpperCase() === 'DISCRETIONARY_TRADER') {
+              state.activeTrade = tradeRec;
+            }
           }
         }
 
@@ -2004,36 +2009,54 @@ export class LiveOrchestrator {
             } catch (e: any) {}
           }
           
-          const posSL = pos.sl !== undefined ? pos.sl : pos.stopLoss;
-          const posTP = pos.tp !== undefined ? pos.tp : pos.takeProfit;
-          const slDiff = Math.abs(posSL - trade.slPrice);
-          const tpDiff = Math.abs(posTP - trade.tpPrice);
+          if (state.activeTrade && String(state.activeTrade.metaOrderId) === String(trade.metaOrderId)) {
+            Object.assign(state.activeTrade, trade);
+          } else if (!state.activeTrade && (trade.botId?.toUpperCase() === 'SEER' || trade.botId?.toUpperCase() === 'DISCRETIONARY_TRADER')) {
+            state.activeTrade = trade;
+          }
+          
+          const posSL = pos.sl !== undefined ? pos.sl : (pos.stopLoss !== undefined ? pos.stopLoss : 0);
+          const posTP = pos.tp !== undefined ? pos.tp : (pos.takeProfit !== undefined ? pos.takeProfit : 0);
+          const hasValidSl = posSL > 0 && trade.slPrice > 0;
+          const hasValidTp = posTP > 0 && trade.tpPrice > 0;
+          const slDiff = hasValidSl ? Math.abs(posSL - trade.slPrice) : 0;
+          const tpDiff = hasValidTp ? Math.abs(posTP - trade.tpPrice) : 0;
           
           const isTradeManagerEmergencySl = Math.abs(Math.abs(posSL - trade.entryPrice) - 50 * pipSize) < (pipSize * 2) || posSL === 0;
+          const manualThreshold = pipSize * 3; // 3 pips to prevent false-positives from broker rounding/stopsLevel
 
-          // If difference is more than 0.5 pips, consider it a manual modification by the user
-          if (slDiff > pipSize * 0.5 || tpDiff > pipSize * 0.5) {
+          if ((hasValidSl && slDiff > manualThreshold) || (hasValidTp && tpDiff > manualThreshold)) {
             if (isTradeManagerEmergencySl && slDiff > pipSize * 0.5) {
               if (!trade.isVirtualSlMode) {
                 try {
                   logger.warn(`[DiscretionaryTrader] 🛡️ TradeManager emergency SL detected for trade ${pos.id}. Broker stripped last SL. Engaging Virtual SL Fallback Mode.`);
                 } catch(e) {}
                 trade.isVirtualSlMode = true;
+                if (state.activeTrade && String(state.activeTrade.metaOrderId) === String(trade.metaOrderId)) {
+                  state.activeTrade.isVirtualSlMode = true;
+                }
               }
-              // Do NOT detach, and do NOT overwrite trade.slPrice (keep our tight internal trailing SL)
             } else {
-              if (!trade.manuallyModified) {
-                try {
-                  logger.warn(`[DiscretionaryTrader] ✋ Manual modification detected on ${sp} for trade ${pos.id}. Detaching trailing bot logic.`);
-                } catch(e) {}
-                trade.manuallyModified = true;
+              const isKnownBotSl = Math.abs(posSL - (trade.lastConfirmedSL || trade.slPrice)) < pipSize * 1.5 ||
+                                   Math.abs(posSL - (trade.originalSl || trade.slPrice)) < pipSize * 1.5;
+              if (!isKnownBotSl) {
+                if (!trade.manuallyModified) {
+                  try {
+                    logger.warn(`[DiscretionaryTrader] ✋ Manual modification detected on ${sp} for trade ${pos.id}. Detaching trailing bot logic.`);
+                  } catch(e) {}
+                  trade.manuallyModified = true;
+                  if (state.activeTrade && String(state.activeTrade.metaOrderId) === String(trade.metaOrderId)) {
+                    state.activeTrade.manuallyModified = true;
+                  }
+                }
+                trade.slPrice = posSL;
+                if (posTP > 0) trade.tpPrice = posTP;
+                if (state.activeTrade && String(state.activeTrade.metaOrderId) === String(trade.metaOrderId)) {
+                  state.activeTrade.slPrice = posSL;
+                  if (posTP > 0) state.activeTrade.tpPrice = posTP;
+                }
               }
-              // Sync internal state to the manual modification so UI shows actual
-              trade.slPrice = posSL;
-              trade.tpPrice = posTP;
             }
-            // NOTE: We intentionally do NOT sync slPrice/tpPrice here when Virtual SL mode
-            // is active — the internal trailing SL must be preserved for hit detection.
           }
         }
       }
@@ -2374,10 +2397,18 @@ export class LiveOrchestrator {
     }
 
     if (state.m5Buffer.length >= 5) {
+      if (!state.activeTrade && state.activeTrades && state.activeTrades.length > 0) {
+        const seerT = state.activeTrades.find((t: any) => {
+          const bid = t.botId?.toUpperCase();
+          return bid === "SEER" || bid === "DISCRETIONARY_TRADER";
+        });
+        if (seerT) state.activeTrade = seerT;
+      }
       if (
         state.activeTrade &&
         (state.activeTrade.botId === "SEER" ||
-         state.activeTrade.botId === "seer")
+         state.activeTrade.botId === "seer" ||
+         state.activeTrade.botId === "DISCRETIONARY_TRADER")
       ) {
         await evaluateSeerTrailingOnTick(this, state.config.pair, state).catch((e) =>
           logger.error(`[DiscretionaryTrader] Error evaluating structural SL for ${state.config.pair}:`,

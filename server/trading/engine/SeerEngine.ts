@@ -1014,6 +1014,7 @@ export async function runPreFlightFilter(
             )
             .run(orderResult.orderId, filledLots, dbId);
           state.seerTradeTakenToday = true;
+          const assignedSl = cleanSl || result.stopLoss;
           state.activeTrade = {
             dbId,
             metaOrderId: orderResult.orderId,
@@ -1022,8 +1023,9 @@ export async function runPreFlightFilter(
             botId: orch.getBotIdForSetup(setupType),
             direction: result.decision,
             entryPrice: freshEntry,
-            slPrice: result.stopLoss,
-            originalSl: result.stopLoss,
+            realFillPrice: freshEntry,
+            slPrice: assignedSl,
+            originalSl: assignedSl,
             tpPrice: result.takeProfit,
             riskPips: actualSlPips,
             highestPrice: freshEntry,
@@ -1035,13 +1037,20 @@ export async function runPreFlightFilter(
             unconfirmedSwingHigh: null,
             lastSwingHigh: null,
             lastSwingLow: null,
-            lastConfirmedSL: cleanSl,
-            secondLastConfirmedSL: cleanSl,
-            lastConfirmedSH: cleanSl,
-            secondLastConfirmedSH: cleanSl,
+            lastConfirmedSL: assignedSl,
+            secondLastConfirmedSL: assignedSl,
+            lastConfirmedSH: assignedSl,
+            secondLastConfirmedSH: assignedSl,
             openTime: c.timestamp,
             lastFcEstHour: c.estHour,
           };
+          if (!state.activeTrades) state.activeTrades = [];
+          const existingIdx = state.activeTrades.findIndex((t: any) => String(t.metaOrderId) === String(orderResult.orderId));
+          if (existingIdx >= 0) {
+            state.activeTrades[existingIdx] = state.activeTrade;
+          } else {
+            state.activeTrades.push(state.activeTrade);
+          }
           globalTradeGate.register(
             orch.profileId,
             orderResult.orderId,
@@ -1142,9 +1151,17 @@ export async function evaluateSeerTrailingOnTick(orch, symbol, state) {
 
   const seerConfigArray = (orch as any).__CUSTOM_SEER_CONFIGS__ || PairConfigManager.getSeerConfigs(symbol);
   const seerConfig = (seerConfigArray && seerConfigArray.length > 0) ? seerConfigArray[0] : state.config;
-  if (state.activeTrade?.manuallyModified) return;
+
+  if (!state.activeTrade && state.activeTrades && state.activeTrades.length > 0) {
+    const seerT = state.activeTrades.find((t: any) => {
+      const bid = t.botId?.toUpperCase();
+      return bid === "SEER" || bid === "DISCRETIONARY_TRADER";
+    });
+    if (seerT) state.activeTrade = seerT;
+  }
   const trade = state.activeTrade;
   if (!trade) return;
+  if (trade.manuallyModified) return;
 
   const len = state.m5Buffer.length;
   if (len < 5) return;
