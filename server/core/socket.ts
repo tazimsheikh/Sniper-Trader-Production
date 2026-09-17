@@ -506,11 +506,9 @@ export function initSocket(server: HttpServer) {
               ? "sage_enabled"
               : data.botId === "seer"
                 ? "seer_enabled"
-                : data.botId === "reaper"
-                  ? "reaper_enabled"
-                  : data.botId === "mage"
-                    ? "mage_enabled"
-                    : "discretionary_trader_enabled";
+                : data.botId === "mage"
+                  ? "mage_enabled"
+                  : "discretionary_trader_enabled";
 
           const orch = LiveOrchestrator.getInstance(data.profileId);
           if (orch) orch.togglePair(data.pair, data.enabled, data.botId);
@@ -522,8 +520,8 @@ export function initSocket(server: HttpServer) {
             .prepare(
               `
             INSERT INTO profile_pair_configs
-              (profile_id, pair, discretionary_trader_enabled, seer_enabled, mage_enabled, sage_enabled, reaper_enabled)
-            VALUES (?, ?, 1, 1, 1, 1, 1)
+              (profile_id, pair, discretionary_trader_enabled, seer_enabled, mage_enabled, sage_enabled)
+            VALUES (?, ?, 1, 1, 1, 1)
             ON CONFLICT(profile_id, pair) DO UPDATE SET ${botCol} = ?
           `,
             )
@@ -558,11 +556,9 @@ export function initSocket(server: HttpServer) {
               ? "sage_risk"
               : data.botId === "seer"
                 ? "seer_risk"
-                : data.botId === "reaper"
-                  ? "reaper_risk"
-                  : data.botId === "mage"
-                    ? "mage_risk"
-                    : "discretionary_trader_risk";
+                : data.botId === "mage"
+                  ? "mage_risk"
+                  : "discretionary_trader_risk";
 
           const orch = LiveOrchestrator.getInstance(data.profileId);
           if (orch) orch.setPairRisk(data.pair, data.riskPct, data.botId);
@@ -572,8 +568,8 @@ export function initSocket(server: HttpServer) {
             .prepare(
               `
             INSERT INTO profile_pair_configs
-              (profile_id, pair, discretionary_trader_enabled, seer_enabled, mage_enabled, sage_enabled, reaper_enabled, ${botRiskCol})
-            VALUES (?, ?, 1, 1, 1, 1, 1, ?)
+              (profile_id, pair, discretionary_trader_enabled, seer_enabled, mage_enabled, sage_enabled, ${botRiskCol})
+            VALUES (?, ?, 1, 1, 1, 1, ?)
             ON CONFLICT(profile_id, pair) DO UPDATE SET ${botRiskCol} = ?
           `,
             )
@@ -678,10 +674,6 @@ export async function resumePersistedBots(): Promise<void> {
                 u.metaapi_token, tp.metaapi_account_id,
                 tp.risk_multiplier, tp.base_risk_balance, tp.broker_symbol_map,
                 tp.dwcb_enabled, tp.dwcb_peak_balance,
-                tp.mage_dwcb_enabled, tp.mage_dwcb_peak_balance,
-                tp.sage_dwcb_enabled, tp.sage_dwcb_peak_balance,
-                tp.mage_sage_dwcb_enabled, tp.mage_sage_dwcb_peak_balance,
-                tp.seer_dwcb_enabled, tp.seer_dwcb_peak_balance,
                 tp.institutional_enabled,
                 tp.institutional_daily_cap,
                 tp.institutional_peak_to_draw,
@@ -737,14 +729,6 @@ export async function resumePersistedBots(): Promise<void> {
             broker_symbol_map: profile.broker_symbol_map,
             dwcb_enabled: profile.dwcb_enabled,
             dwcb_peak_balance: profile.dwcb_peak_balance,
-            mage_dwcb_enabled: profile.mage_dwcb_enabled,
-            mage_dwcb_peak_balance: profile.mage_dwcb_peak_balance,
-            sage_dwcb_enabled: profile.sage_dwcb_enabled,
-            sage_dwcb_peak_balance: profile.sage_dwcb_peak_balance,
-            mage_sage_dwcb_enabled: profile.mage_sage_dwcb_enabled,
-            mage_sage_dwcb_peak_balance: profile.mage_sage_dwcb_peak_balance,
-            seer_dwcb_enabled: profile.seer_dwcb_enabled,
-            seer_dwcb_peak_balance: profile.seer_dwcb_peak_balance,
             institutional_enabled: profile.institutional_enabled,
             institutional_daily_cap: profile.institutional_daily_cap,
             institutional_peak_to_draw: profile.institutional_peak_to_draw,

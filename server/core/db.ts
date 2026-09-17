@@ -147,8 +147,6 @@ export async function initDb() {
       metaapi_account_id TEXT,
       risk_multiplier INTEGER DEFAULT 5,
       automation_active INTEGER DEFAULT 0,
-      ai_sniper_active INTEGER DEFAULT 0,
-      diary_reset_time TEXT DEFAULT NULL,
       created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -226,20 +224,6 @@ export async function initDb() {
       END IF;
     END $$;
 
-    -- Per-head risk percentages for TheWitch
-    DO $$
-    BEGIN
-      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='trading_profiles' AND column_name='head1_risk_pct') THEN
-        ALTER TABLE trading_profiles ADD COLUMN head1_risk_pct REAL DEFAULT 0.5;
-      END IF;
-      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='trading_profiles' AND column_name='head2_risk_pct') THEN
-        ALTER TABLE trading_profiles ADD COLUMN head2_risk_pct REAL DEFAULT 0.5;
-      END IF;
-      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='trading_profiles' AND column_name='head3_risk_pct') THEN
-        ALTER TABLE trading_profiles ADD COLUMN head3_risk_pct REAL DEFAULT 0.5;
-      END IF;
-    END $$;
-
     -- Base Risk Balance: user-defined fixed capital for lot sizing (non-compounding)
     DO $$
     BEGIN
@@ -280,19 +264,14 @@ export async function initDb() {
       profile_id INTEGER NOT NULL REFERENCES trading_profiles(id) ON DELETE CASCADE,
       pair TEXT NOT NULL,
       enabled INTEGER DEFAULT 1,
-      head1_risk REAL DEFAULT 0.5,
-      head2_risk REAL DEFAULT 0.5,
-      head3_risk REAL DEFAULT 0.5,
       discretionary_trader_enabled INTEGER DEFAULT 1,
       discretionary_trader_risk REAL DEFAULT NULL,
-        sage_enabled INTEGER DEFAULT 1,
-        sage_risk REAL DEFAULT NULL,
-        seer_enabled INTEGER DEFAULT 1,
-        seer_risk REAL DEFAULT NULL,
-        reaper_enabled INTEGER DEFAULT 1,
-        reaper_risk REAL DEFAULT NULL,
-        mage_enabled INTEGER DEFAULT 1,
-        mage_risk REAL DEFAULT NULL,
+      sage_enabled INTEGER DEFAULT 1,
+      sage_risk REAL DEFAULT NULL,
+      seer_enabled INTEGER DEFAULT 1,
+      seer_risk REAL DEFAULT NULL,
+      mage_enabled INTEGER DEFAULT 1,
+      mage_risk REAL DEFAULT NULL,
       UNIQUE(profile_id, pair)
     );
 
@@ -304,37 +283,30 @@ export async function initDb() {
       IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='profile_pair_configs' AND column_name='discretionary_trader_risk') THEN
         ALTER TABLE profile_pair_configs ADD COLUMN discretionary_trader_risk REAL DEFAULT NULL;
       END IF;
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='profile_pair_configs' AND column_name='sage_enabled') THEN
-          ALTER TABLE profile_pair_configs ADD COLUMN sage_enabled INTEGER DEFAULT 1;
-        END IF;
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='profile_pair_configs' AND column_name='sage_risk') THEN
-          ALTER TABLE profile_pair_configs ADD COLUMN sage_risk REAL DEFAULT NULL;
-        END IF;
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='profile_pair_configs' AND column_name='seer_enabled') THEN
-          ALTER TABLE profile_pair_configs ADD COLUMN seer_enabled INTEGER DEFAULT 1;
-        END IF;
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='profile_pair_configs' AND column_name='seer_risk') THEN
-          ALTER TABLE profile_pair_configs ADD COLUMN seer_risk REAL DEFAULT NULL;
-        END IF;
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='profile_pair_configs' AND column_name='reaper_enabled') THEN
-          ALTER TABLE profile_pair_configs ADD COLUMN reaper_enabled INTEGER DEFAULT 1;
-        END IF;
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='profile_pair_configs' AND column_name='reaper_risk') THEN
-          ALTER TABLE profile_pair_configs ADD COLUMN reaper_risk REAL DEFAULT NULL;
-        END IF;
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='profile_pair_configs' AND column_name='mage_enabled') THEN
-          ALTER TABLE profile_pair_configs ADD COLUMN mage_enabled INTEGER DEFAULT 1;
-        END IF;
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='profile_pair_configs' AND column_name='mage_risk') THEN
-          ALTER TABLE profile_pair_configs ADD COLUMN mage_risk REAL DEFAULT NULL;
-        END IF;
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='profile_pair_configs' AND column_name='sage_enabled') THEN
+        ALTER TABLE profile_pair_configs ADD COLUMN sage_enabled INTEGER DEFAULT 1;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='profile_pair_configs' AND column_name='sage_risk') THEN
+        ALTER TABLE profile_pair_configs ADD COLUMN sage_risk REAL DEFAULT NULL;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='profile_pair_configs' AND column_name='seer_enabled') THEN
+        ALTER TABLE profile_pair_configs ADD COLUMN seer_enabled INTEGER DEFAULT 1;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='profile_pair_configs' AND column_name='seer_risk') THEN
+        ALTER TABLE profile_pair_configs ADD COLUMN seer_risk REAL DEFAULT NULL;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='profile_pair_configs' AND column_name='mage_enabled') THEN
+        ALTER TABLE profile_pair_configs ADD COLUMN mage_enabled INTEGER DEFAULT 1;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='profile_pair_configs' AND column_name='mage_risk') THEN
+        ALTER TABLE profile_pair_configs ADD COLUMN mage_risk REAL DEFAULT NULL;
+      END IF;
     END $$;
 
     -- Migration: Cleanse legacy 10.0 defaults
     UPDATE profile_pair_configs SET discretionary_trader_risk = NULL WHERE discretionary_trader_risk = 10.0;
     UPDATE profile_pair_configs SET sage_risk = NULL WHERE sage_risk = 10.0;
     UPDATE profile_pair_configs SET seer_risk = NULL WHERE seer_risk = 10.0;
-    UPDATE profile_pair_configs SET reaper_risk = NULL WHERE reaper_risk = 10.0;
     UPDATE profile_pair_configs SET mage_risk = NULL WHERE mage_risk = 10.0;
 
 
@@ -370,9 +342,6 @@ export async function initDb() {
       END IF;
       IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='bot_trade_states' AND column_name='client_id') THEN
         ALTER TABLE bot_trade_states ADD COLUMN client_id TEXT;
-      END IF;
-      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='bot_trade_states' AND column_name='partial_taken') THEN
-        ALTER TABLE bot_trade_states ADD COLUMN partial_taken INTEGER DEFAULT 0;
       END IF;
       IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='bot_trade_states' AND column_name='manages_own_trailing') THEN
         ALTER TABLE bot_trade_states ADD COLUMN manages_own_trailing INTEGER DEFAULT 0;

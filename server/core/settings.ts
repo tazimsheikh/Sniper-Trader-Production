@@ -508,9 +508,9 @@ settingsRouter.post(
           .json({ success: false, error: "Profile not found" });
       }
 
-      // Set peak_balance to 0 so the next bot tick instantly overwrites it with the current live balance
+      // Reset DWCB and Institutional peak balances so next bot tick overwrites them with current live balance
       await db
-        .prepare("UPDATE trading_profiles SET peak_balance = 0 WHERE id = ?")
+        .prepare("UPDATE trading_profiles SET dwcb_peak_balance = NULL, institutional_peak_balance = NULL WHERE id = ?")
         .run(profileId);
 
       res.json({

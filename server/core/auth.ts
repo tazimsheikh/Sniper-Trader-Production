@@ -849,15 +849,14 @@ authRouter.post('/profiles/:id/risk/force-1-percent', requireAuth, async (req: A
 
     await db.prepare(`
       UPDATE trading_profiles 
-      SET head1_risk_pct = 1.0, head2_risk_pct = 1.0, head3_risk_pct = 1.0
+      SET bot_risks = '{"mage": 1.0, "sage": 1.0, "seer": 1.0}'
       WHERE id = ?
     `).run(profileId);
 
     // Also update profile_pair_configs for the vision/algo pairs
     await db.prepare(`
       UPDATE profile_pair_configs 
-      SET head1_risk = 1.0, head2_risk = 1.0, head3_risk = 1.0, 
-          discretionary_trader_risk = 1.0
+      SET discretionary_trader_risk = 1.0, seer_risk = 1.0, mage_risk = 1.0, sage_risk = 1.0
       WHERE profile_id = ?
     `).run(profileId);
 
